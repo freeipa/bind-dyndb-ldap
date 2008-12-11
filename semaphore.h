@@ -17,8 +17,8 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
-#ifndef _LDAP_SEMAPHORE_H_
-#define _LDAP_SEMAPHORE_H_
+#ifndef _LD_SEMAPHORE_H_
+#define _LD_SEMAPHORE_H_
 
 #include <isc/condition.h>
 #include <isc/mutex.h>
@@ -42,4 +42,4 @@ void		semaphore_destroy(semaphore_t *sem);
 void		semaphore_wait(semaphore_t *sem);
 void		semaphore_signal(semaphore_t *sem);
 
-#endif /* !_LDAP_SEMAPHORE_H_ */
+#endif /* !_LD_SEMAPHORE_H_ */
