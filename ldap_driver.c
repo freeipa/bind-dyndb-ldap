@@ -56,3 +56,9 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 
 	return result;
 }
+
+void
+dynamic_driver_destroy(void)
+{
+	log_debug(2, "Unregistering dynamic ldap driver.");
+}
