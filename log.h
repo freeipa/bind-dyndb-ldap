@@ -20,8 +20,10 @@
 #ifndef _LD_LOG_H_
 #define _LD_LOG_H_
 
-#define log_unexpected(result, ...) \
-    log_unexpected_file_line(__FILE__, __LINE__, (result), __VA_ARGS__)
+#include <isc/error.h>
+
+#define fatal_error(...) \
+    isc_error_fatal(__FILE__, __LINE__, __VA_ARGS__)
 
 /*
  * Change these to use our string library.
@@ -30,7 +32,5 @@
 /* Basic logging functions */
 void log_debug(int level, const char *format, ...);
 void log_error(const char *format, ...);
-void log_unexpected_file_line(const char *file, unsigned int line,
-			      isc_result_t result, const char *format, ...);
 
 #endif /* !_LD_LOG_H_ */

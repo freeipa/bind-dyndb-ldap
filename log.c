@@ -22,24 +22,13 @@
  */
 
 /* Includes, group nicely and keep files ordered! ABRAKA */
-#include <stddef.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
+#include <stdio.h>
 
 #include <dns/log.h>
-#include <dns/result.h>
-
-#include <isc/error.h>
 
 #include "log.h"
 
-#define CHECK(op)						\
-	do { result = (op);					\
-		if (result != ISC_R_SUCCESS) goto cleanup;	\
-	} while (0)
-
-#define MSG_BUFFER_SIZE 1024
+#define MSG_BUFFER_SIZE 2048
 
 /*
  * TODO:
@@ -75,18 +64,4 @@ log_error(const char *format, ...)
 
     isc_log_write(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
                   ISC_LOG_ERROR, "%s", buf);
-}
-
-void
-log_unexpected_file_line(const char *file, unsigned int line,
-                         isc_result_t result, const char *format, ...)
-{
-    char buf[MSG_BUFFER_SIZE];
-    va_list args;
-
-    va_start(args, format);
-    vsnprintf(buf, MSG_BUFFER_SIZE, format, args);
-    va_end(args);
-
-    isc_error_unexpected(file, line, "%s: %s", buf, isc_result_totext(result));
 }

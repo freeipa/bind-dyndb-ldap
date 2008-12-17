@@ -1,4 +1,5 @@
 /* Authors: Martin Nagy <mnagy@redhat.com>
+ *          Adam Tkac   <atkac@redhat.com>
  *
  * Copyright (C) 2008  Red Hat
  * see file 'COPYING' for use and warranty information
@@ -56,7 +57,8 @@ static void *ldapdb_version = &dummy;
 
 /* ldapdbnode_t functions */
 static isc_result_t
-ldapdbnode_create(isc_mem_t *mctx, ldapdbnode_t **nodep) {
+ldapdbnode_create(isc_mem_t *mctx, ldapdbnode_t **nodep)
+{
 	ldapdbnode_t *node;
 	isc_result_t result;
 
@@ -67,21 +69,20 @@ ldapdbnode_create(isc_mem_t *mctx, ldapdbnode_t **nodep) {
 		return ISC_R_NOMEMORY;
 
 	node->magic = LDAPDBNODE_MAGIC;
-	result = isc_refcount_init(&node->refs, 1);
-	if (result != ISC_R_SUCCESS)
-		goto bail;
+	CHECK(isc_refcount_init(&node->refs, 1));
 
 	dns_name_init(node->owner, NULL);
 
 	return ISC_R_SUCCESS;
 
-bail:
+cleanup:
 	isc_mem_put(mctx, node, sizeof(*node));
 	return result;
 }
 
 static void
-ldapdbnode_destroy(isc_mem_t *mctx, ldapdbnode_t **nodep) {
+ldapdbnode_destroy(isc_mem_t *mctx, ldapdbnode_t **nodep)
+{
 	UNUSED(mctx);
 	UNUSED(nodep);
 	/* XXX Do it */
@@ -95,7 +96,8 @@ ldapdbnode_destroy(isc_mem_t *mctx, ldapdbnode_t **nodep) {
  */
 
 static void
-attach(dns_db_t *source, dns_db_t **targetp) {
+attach(dns_db_t *source, dns_db_t **targetp)
+{
 	ldapdb_t *ldapdb = (ldapdb_t *)source;
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
@@ -105,7 +107,8 @@ attach(dns_db_t *source, dns_db_t **targetp) {
 }
 
 static void
-detach(dns_db_t **dbp) {
+detach(dns_db_t **dbp)
+{
 	ldapdb_t *ldapdb = (ldapdb_t *)dbp;
 	unsigned int refs;
 
@@ -122,27 +125,29 @@ detach(dns_db_t **dbp) {
 }
 
 static isc_result_t
-beginload(dns_db_t *db, dns_addrdatasetfunc_t *addp, dns_dbload_t **dbloadp) {
+beginload(dns_db_t *db, dns_addrdatasetfunc_t *addp, dns_dbload_t **dbloadp)
+{
 
 	UNUSED(db);
 	UNUSED(addp);
 	UNUSED(dbloadp);
 
 	/* Should be never called */
-	REQUIRE("ldapdb: method beginload() should be never called" == NULL);
+	fatal_error("ldapdb: method beginload() should never be called");
 
 	/* Not reached */
 	return ISC_R_SUCCESS;
 }
 
 static isc_result_t
-endload(dns_db_t *db, dns_dbload_t **dbloadp) {
+endload(dns_db_t *db, dns_dbload_t **dbloadp)
+{
 
 	UNUSED(db);
 	UNUSED(dbloadp);
 
 	/* Should be never called */
-	REQUIRE("ldapdb: method endload() should be never called" == NULL);
+	fatal_error("ldapdb: method endload() should never be called");
 
 	/* Not reached */
 	return ISC_R_SUCCESS;
@@ -150,7 +155,8 @@ endload(dns_db_t *db, dns_dbload_t **dbloadp) {
 
 static isc_result_t
 dump(dns_db_t *db, dns_dbversion_t *version, const char *filename,
-     dns_masterformat_t masterformat) {
+     dns_masterformat_t masterformat)
+{
 
 	UNUSED(db);
 	UNUSED(version);
@@ -158,14 +164,15 @@ dump(dns_db_t *db, dns_dbversion_t *version, const char *filename,
 	UNUSED(masterformat);
 
 	/* Should be never called */
-	REQUIRE("ldapdb: method dump() should be never called" == NULL);
+	fatal_error("ldapdb: method dump() should never be called");
 
 	/* Not reached */
 	return ISC_R_SUCCESS;
 }
 
 static void
-currentversion(dns_db_t *db, dns_dbversion_t **versionp) {
+currentversion(dns_db_t *db, dns_dbversion_t **versionp)
+{
 	ldapdb_t *ldapdb = (ldapdb_t *)db;
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
@@ -175,7 +182,8 @@ currentversion(dns_db_t *db, dns_dbversion_t **versionp) {
 }
 
 static isc_result_t
-newversion(dns_db_t *db, dns_dbversion_t **versionp) {
+newversion(dns_db_t *db, dns_dbversion_t **versionp)
+{
 	ldapdb_t *ldapdb = (ldapdb_t *)db;
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
@@ -199,7 +207,8 @@ attachversion(dns_db_t *db, dns_dbversion_t *source,
 }
 
 static void
-closeversion(dns_db_t *db, dns_dbversion_t **versionp, isc_boolean_t commit) {
+closeversion(dns_db_t *db, dns_dbversion_t **versionp, isc_boolean_t commit)
+{
 	ldapdb_t *ldapdb = (ldapdb_t *)db;
 
 	UNUSED(commit);
@@ -270,20 +279,23 @@ findzonecut(dns_db_t *db, dns_name_t *name, unsigned int options,
 }
 
 static void
-attachnode(dns_db_t *db, dns_dbnode_t *source, dns_dbnode_t **targetp) {
+attachnode(dns_db_t *db, dns_dbnode_t *source, dns_dbnode_t **targetp)
+{
 	UNUSED(db);
 	UNUSED(source);
 	UNUSED(targetp);
 }
 
 static void
-detachnode(dns_db_t *db, dns_dbnode_t **targetp) {
+detachnode(dns_db_t *db, dns_dbnode_t **targetp)
+{
 	UNUSED(db);
 	UNUSED(targetp);
 }
 
 static isc_result_t
-expirenode(dns_db_t *db, dns_dbnode_t *node, isc_stdtime_t now) {
+expirenode(dns_db_t *db, dns_dbnode_t *node, isc_stdtime_t now)
+{
 	UNUSED(db);
 	UNUSED(node);
 	UNUSED(now);
@@ -292,7 +304,8 @@ expirenode(dns_db_t *db, dns_dbnode_t *node, isc_stdtime_t now) {
 }
 
 static void
-printnode(dns_db_t *db, dns_dbnode_t *node, FILE *out) {
+printnode(dns_db_t *db, dns_dbnode_t *node, FILE *out)
+{
 	UNUSED(db);
 	UNUSED(node);
 	UNUSED(out);
@@ -384,40 +397,46 @@ deleterdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 }
 
 static isc_boolean_t
-issecure(dns_db_t *db) {
+issecure(dns_db_t *db)
+{
 	UNUSED(db);
 
 	return ISC_R_NOTIMPLEMENTED;
 }
 
 static unsigned int
-nodecount(dns_db_t *db) {
+nodecount(dns_db_t *db)
+{
 	UNUSED(db);
 
 	return ISC_R_NOTIMPLEMENTED;
 }
 
 static isc_boolean_t
-ispersistent(dns_db_t *db) {
+ispersistent(dns_db_t *db)
+{
 	UNUSED(db);
 
 	return ISC_R_NOTIMPLEMENTED;
 }
 
 static void
-overmem(dns_db_t *db, isc_boolean_t overmem) {
+overmem(dns_db_t *db, isc_boolean_t overmem)
+{
 	UNUSED(db);
 	UNUSED(overmem);
 }
 
 static void
-settask(dns_db_t *db, isc_task_t *task) {
+settask(dns_db_t *db, isc_task_t *task)
+{
 	UNUSED(db);
 	UNUSED(task);
 }
 
 static isc_result_t
-getoriginnode(dns_db_t *db, dns_dbnode_t **nodep) {
+getoriginnode(dns_db_t *db, dns_dbnode_t **nodep)
+{
 	UNUSED(db);
 	UNUSED(nodep);
 
@@ -425,7 +444,8 @@ getoriginnode(dns_db_t *db, dns_dbnode_t **nodep) {
 }
 
 static void
-transfernode(dns_db_t *db, dns_dbnode_t **sourcep, dns_dbnode_t **targetp) {
+transfernode(dns_db_t *db, dns_dbnode_t **sourcep, dns_dbnode_t **targetp)
+{
 	UNUSED(db);
 	UNUSED(sourcep);
 	UNUSED(targetp);
@@ -460,7 +480,8 @@ findnsec3node(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 }
 
 static isc_result_t
-setsigningtime(dns_db_t *db, dns_rdataset_t *rdataset, isc_stdtime_t resign) {
+setsigningtime(dns_db_t *db, dns_rdataset_t *rdataset, isc_stdtime_t resign)
+{
 	UNUSED(db);
 	UNUSED(rdataset);
 	UNUSED(resign);
@@ -469,7 +490,8 @@ setsigningtime(dns_db_t *db, dns_rdataset_t *rdataset, isc_stdtime_t resign) {
 }
 
 static isc_result_t
-getsigningtime(dns_db_t *db, dns_rdataset_t *rdataset, dns_name_t *name) {
+getsigningtime(dns_db_t *db, dns_rdataset_t *rdataset, dns_name_t *name)
+{
 	UNUSED(db);
 	UNUSED(rdataset);
 	UNUSED(name);
@@ -478,21 +500,24 @@ getsigningtime(dns_db_t *db, dns_rdataset_t *rdataset, dns_name_t *name) {
 }
 
 static void
-resigned(dns_db_t *db, dns_rdataset_t *rdataset, dns_dbversion_t *version) {
+resigned(dns_db_t *db, dns_rdataset_t *rdataset, dns_dbversion_t *version)
+{
 	UNUSED(db);
 	UNUSED(rdataset);
 	UNUSED(version);
 }
 
 static isc_boolean_t
-isdnssec(dns_db_t *db) {
+isdnssec(dns_db_t *db)
+{
 	UNUSED(db);
 
 	return ISC_R_NOTIMPLEMENTED;
 }
 
 static dns_stats_t *
-getrrsetstats(dns_db_t *db) {
+getrrsetstats(dns_db_t *db)
+{
 	UNUSED(db);
 
 	return NULL;
