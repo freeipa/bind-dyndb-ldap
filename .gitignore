@@ -1,3 +1,4 @@
 libdnsldap.so.1.0.0
 *.o
+*.swp
 tags
