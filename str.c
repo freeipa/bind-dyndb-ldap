@@ -33,17 +33,13 @@
 #include <string.h>
 
 #include "str.h"
+#include "util.h"
 
 
 #define IGNORE(expr)	if (expr) return
 #define IGNORE_R(expr)	if (expr) return ISC_R_SUCCESS
 
 #define ALLOC_BASE_SIZE	16
-
-#define CHECK(op)						\
-	do { result = (op);					\
-		if (result != ISC_R_SUCCESS) goto cleanup;	\
-	} while (0)
 
 
 /* Custom string, these shouldn't use these directly */
@@ -74,6 +70,7 @@ str_alloc(ld_string_t *str, size_t len)
 	char *new_buffer;
 
 	REQUIRE(str != NULL);
+	REQUIRE(str->mctx != NULL);
 	IGNORE_R(str->allocated > len);
 
 	len++;	/* Account for the last '\0'. */

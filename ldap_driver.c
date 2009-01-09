@@ -26,11 +26,7 @@
 #include <dns/result.h>
 
 #include "log.h"
-
-#define CHECK(op)						\
-	do { result = (op);					\
-		if (result != ISC_R_SUCCESS) goto cleanup;	\
-	} while (0)
+#include "util.h"
 
 #define LDAPDB_MAGIC			ISC_MAGIC('L', 'D', 'P', 'D')
 #define VALID_LDAPDB(ldapdb) \
