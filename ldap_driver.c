@@ -1,7 +1,7 @@
 /* Authors: Martin Nagy <mnagy@redhat.com>
  *          Adam Tkac   <atkac@redhat.com>
  *
- * Copyright (C) 2008  Red Hat
+ * Copyright (C) 2008, 2009  Red Hat
  * see file 'COPYING' for use and warranty information
  *
  * This program is free software; you can redistribute it and/or
