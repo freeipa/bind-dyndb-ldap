@@ -38,7 +38,7 @@ struct setting {
 		signed int	value_sint;
 		unsigned int	value_uint;
 	} default_value;
-	size_t		offset;
+	void		*target;
 };
 
 /*
@@ -46,7 +46,7 @@ struct setting {
  *
  * const setting_t my_setting = {
  *         "name", default_string("this is the default"),
- *         offsetof(some_struct, some_member
+ *         &target_variable
  * }
  */
 #define default_string(value)	0, ST_LD_STRING, { .value_char = (value) }
@@ -55,17 +55,12 @@ struct setting {
 #define default_nothing()	0, ST_NO_DEFAULT, { .value_uint = 0 }
 
 /* This is used in the end of setting_t arrays. */
-#define end_of_settings	{ NULL, default_sint(0), 0 }
-
-#define value_char default_value.value_char
-#define value_sint default_value.value_sint
-#define value_uint default_value.value_uint
+#define end_of_settings	{ NULL, default_sint(0), NULL }
 
 /*
  * Prototypes.
  */
 isc_result_t
-set_settings(isc_mem_t *mctx, void *target, setting_t settings[],
-	     const char * const* argv);
+set_settings(isc_mem_t *mctx, setting_t settings[], const char * const* argv);
 
 #endif /* !_LD_SETTINGS_H_ */

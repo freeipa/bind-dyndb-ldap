@@ -29,32 +29,31 @@
 #include "str.h"
 #include "util.h"
 
-/* Forward declarations. */
+
+/*
+ * Forward declarations.
+ */
 static int args_are_equal(const char *setting_argument,
 		const char *argv_argument);
-static isc_result_t set_value(isc_mem_t *mctx, setting_t *setting, void *target,
+static isc_result_t set_value(isc_mem_t *mctx, setting_t *setting,
 		const char *arg);
-static isc_result_t set_default_value(isc_mem_t *mctx, setting_t *setting,
-		void *target);
+static isc_result_t set_default_value(isc_mem_t *mctx, setting_t *setting);
 static const char * get_value_str(const char *arg);
 
 isc_result_t
-set_settings(isc_mem_t *mctx, void *target, setting_t settings[],
-	     const char * const* argv)
+set_settings(isc_mem_t *mctx, setting_t settings[], const char * const* argv)
 {
 	isc_result_t result;
 	int i, j;
 	const char *value_ptr;
-	void *target_member;
 
 	for (i = 0; argv[i] != NULL; i++) {
 		for (j = 0; settings[j].name != NULL; j++) {
-			if (!args_are_equal(settings[j].name, argv[i]))
-				continue;
-
-			target_member = (char *)target + settings[j].offset;
-			value_ptr = get_value_str(argv[i]);
-			CHECK(set_value(mctx, &settings[j], target, value_ptr));
+			if (args_are_equal(settings[j].name, argv[i])) {
+				value_ptr = get_value_str(argv[i]);
+				CHECK(set_value(mctx, &settings[j], value_ptr));
+				break;
+			}
 		}
 	}
 
@@ -67,8 +66,7 @@ set_settings(isc_mem_t *mctx, void *target, setting_t settings[],
 			result = ISC_R_FAILURE;
 			goto cleanup;
 		}
-		target_member = (char *)target + settings[j].offset;
-		CHECK(set_default_value(mctx, &settings[j], target_member));
+		CHECK(set_default_value(mctx, &settings[j]));
 	}
 
 	return ISC_R_SUCCESS;
@@ -109,19 +107,17 @@ args_are_equal(const char *setting_argument, const char *argv_argument)
 }
 
 static isc_result_t
-set_value(isc_mem_t *mctx, setting_t *setting, void *target, const char *arg)
+set_value(isc_mem_t *mctx, setting_t *setting, const char *arg)
 {
 	isc_result_t result;
 	int numeric_value;
 	const char *value;
 	ld_string_t **ld_string_ptr;
 
-	REQUIRE(target != NULL);
-
 	value = get_value_str(arg);
 
 	if (setting->type == ST_LD_STRING) {
-		ld_string_ptr = (ld_string_t **)target;
+		ld_string_ptr = (ld_string_t **)setting->target;
 
 		if (setting->set)
 			str_destroy(ld_string_ptr);
@@ -137,14 +133,14 @@ set_value(isc_mem_t *mctx, setting_t *setting, void *target, const char *arg)
 		/* TODO: better type checking. */
 		numeric_value = atoi(value);
 		if (setting->type == ST_SIGNED_INTEGER) {
-			(*(signed int *)target) = (signed int)numeric_value;
+			(*(signed *)setting->target) = (signed)numeric_value;
 		} else {
 			if (numeric_value < 0) {
 				log_error("argument %s must be an unsigned integer", setting->name);
 				result = ISC_R_FAILURE;
 				goto cleanup;
 			}
-			(*(unsigned int *)target) = (unsigned int)numeric_value;
+			(*(unsigned *)setting->target) = (unsigned)numeric_value;
 		}
 	} else {
 		fatal_error("unknown type in function set_value()");
@@ -161,17 +157,17 @@ cleanup:
 }
 
 static isc_result_t
-set_default_value(isc_mem_t *mctx, setting_t *setting, void *target)
+set_default_value(isc_mem_t *mctx, setting_t *setting)
 {
 	switch (setting->type) {
 	case ST_LD_STRING:
-		return set_value(mctx, setting, target, setting->value_char);
+		return set_value(mctx, setting, setting->default_value.value_char);
 		break;
 	case ST_SIGNED_INTEGER:
-		(*(signed int *)target) = (signed int)setting->value_sint;
+		(*(signed *)setting->target) = setting->default_value.value_sint;
 		break;
 	case ST_UNSIGNED_INTEGER:
-		(*(unsigned int *)target) = (unsigned int)setting->value_uint;
+		(*(unsigned *)setting->target) = setting->default_value.value_uint;
 		break;
 	default:
 		fatal_error("unknown type in function set_default_value()");
