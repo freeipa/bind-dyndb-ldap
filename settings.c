@@ -110,18 +110,11 @@ set_value(isc_mem_t *mctx, setting_t *setting, const char *arg)
 	isc_result_t result;
 	int numeric_value;
 	const char *value;
-	ld_string_t **ld_string_ptr;
 
 	value = get_value_str(arg);
 
 	if (setting->type == ST_LD_STRING) {
-		ld_string_ptr = (ld_string_t **)setting->target;
-
-		if (setting->set)
-			str_destroy(ld_string_ptr);
-
-		CHECK(str_new(mctx, ld_string_ptr));
-		CHECK(str_init_char(*ld_string_ptr, value));
+		CHECK(str_init_char((ld_string_t *)setting->target, value));
 	} else if (setting->type == ST_SIGNED_INTEGER ||
 		   setting->type == ST_UNSIGNED_INTEGER) {
 		if (*value == '\0') {
