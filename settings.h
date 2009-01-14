@@ -26,12 +26,12 @@ typedef enum {
 	ST_LD_STRING,
 	ST_SIGNED_INTEGER,
 	ST_UNSIGNED_INTEGER,
-	ST_NO_DEFAULT,
 } setting_type_t;
 
 struct setting {
 	const char	*name;
 	int		set;
+	int		has_a_default;
 	setting_type_t	type;
 	union {
 		const char	*value_char;
@@ -44,15 +44,22 @@ struct setting {
 /*
  * These defines are used as initializers for setting_t, for example:
  *
- * const setting_t my_setting = {
+ * setting_t my_setting = {
  *         "name", default_string("this is the default"),
  *         &target_variable
  * }
+ *
+ * setting_t my_setting = {
+ *         "name", no_default_string, &target_variable
+ * }
  */
-#define default_string(value)	0, ST_LD_STRING, { .value_char = (value) }
-#define default_sint(value)	0, ST_SIGNED_INTEGER, { .value_sint = (value) }
-#define default_uint(value)	0, ST_UNSIGNED_INTEGER, { .value_uint = (value) }
-#define default_nothing()	0, ST_NO_DEFAULT, { .value_uint = 0 }
+#define default_string(val)	0, 1, ST_LD_STRING, { .value_char = (val) }
+#define default_sint(val)	0, 1, ST_SIGNED_INTEGER, { .value_sint = (val) }
+#define default_uint(val)	0, 1, ST_UNSIGNED_INTEGER, { .value_uint = (val) }
+/* No defaults. */
+#define no_default_string	0, 0, ST_LD_STRING, { .value_char = NULL }
+#define no_default_sint		0, 0, ST_SIGNED_INTEGER, { .value_sint = 0 }
+#define no_default_uint		0, 0, ST_UNSIGNED_INTEGER, { .value_uint = 0 }
 
 /* This is used in the end of setting_t arrays. */
 #define end_of_settings	{ NULL, default_sint(0), NULL }
@@ -61,6 +68,6 @@ struct setting {
  * Prototypes.
  */
 isc_result_t
-set_settings(isc_mem_t *mctx, setting_t settings[], const char * const* argv);
+set_settings(isc_mem_t *mctx, setting_t *settings, const char * const* argv);
 
 #endif /* !_LD_SETTINGS_H_ */

@@ -45,13 +45,11 @@ set_settings(isc_mem_t *mctx, setting_t settings[], const char * const* argv)
 {
 	isc_result_t result;
 	int i, j;
-	const char *value_ptr;
 
 	for (i = 0; argv[i] != NULL; i++) {
 		for (j = 0; settings[j].name != NULL; j++) {
 			if (args_are_equal(settings[j].name, argv[i])) {
-				value_ptr = get_value_str(argv[i]);
-				CHECK(set_value(mctx, &settings[j], value_ptr));
+				CHECK(set_value(mctx, &settings[j], argv[i]));
 				break;
 			}
 		}
@@ -61,8 +59,8 @@ set_settings(isc_mem_t *mctx, setting_t settings[], const char * const* argv)
 	for (j = 0; settings[j].name != NULL; j++) {
 		if (settings[j].set != 0)
 			continue;
-		if (settings[j].type == ST_NO_DEFAULT) {
-			log_error("argument %s must be set");
+		if (!settings[j].has_a_default) {
+			log_error("argument %s must be set", settings[j].name);
 			result = ISC_R_FAILURE;
 			goto cleanup;
 		}
