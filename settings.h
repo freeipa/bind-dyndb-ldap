@@ -68,6 +68,6 @@ struct setting {
  * Prototypes.
  */
 isc_result_t
-set_settings(isc_mem_t *mctx, setting_t *settings, const char * const* argv);
+set_settings(setting_t *settings, const char * const* argv);
 
 #endif /* !_LD_SETTINGS_H_ */

@@ -35,13 +35,12 @@
  */
 static int args_are_equal(const char *setting_argument,
 		const char *argv_argument);
-static isc_result_t set_value(isc_mem_t *mctx, setting_t *setting,
-		const char *arg);
-static isc_result_t set_default_value(isc_mem_t *mctx, setting_t *setting);
+static isc_result_t set_value(setting_t *setting, const char *arg);
+static isc_result_t set_default_value(setting_t *setting);
 static const char * get_value_str(const char *arg);
 
 isc_result_t
-set_settings(isc_mem_t *mctx, setting_t settings[], const char * const* argv)
+set_settings(setting_t settings[], const char * const* argv)
 {
 	isc_result_t result;
 	int i, j;
@@ -49,7 +48,7 @@ set_settings(isc_mem_t *mctx, setting_t settings[], const char * const* argv)
 	for (i = 0; argv[i] != NULL; i++) {
 		for (j = 0; settings[j].name != NULL; j++) {
 			if (args_are_equal(settings[j].name, argv[i])) {
-				CHECK(set_value(mctx, &settings[j], argv[i]));
+				CHECK(set_value(&settings[j], argv[i]));
 				break;
 			}
 		}
@@ -64,7 +63,7 @@ set_settings(isc_mem_t *mctx, setting_t settings[], const char * const* argv)
 			result = ISC_R_FAILURE;
 			goto cleanup;
 		}
-		CHECK(set_default_value(mctx, &settings[j]));
+		CHECK(set_default_value(&settings[j]));
 	}
 
 	return ISC_R_SUCCESS;
@@ -105,7 +104,7 @@ args_are_equal(const char *setting_argument, const char *argv_argument)
 }
 
 static isc_result_t
-set_value(isc_mem_t *mctx, setting_t *setting, const char *arg)
+set_value(setting_t *setting, const char *arg)
 {
 	isc_result_t result;
 	int numeric_value;
@@ -148,11 +147,11 @@ cleanup:
 }
 
 static isc_result_t
-set_default_value(isc_mem_t *mctx, setting_t *setting)
+set_default_value(setting_t *setting)
 {
 	switch (setting->type) {
 	case ST_LD_STRING:
-		return set_value(mctx, setting, setting->default_value.value_char);
+		return set_value(setting, setting->default_value.value_char);
 		break;
 	case ST_SIGNED_INTEGER:
 		(*(signed *)setting->target) = setting->default_value.value_sint;
