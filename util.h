@@ -25,4 +25,6 @@
 		if (result != ISC_R_SUCCESS) goto cleanup;	\
 	} while (0)
 
+#define ZERO_PTR(ptr, type) memset((ptr), 0, sizeof(type))
+
 #endif /* !_LD_UTIL_H_ */

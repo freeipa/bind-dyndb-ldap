@@ -63,10 +63,11 @@ semaphore_init(semaphore_t *sem, int value)
 void
 semaphore_destroy(semaphore_t *sem)
 {
-	REQUIRE(sem != NULL);
+	if (sem == NULL)
+		return;
 
-	REQUIRE(isc_mutex_destroy(&sem->mutex) == ISC_R_SUCCESS);
-	REQUIRE(isc_condition_destroy(&sem->cond) == ISC_R_SUCCESS);
+	RUNTIME_CHECK(isc_mutex_destroy(&sem->mutex) == ISC_R_SUCCESS);
+	RUNTIME_CHECK(isc_condition_destroy(&sem->cond) == ISC_R_SUCCESS);
 }
 
 /*
