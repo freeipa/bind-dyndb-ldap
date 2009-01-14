@@ -48,6 +48,8 @@ isc_result_t str_clone(ld_string_t **dest, const ld_string_t *src _STR_MEM_FLARG
 isc_result_t str_init_char(ld_string_t *dest, const char *src);
 isc_result_t str_cat_char(ld_string_t *dest, const char *src);
 isc_result_t str_cat(ld_string_t *dest, const ld_string_t *src);
+isc_result_t str_sprintf(ld_string_t *dest, const char *format, ...);
+isc_result_t str_vsprintf(ld_string_t *dest, const char *format, va_list ap);
 
 /* These are pseudo-private functions and shouldn't be called directly. */
 isc_result_t str__new(isc_mem_t *mctx, ld_string_t **new_str _STR_MEM_FLARG);

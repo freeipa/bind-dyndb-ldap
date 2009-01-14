@@ -30,6 +30,9 @@
 
 #include <dns/result.h>
 
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "str.h"
@@ -40,7 +43,6 @@
 #define IGNORE_R(expr)	if (expr) return ISC_R_SUCCESS
 
 #define ALLOC_BASE_SIZE	16
-
 
 /* Custom string, these shouldn't use these directly */
 struct ld_string {
@@ -97,6 +99,7 @@ str_alloc(ld_string_t *str, size_t len)
 	}
 
 	str->data = new_buffer;
+	str->allocated = new_size;
 
 	return ISC_R_SUCCESS;
 }
@@ -166,15 +169,21 @@ str__destroy(ld_string_t **str _STR_MEM_FLARG)
 {
 	IGNORE(str == NULL || *str == NULL);
 
+	if ((*str)->allocated) {
 #if ISC_MEM_TRACKLINES
-	isc__mem_put((*str)->mctx, (void *)(*str)->data,
-		    (*str)->allocated * sizeof(char), file, line);
-	isc__mem_putanddetach(&(*str)->mctx, (void *)*str, sizeof(ld_string_t),
+		isc__mem_put((*str)->mctx, (*str)->data,
+			     (*str)->allocated * sizeof(char), file, line);
+#else
+		isc_mem_put((*str)->mctx, (*str)->data,
+			    (*str)->allocated * sizeof(char));
+#endif
+	}
+
+#if ISC_MEM_TRACKLINES
+	isc__mem_putanddetach(&(*str)->mctx, *str, sizeof(ld_string_t),
 			      file, line);
 #else
-	isc_mem_put((*str)->mctx, (void *)(*str)->data,
-		    (*str)->allocated * sizeof(char));
-	isc_mem_putanddetach(&(*str)->mctx, (void *)*str, sizeof(ld_string_t));
+	isc_mem_putanddetach(&(*str)->mctx, *str, sizeof(ld_string_t));
 #endif
 
 	*str = NULL;
@@ -299,4 +308,47 @@ str_cat(ld_string_t *dest, const ld_string_t *src)
 	IGNORE_R(src->data == NULL);
 
 	return str_cat_char(dest, src->data);
+}
+
+/*
+ * A sprintf() like function.
+ */
+isc_result_t
+str_sprintf(ld_string_t *dest, const char *format, ...)
+{
+	isc_result_t result;
+	va_list ap;
+
+	REQUIRE(dest != NULL);
+	REQUIRE(format != NULL);
+
+	va_start(ap, format);
+	result = str_vsprintf(dest, format, ap);
+	va_end(ap);
+
+	return result;
+}
+
+isc_result_t
+str_vsprintf(ld_string_t *dest, const char *format, va_list ap)
+{
+	int len;
+	isc_result_t result;
+
+	REQUIRE(dest != NULL);
+	REQUIRE(format != NULL);
+
+	len = vsnprintf(dest->data, dest->allocated, format, ap);
+	if (len > 0) {
+		CHECK(str_alloc(dest, len));
+		len = vsnprintf(dest->data, dest->allocated, format, ap);
+	}
+
+	if (len < 0)
+		result = ISC_R_FAILURE;
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	return result;
 }
