@@ -25,6 +25,7 @@
 #include <dns/db.h>
 #include <dns/result.h>
 
+#include "ldap_helper.h"
 #include "log.h"
 #include "util.h"
 
@@ -35,6 +36,10 @@
 #define LDAPDBNODE_MAGIC		ISC_MAGIC('L', 'D', 'P', 'N')
 #define VALID_LDAPDBNODE(ldapdbnode)	ISC_MAGIC_VALID(ldapdbnode, \
 							LDAPDBNODE_MAGIC)
+
+typedef struct {
+	ldap_db_t	*ldap_db;
+} ldapdb_data_t;
 
 typedef struct {
 	dns_db_t			common;
@@ -57,6 +62,7 @@ typedef struct {
 
 static int dummy;
 static void *ldapdb_version = &dummy;
+static ldapdb_data_t driver_data;
 
 /* ldapdbnode_t functions */
 static isc_result_t
@@ -640,15 +646,16 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 {
 	isc_result_t result;
 
-	UNUSED(mctx);
+	REQUIRE(argv != NULL);
 	UNUSED(view);
 
 	log_debug(2, "Registering dynamic ldap driver for %s.", name);
 
 	/* Test argv. */
-	while (*argv != NULL) {
-		log_debug(2, "Arg: %s", *argv);
-		argv++;
+	int i = 0;
+	while (argv[i] != NULL) {
+		log_debug(2, "Arg: %s", argv[i]);
+		i++;
 	}
 
 	result = dns_db_register(ldapdb_impname, &ldapdb_create, NULL, mctx,
@@ -658,6 +665,10 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 
 	if (result != ISC_R_SUCCESS)
 		return result;
+
+	CHECK(new_ldap_db(mctx, &driver_data.ldap_db, argv));
+
+	get_zone_list(driver_data.ldap_db);
 
 	/*
 	 * XXX now fetch all zones and initialize ldap zone manager
@@ -682,10 +693,14 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 	 */
 
 	return ISC_R_SUCCESS;
+
+cleanup:
+	return result;
 }
 
 void
 dynamic_driver_destroy(void)
 {
 	dns_db_unregister(&ldapdb_imp);
+	destroy_ldap_db(&driver_data.ldap_db);
 }
