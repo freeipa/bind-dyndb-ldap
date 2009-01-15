@@ -1,4 +1,5 @@
 /* Authors: Martin Nagy <mnagy@redhat.com>
+ *          Adam Tkac <atkac@redhat.com>
  *
  * Copyright (C) 2008  Red Hat
  * see file 'COPYING' for use and warranty information
@@ -17,10 +18,18 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
+#include <dns/rdata.h>
+#include <dns/rdataclass.h>
+#include <dns/rdatalist.h>
+#include <dns/rdatatype.h>
 #include <dns/result.h>
+#include <dns/ttl.h>
 
+#include <isc/buffer.h>
+#include <isc/lex.h>
 #include <isc/mem.h>
 #include <isc/mutex.h>
+#include <isc/region.h>
 #include <isc/util.h>
 
 #define LDAP_DEPRECATED 1
@@ -252,6 +261,218 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 
 	isc_mem_put(ldap_inst->database->mctx, *ldap_instp, sizeof(ldap_instance_t));
 	*ldap_instp = NULL;
+}
+
+isc_result_t
+ldapdb_rdatalist_findrdatatype(ldapdb_rdatalist_t *rdatalist,
+			       dns_rdatatype_t rdtype,
+			       dns_rdatalist_t **rdlistp)
+{
+	dns_rdatalist_t *rdlist;
+
+	REQUIRE(rdatalist != NULL);
+	REQUIRE(rdlistp != NULL && *rdlistp == NULL);
+
+	rdlist = HEAD(*rdatalist);
+	while (rdlist != NULL && rdlist->type != rdtype) {
+		rdlist = NEXT(rdlist, link);
+	}
+
+	*rdlistp = rdlist;
+
+	return (rdlist == NULL) ? ISC_R_NOTFOUND : ISC_R_SUCCESS;
+}
+
+void
+ldapdb_rdatalist_destroy(isc_mem_t *mctx, ldapdb_rdatalist_t *rdatalist)
+{
+	dns_rdata_t *rdata;
+	dns_rdatalist_t *rdlist;
+	isc_region_t r;
+
+	REQUIRE(rdatalist != NULL);
+
+	while (!EMPTY(*rdatalist)) {
+		rdlist = HEAD(*rdatalist);
+		while (!EMPTY(rdlist->rdata)) {
+			rdata = HEAD(rdlist->rdata);
+			UNLINK(rdlist->rdata, rdata, link);
+			dns_rdata_toregion(rdata, &r);
+			isc_mem_put(mctx, r.base, r.length);
+			isc_mem_put(mctx, rdata, sizeof(*rdata));
+		}
+		UNLINK(*rdatalist, rdlist, link);
+		isc_mem_put(mctx, rdlist, sizeof(*rdlist));
+	}
+}
+
+isc_result_t
+ldapdb_rdatalist_get(isc_mem_t *mctx, dns_name_t *name,
+		     ldapdb_rdatalist_t *rdatalist)
+{
+
+	/* Max type length definitions, from lib/dns/master.c */
+	#define MINTSIZ (65535 - 12 - 1 - 2 - 2 - 4 - 2)
+	#define TOKENSIZ (8*1024)
+
+	isc_lex_t *lex = NULL;
+	isc_result_t result;
+	isc_buffer_t target, lexbuffer;
+	unsigned char *targetmem;
+	isc_region_t rdatamem;
+	dns_rdataclass_t rdclass;
+	dns_rdatatype_t rdtype;
+	isc_textregion_t rdtype_text, rdclass_text, ttl_text, rdata_text;
+	dns_ttl_t ttl;
+	isc_boolean_t seen_error = ISC_FALSE;
+	dns_rdata_t *rdata;
+	dns_rdatalist_t *rdlist = NULL;
+
+	REQUIRE(name != NULL);
+	REQUIRE(rdatalist != NULL);
+
+	/*
+	 * Get info from ldap - name, type, class, TTL + value. Try avoid
+	 * ENOMEM as much as possible, if nothing found return ISC_R_NOTFOUND
+	 */
+
+	result = isc_lex_create(mctx, TOKENSIZ, &lex);
+	if (result != ISC_R_SUCCESS)
+		return result;
+
+	targetmem = isc_mem_get(mctx, MINTSIZ);
+	if (targetmem == NULL) {
+		result = ISC_R_NOMEMORY;
+		goto cleanup;
+	}
+
+	INIT_LIST(*rdatalist);
+
+	for (;0;) {
+		/*
+		 * Note: if rdclass_text and rdtype_text are ttl_text are allocated
+		 * free() them correctly before break and before next iteration!
+		 */
+		rdclass_text.base = "in";
+		rdclass_text.length = strlen(rdclass_text.base);
+		result = dns_rdataclass_fromtext(&rdclass, &rdclass_text);
+		if (result != ISC_R_SUCCESS) {
+			seen_error = ISC_TRUE;
+			/* XXX write nice error message here */
+			break;
+		}
+		/* Everything else than IN class is pretty bad */
+		INSIST(rdclass == dns_rdataclass_in);
+
+		rdtype_text.base = "a";
+		rdtype_text.length = strlen(rdtype_text.base);
+		result = dns_rdatatype_fromtext(&rdtype, &rdtype_text);
+		if (result != ISC_R_SUCCESS) {
+			seen_error = ISC_TRUE;
+			/* XXX write something romantic here as well... */
+			break;
+		}
+
+		ttl_text.base = "86400";
+		ttl_text.length = strlen(ttl_text.base);
+		result = dns_ttl_fromtext(&ttl_text, &ttl);
+		if (result != ISC_R_SUCCESS) {
+			seen_error = ISC_TRUE;
+			break;
+		}
+
+		/* put record in master file format here */
+		rdata_text.base = "192.168.1.1";
+		rdata_text.length = strlen(rdata_text.base);
+
+		isc_buffer_init(&lexbuffer, rdata_text.base, rdata_text.length);
+		isc_buffer_add(&lexbuffer, rdata_text.length);
+		isc_buffer_setactive(&lexbuffer, rdata_text.length);
+
+		result = isc_lex_openbuffer(lex, &lexbuffer);
+		if (result != ISC_R_SUCCESS) {
+			seen_error = ISC_TRUE;
+			break;
+		}
+
+		isc_buffer_init(&target, targetmem, MINTSIZ);
+
+		/*
+		 * If ldap returns relative domain name then tune it here, via
+		 * "origin" parameter.
+		 *
+		 * We might want to use the last parameter - error callbacks but
+		 * use default ones for now.
+		 */
+		result = dns_rdata_fromtext(NULL, rdclass, rdtype, lex, NULL,
+					    0, mctx, &target, NULL);
+
+		if (result != ISC_R_SUCCESS) {
+			seen_error = ISC_TRUE;
+			break;
+		}
+
+		result = isc_lex_close(lex);
+		/* Use strong condition here, error is suspicious */
+		INSIST(result == ISC_R_SUCCESS);
+
+		/* Don't waste memory, use exact buffers for rdata */
+		rdata = isc_mem_get(mctx, sizeof(*rdata));
+		if (rdata == NULL)
+			goto for_cleanup1;
+
+		rdatamem.length = isc_buffer_usedlength(&target);
+		rdatamem.base = isc_mem_get(mctx, rdatamem.length);
+		if (rdatamem.base == NULL)
+			goto for_cleanup2;
+
+		memcpy(rdatamem.base, isc_buffer_base(&target), rdatamem.length);
+		dns_rdata_fromregion(rdata, rdclass, rdtype, &rdatamem);
+
+		result = ldapdb_rdatalist_findrdatatype(rdatalist, rdtype,
+							&rdlist);
+
+		/* no rdata with rdtype exist in rdatalist => add it */
+		if (result != ISC_R_SUCCESS) {
+			rdlist = isc_mem_get(mctx, sizeof(*rdlist));
+			if (rdlist == NULL)
+				goto for_cleanup3;
+
+			dns_rdatalist_init(rdlist);
+			rdlist->rdclass = rdclass;
+			rdlist->type = rdtype;
+			rdlist->ttl = ttl;
+			APPEND(*rdatalist, rdlist, link);
+		} else {
+			/*
+			 * Use strong condition here, we are not allowing
+			 * different TTLs for one name.
+			 */
+			INSIST(rdlist->ttl == ttl);
+		}
+
+		APPEND(rdlist->rdata, rdata, link);
+
+		continue;
+
+for_cleanup3:
+		isc_mem_put(mctx, rdatamem.base, rdatamem.length);
+for_cleanup2:
+		isc_mem_put(mctx, rdata, sizeof(*rdata));
+for_cleanup1:
+		result = ISC_R_NOMEMORY;
+		seen_error = ISC_TRUE;
+		break;
+	}
+
+	if (seen_error == ISC_TRUE)
+		ldapdb_rdatalist_destroy(mctx, rdatalist);
+
+cleanup:
+	isc_mem_put(mctx, targetmem, MINTSIZ);
+	isc_lex_destroy(&lex);
+
+	return result;
 }
 
 void
