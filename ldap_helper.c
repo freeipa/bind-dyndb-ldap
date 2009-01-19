@@ -83,10 +83,15 @@ struct ldap_instance {
 	ldap_db_t		*database;
 	isc_mutex_t		lock;
 	LINK(ldap_instance_t)	link;
-	LDAP			*ldap_handle;
-	LDAPMessage		*result;
 	ld_string_t		*query_string;
 	ld_string_t		*base;
+
+	LDAP			*handle;
+	LDAPMessage		*result;
+	LDAPMessage		*entry;
+	BerElement		*ber;
+	char			*attribute;
+	char			**values;
 };
 
 /*
@@ -116,6 +121,10 @@ static isc_result_t ldap_connect(ldap_instance_t *ldap_inst);
 static isc_result_t ldap_query(ldap_instance_t *ldap_inst, int scope,
 		char **attrs, int attrsonly, const char *filter, ...);
 
+static const LDAPMessage *next_entry(ldap_instance_t *inst);
+static const char *next_attribute(ldap_instance_t *inst);
+static const char *get_attribute(ldap_instance_t *inst);
+static char **get_values(ldap_instance_t *inst);
 
 isc_result_t
 new_ldap_db(isc_mem_t *mctx, ldap_db_t **ldap_dbp, const char * const *argv)
@@ -138,7 +147,7 @@ new_ldap_db(isc_mem_t *mctx, ldap_db_t **ldap_dbp, const char * const *argv)
 	if (ldap_db == NULL)
 		return ISC_R_NOMEMORY;
 
-	ZERO_PTR(ldap_db, ldap_db_t);
+	ZERO_PTR(ldap_db);
 	memset(ldap_db, 0, sizeof(ldap_db_t));
 
 	isc_mem_attach(mctx, &ldap_db->mctx);
@@ -220,7 +229,7 @@ new_ldap_instance(ldap_db_t *ldap_db, ldap_instance_t **ldap_instp)
 	if (ldap_inst == NULL)
 		return ISC_R_NOMEMORY;
 
-	ZERO_PTR(ldap_inst, ldap_instance_t);
+	ZERO_PTR(ldap_inst);
 	memset(ldap_inst, 0, sizeof(ldap_instance_t));
 
 	ldap_inst->database = ldap_db;
@@ -253,8 +262,8 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 
 	ldap_inst = *ldap_instp;
 	DESTROYLOCK(&ldap_inst->lock);
-	if (ldap_inst->ldap_handle != NULL)
-		ldap_unbind_ext_s(ldap_inst->ldap_handle, NULL, NULL);
+	if (ldap_inst->handle != NULL)
+		ldap_unbind_ext_s(ldap_inst->handle, NULL, NULL);
 
 	str_destroy(&ldap_inst->query_string);
 	str_destroy(&ldap_inst->base);
@@ -474,15 +483,11 @@ cleanup:
 
 	return result;
 }
-
 void
 get_zone_list(ldap_db_t *ldap_db)
 {
 	ldap_instance_t *ldap_inst;
 	int i;
-	char *a;
-	LDAPMessage *e;
-	BerElement *ber;
 	char **vals;
 	char *attrs[] = {
 		"idnsName", "idnsSOAmName", "idnsSOArName", "idnsSOAserial",
@@ -496,21 +501,15 @@ get_zone_list(ldap_db_t *ldap_db)
 		   "(objectClass=idnsZone)");
 
 	log_error("list of ldap values:");
-	for (e = ldap_first_entry(ldap_inst->ldap_handle, ldap_inst->result);
-	     e != NULL;
-	     e = ldap_next_entry(ldap_inst->ldap_handle, e)) {
-		for (a = ldap_first_attribute(ldap_inst->ldap_handle, e, &ber);
-		     a != NULL;
-		     a = ldap_next_attribute(ldap_inst->ldap_handle, e, ber)) {
-			vals = ldap_get_values(ldap_inst->ldap_handle, e, a);
-			if (vals == NULL)
-				continue;
+	while (next_entry(ldap_inst)) {
+		while (next_attribute(ldap_inst)) {
+			vals = get_values(ldap_inst);
 			for (i = 0; vals[i] != NULL; i++) {
-				log_error("attribute %s: %s", a, vals[i]);
+				log_error("attribute %s: %s",
+					  get_attribute(ldap_inst),
+					  vals[i]);
 			}
-			ldap_value_free(vals);
 		}
-		ber_free(ber, 0);
 	}
 	log_error("end of ldap values");
 
@@ -541,7 +540,19 @@ get_connection(ldap_db_t *ldap_db)
 static void
 put_connection(ldap_instance_t *ldap_inst)
 {
-	if (ldap_inst->result != NULL) {
+	if (ldap_inst->values) {
+		ldap_value_free(ldap_inst->values);
+		ldap_inst->values = NULL;
+	}
+	if (ldap_inst->attribute) {
+		ldap_memfree(ldap_inst->attribute);
+		ldap_inst->attribute = NULL;
+	}
+	if (ldap_inst->ber) {
+		ber_free(ldap_inst->ber, 0);
+		ldap_inst->ber = NULL;
+	}
+	if (ldap_inst->result) {
 		ldap_msgfree(ldap_inst->result);
 		ldap_inst->result = NULL;
 	}
@@ -565,20 +576,97 @@ ldap_query(ldap_instance_t *ldap_inst, int scope, char **attrs,
 	log_error("Querying '%s' with '%s'", str_buf(ldap_inst->base),
 			str_buf(ldap_inst->query_string));
 
-	ret = ldap_search_ext_s(ldap_inst->ldap_handle, str_buf(ldap_inst->base),
+	ret = ldap_search_ext_s(ldap_inst->handle, str_buf(ldap_inst->base),
 				scope, str_buf(ldap_inst->query_string), attrs,
 				attrsonly, NULL, NULL, NULL, LDAP_NO_LIMIT,
 				&ldap_inst->result);
 
-	log_error("Result: %d", ldap_count_entries(ldap_inst->ldap_handle,
+	log_error("Result: %d", ldap_count_entries(ldap_inst->handle,
 				ldap_inst->result));
 
 	return ISC_R_SUCCESS;
 }
 
-/*
- * Static methods local to this unit ABRAKA
- */
+static const LDAPMessage *
+next_entry(ldap_instance_t *inst)
+{
+	if (inst->ber) {
+		ber_free(inst->ber, 0);
+		inst->ber = NULL;
+	}
+
+	if (inst->handle && inst->entry)
+		inst->entry = ldap_next_entry(inst->handle, inst->entry);
+	else if (inst->handle && inst->result)
+		inst->entry = ldap_first_entry(inst->handle, inst->result);
+	else
+		inst->entry = NULL;
+
+	return inst->entry;
+}
+
+static const char *
+next_attribute(ldap_instance_t *inst)
+{
+	if (inst->attribute) {
+		ldap_memfree(inst->attribute);
+		inst->attribute = NULL;
+	}
+
+	if (inst->handle && inst->entry && inst->ber)
+		inst->attribute = ldap_next_attribute(inst->handle, inst->entry,
+						      inst->ber);
+	else if (inst->handle && inst->entry)
+		inst->attribute = ldap_first_attribute(inst->handle, inst->entry,
+						       &inst->ber);
+
+	return inst->attribute;
+}
+
+static const char *
+get_attribute(ldap_instance_t *inst)
+{
+	return inst->attribute;
+}
+
+static char **
+get_values(ldap_instance_t *inst)
+{
+	if (inst->values) {
+		ldap_value_free(inst->values);
+		inst->values = NULL;
+	}
+
+	if (inst->handle && inst->entry && inst->attribute)
+		inst->values = ldap_get_values(inst->handle, inst->entry,
+					       inst->attribute);
+
+	return inst->values;
+}
+
+#if 0
+static const char *
+next_value(ldap_instance_t *inst)
+{
+	if (inst->values == NULL)
+		get_values(inst);
+
+	if (inst->values[inst->value_cnt])
+		inst->value_cnt++;
+
+	return inst->values[inst->value_cnt - 1];
+}
+
+static const char *
+get_value(ldap_instance_t *inst)
+{
+	if (inst->values)
+		return inst->values[inst->value_cnt - 1];
+	else
+		return NULL;
+}
+#endif
+
 static isc_result_t
 ldap_connect(ldap_instance_t *ldap_inst)
 {
@@ -627,7 +715,7 @@ ldap_connect(ldap_instance_t *ldap_inst)
 		goto cleanup;
 	}
 
-	ldap_inst->ldap_handle = ld;
+	ldap_inst->handle = ld;
 
 	return ISC_R_SUCCESS;
 
