@@ -23,7 +23,11 @@
 #include <isc/util.h>
 
 #include <dns/db.h>
+#include <dns/rdatalist.h>
 #include <dns/result.h>
+#include <dns/types.h>
+
+#include <string.h> /* For memcpy */
 
 #include "ldap_helper.h"
 #include "log.h"
@@ -57,16 +61,20 @@ typedef struct {
 typedef struct {
 	unsigned int			magic;
 	isc_refcount_t			refs;
-	dns_name_t			*owner;
+	dns_name_t			owner;
+	ldapdb_rdatalist_t		rdatalist;
 } ldapdbnode_t;
 
 static int dummy;
 static void *ldapdb_version = &dummy;
 static ldapdb_data_t driver_data;
 
+static void
+detachnode(dns_db_t *db, dns_dbnode_t **targetp);
+
 /* ldapdbnode_t functions */
 static isc_result_t
-ldapdbnode_create(isc_mem_t *mctx, ldapdbnode_t **nodep)
+ldapdbnode_create(isc_mem_t *mctx, dns_name_t *owner, ldapdbnode_t **nodep)
 {
 	ldapdbnode_t *node;
 	isc_result_t result;
@@ -77,10 +85,16 @@ ldapdbnode_create(isc_mem_t *mctx, ldapdbnode_t **nodep)
 	if (node == NULL)
 		return ISC_R_NOMEMORY;
 
-	node->magic = LDAPDBNODE_MAGIC;
 	CHECK(isc_refcount_init(&node->refs, 1));
 
-	dns_name_init(node->owner, NULL);
+	dns_name_init(&node->owner, NULL);
+	result = dns_name_dup(owner, mctx, &node->owner);
+	if (result != ISC_R_SUCCESS)
+		goto cleanup;
+
+	node->magic = LDAPDBNODE_MAGIC;
+
+	ISC_LIST_INIT(node->rdatalist);
 
 	*nodep = node;
 
@@ -89,14 +103,6 @@ ldapdbnode_create(isc_mem_t *mctx, ldapdbnode_t **nodep)
 cleanup:
 	isc_mem_put(mctx, node, sizeof(*node));
 	return result;
-}
-
-static void
-ldapdbnode_destroy(isc_mem_t *mctx, ldapdbnode_t **nodep)
-{
-	REQUIRE(nodep != NULL && VALID_LDAPDBNODE(*nodep));
-
-	isc_mem_put(mctx, *nodep, sizeof (**nodep));
 }
 
 /*
@@ -120,7 +126,7 @@ attach(dns_db_t *source, dns_db_t **targetp)
 static void
 detach(dns_db_t **dbp)
 {
-	ldapdb_t *ldapdb = (ldapdb_t *)dbp;
+	ldapdb_t *ldapdb = (ldapdb_t *)(*dbp);
 	unsigned int refs;
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
@@ -227,46 +233,132 @@ closeversion(dns_db_t *db, dns_dbversion_t **versionp, isc_boolean_t commit)
 	*versionp = NULL;
 }
 
+/*
+ * this is "extended" version of findnode which allows partial matches for
+ * internal usage. Note that currently only exact matches work.
+ */
 static isc_result_t
 findnode(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 	 dns_dbnode_t **nodep)
 {
-	ldapdb_t *ldapdb = (ldapdb_t *)db;
+	ldapdb_t *ldapdb = (ldapdb_t *) db;
+	isc_result_t result;
+	ldapdb_rdatalist_t rdatalist;
+	ldapdbnode_t *node = NULL;
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
 
-	UNUSED(name);
-	UNUSED(create);
-	UNUSED(nodep);
+	result = ldapdb_rdatalist_get(ldapdb->common.mctx, name, &rdatalist);
+	INSIST(result != DNS_R_PARTIALMATCH); /* XXX notimp yet */
 
-	/* XXX LDAP:
-	 *
-	 * Query to ldap: find all RRs with supplied name
-	 */
+	/* If ldapdb_rdatalist_get has no memory node creation will fail as well */
+	if (result == ISC_R_NOMEMORY)
+		return ISC_R_NOMEMORY;
 
-	/* XXX Do it */
+	if (create == ISC_FALSE) {
+		/* No partial matches are allowed in this function */
+		if (result == DNS_R_PARTIALMATCH) {
+			result = ISC_R_NOTFOUND;
+			goto cleanup;
+		} else if (result != ISC_R_SUCCESS) {
+			return result;
+		}
+	}
 
-	return ISC_R_NOTIMPLEMENTED;
+	result = ldapdbnode_create(ldapdb->common.mctx, name, &node);
+	if (result != ISC_R_SUCCESS)
+		goto cleanup;
+
+	memcpy(&node->rdatalist, &rdatalist, sizeof(rdatalist));
+
+	*nodep = node;
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	ldapdb_rdatalist_destroy(ldapdb->common.mctx, &rdatalist);
+	return result;
 }
 
+/* XXX add support for DNAME redirection */
 static isc_result_t
 find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
      dns_rdatatype_t type, unsigned int options, isc_stdtime_t now,
      dns_dbnode_t **nodep, dns_name_t *foundname, dns_rdataset_t *rdataset,
      dns_rdataset_t *sigrdataset)
 {
-	UNUSED(db);
-	UNUSED(name);
-	UNUSED(version);
-	UNUSED(type);
-	UNUSED(options);
+	ldapdb_t *ldapdb = (ldapdb_t *) db;
+	isc_result_t result;
+	ldapdbnode_t *node = NULL;
+	dns_rdatalist_t *rdlist;
+	isc_boolean_t is_cname = ISC_FALSE;
+	ldapdb_rdatalist_t rdatalist;
+
 	UNUSED(now);
-	UNUSED(nodep);
-	UNUSED(foundname);
-	UNUSED(rdataset);
+	UNUSED(options);
 	UNUSED(sigrdataset);
 
-	return ISC_R_NOTIMPLEMENTED;
+	REQUIRE(VALID_LDAPDB(ldapdb));
+
+	/* XXX not yet implemented */
+	INSIST(type != dns_rdatatype_any);
+
+	if (version != NULL) {
+		REQUIRE(version == ldapdb_version);
+	}
+
+	result = ldapdb_rdatalist_get(ldapdb->common.mctx, name, &rdatalist);
+	INSIST(result != DNS_R_PARTIALMATCH); /* XXX Not yet implemented */
+
+	if (result != ISC_R_SUCCESS && result != DNS_R_PARTIALMATCH)
+		return result;
+
+	result = ldapdbnode_create(ldapdb->common.mctx, name, &node);
+	if (result != ISC_R_SUCCESS) {
+		ldapdb_rdatalist_destroy(ldapdb->common.mctx, &rdatalist);
+		return result;
+	}
+
+	memcpy(&node->rdatalist, &rdatalist, sizeof(rdatalist));
+
+	result = ldapdb_rdatalist_findrdatatype(&node->rdatalist, type,
+						&rdlist);
+
+	if (result != ISC_R_SUCCESS) {
+		/* No exact rdtype match. Check CNAME */
+
+		rdlist = HEAD(node->rdatalist);
+		while (rdlist != NULL && rdlist->type != dns_rdatatype_cname)
+			rdlist = NEXT(rdlist, link);
+
+		/* CNAME was found */
+		if (rdlist != NULL) {
+			result = ISC_R_SUCCESS;
+			is_cname = ISC_TRUE;
+		}
+	}
+
+	if (result != ISC_R_SUCCESS) {
+		result = DNS_R_NXRRSET;
+		goto cleanup;
+	}
+
+	/* dns_rdatalist_tordataset returns success only */
+	result = dns_rdatalist_tordataset(rdlist, rdataset);
+	INSIST(result == ISC_R_SUCCESS);
+
+	/* XXX currently we implemented only exact authoritative matches */
+	result = dns_name_dupwithoffsets(name, ldapdb->common.mctx, foundname);
+	if (result != ISC_R_SUCCESS)
+		goto cleanup;
+
+	*nodep = node;
+
+	return (is_cname == ISC_TRUE) ? DNS_R_CNAME : ISC_R_SUCCESS;
+
+cleanup:
+	detachnode(db, ((dns_dbnode_t **) &node));
+	return result;
 }
 
 static isc_result_t
@@ -289,16 +381,35 @@ findzonecut(dns_db_t *db, dns_name_t *name, unsigned int options,
 static void
 attachnode(dns_db_t *db, dns_dbnode_t *source, dns_dbnode_t **targetp)
 {
+	ldapdbnode_t *node = (ldapdbnode_t *) source;
+
+	REQUIRE(VALID_LDAPDBNODE(node));
+
 	UNUSED(db);
-	UNUSED(source);
-	UNUSED(targetp);
+
+	isc_refcount_increment(&node->refs, NULL);
+	*targetp = source;
 }
 
 static void
 detachnode(dns_db_t *db, dns_dbnode_t **targetp)
 {
-	UNUSED(db);
-	UNUSED(targetp);
+	ldapdbnode_t *node = (ldapdbnode_t *)(*targetp);
+	ldapdb_t *ldapdb = (ldapdb_t *) db;
+	unsigned int refs;
+
+	/*
+	 * Don't check for db and targetp validity, it's done in
+	 * dns_db_detachnode
+	 */
+
+	REQUIRE(VALID_LDAPDBNODE(node));
+
+	isc_refcount_decrement(&node->refs, &refs);
+	if (refs == 0) {
+		ldapdb_rdatalist_destroy(ldapdb->common.mctx, &node->rdatalist);
+		dns_name_free(&node->owner, ldapdb->common.mctx);
+	}
 }
 
 static isc_result_t
