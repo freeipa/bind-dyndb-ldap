@@ -1,7 +1,7 @@
 /* Authors: Martin Nagy <mnagy@redhat.com>
  *          Adam Tkac <atkac@redhat.com>
  *
- * Copyright (C) 2008  Red Hat
+ * Copyright (C) 2008, 2009  Red Hat
  * see file 'COPYING' for use and warranty information
  *
  * This program is free software; you can redistribute it and/or
@@ -19,6 +19,9 @@
  */
 
 #ifndef _LD_LDAP_HELPER_H_
+#define _LD_LDAP_HELPER_H_
+
+#include <isc/util.h>
 
 typedef struct ldap_db		ldap_db_t;
 typedef struct ldap_instance	ldap_instance_t;
@@ -73,9 +76,10 @@ isc_result_t ldapdb_rdatalist_get(isc_mem_t *mctx, dns_name_t *name,
  * DNS_R_PARTIALMATCH
  */
 
-isc_result_t new_ldap_db(isc_mem_t *mctx, ldap_db_t **ldap_dbp,
+isc_result_t new_ldap_db(isc_mem_t *mctx, dns_view_t *view, ldap_db_t **ldap_dbp,
 			 const char * const *argv);
 void destroy_ldap_db(ldap_db_t **ldap_db);
-void get_zone_list(ldap_db_t *ldap_db);
+isc_result_t refresh_zones_from_ldap(ldap_db_t *ldap_db, const char *name,
+				     dns_zonemgr_t *zmgr);
 
 #endif /* !_LD_LDAP_HELPER_H_ */

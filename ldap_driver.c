@@ -32,6 +32,7 @@
 #include "ldap_helper.h"
 #include "log.h"
 #include "util.h"
+#include "zone_manager.h"
 
 #define LDAPDB_MAGIC			ISC_MAGIC('L', 'D', 'P', 'D')
 #define VALID_LDAPDB(ldapdb) \
@@ -42,20 +43,10 @@
 							LDAPDBNODE_MAGIC)
 
 typedef struct {
-	ldap_db_t	*ldap_db;
-} ldapdb_data_t;
-
-typedef struct {
 	dns_db_t			common;
 	isc_refcount_t			refs;
 	isc_mutex_t			lock; /* convert to isc_rwlock_t ? */
-	/*
-	 * XXX LDAP:
-	 *
-	 * Add connection specification here - probably pointer to one shared
-	 * connection info for multiple zones? Will be used by all
-	 * ldapdb_methods to take information from LDAP.
-	 */
+	ldap_db_t			*ldap_db;
 } ldapdb_t;
 
 typedef struct {
@@ -67,10 +58,10 @@ typedef struct {
 
 static int dummy;
 static void *ldapdb_version = &dummy;
-static ldapdb_data_t driver_data;
 
-static void
-detachnode(dns_db_t *db, dns_dbnode_t **targetp);
+static void free_ldapdb(ldapdb_t *ldapdb);
+static void detachnode(dns_db_t *db, dns_dbnode_t **targetp);
+
 
 /* ldapdbnode_t functions */
 static isc_result_t
@@ -133,12 +124,18 @@ detach(dns_db_t **dbp)
 
 	isc_refcount_decrement(&ldapdb->refs, &refs);
 
-	if (refs != 0) {
-		*dbp = NULL;
-		return;
-	}
+	if (refs == 0)
+		free_ldapdb(ldapdb);
 
-	/* Clean all ldapdb_t stuff here */
+	*dbp = NULL;
+}
+
+static void
+free_ldapdb(ldapdb_t *ldapdb)
+{
+	DESTROYLOCK(&ldapdb->lock);
+	dns_name_free(&ldapdb->common.origin, ldapdb->common.mctx);
+	isc_mem_putanddetach(&ldapdb->common.mctx, ldapdb, sizeof(*ldapdb));
 }
 
 static isc_result_t
@@ -246,6 +243,7 @@ findnode(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 	ldapdb_rdatalist_t rdatalist;
 	ldapdbnode_t *node = NULL;
 
+	log_func_enter_args("name=%s, create=%d", name->ndata, create);
 	REQUIRE(VALID_LDAPDB(ldapdb));
 
 	result = ldapdb_rdatalist_get(ldapdb->common.mctx, name, &rdatalist);
@@ -273,10 +271,15 @@ findnode(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 
 	*nodep = node;
 
+	log_func_exit_result(ISC_R_SUCCESS);
+
 	return ISC_R_SUCCESS;
 
 cleanup:
 	ldapdb_rdatalist_destroy(ldapdb->common.mctx, &rdatalist);
+
+	log_func_exit_result(result);
+
 	return result;
 }
 
@@ -297,6 +300,8 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	UNUSED(now);
 	UNUSED(options);
 	UNUSED(sigrdataset);
+
+	log_func_enter();
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
 
@@ -409,7 +414,10 @@ detachnode(dns_db_t *db, dns_dbnode_t **targetp)
 	if (refs == 0) {
 		ldapdb_rdatalist_destroy(ldapdb->common.mctx, &node->rdatalist);
 		dns_name_free(&node->owner, ldapdb->common.mctx);
+		isc_mem_put(ldapdb->common.mctx, node, sizeof(*node));
 	}
+
+	*targetp = NULL;
 }
 
 static isc_result_t
@@ -691,7 +699,7 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 
 	UNUSED(driverarg); /* Currently we don't need any data */
 
-	/* LDAP server has to be specified at least */
+	/* Database implementation name and name pointing to ldap_db_t */
 	REQUIRE(argc > 0);
 
 	REQUIRE(type == dns_dbtype_zone);
@@ -712,6 +720,7 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 		goto clean_ldapdb;
 
 	isc_ondestroy_init(&ldapdb->common.ondest);
+	ldapdb->common.mctx = NULL;
 	isc_mem_attach(mctx, &ldapdb->common.mctx);
 
 	result = isc_mutex_init(&ldapdb->lock);
@@ -722,14 +731,9 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 	if (result != ISC_R_SUCCESS)
 		goto clean_lock;
 
-	/*
-	 * XXX LDAP:
-	 *
-	 * Now we have to setup connection info. Parameters passed in
-	 * configuration file are in arg && argv. So use them and setup
-	 * per-zone connection (will be used by ldapdb_methods). Parameters were
-	 * passed by ldap zone manager and by dns_zone_setdbtype method.
-	 */
+	result = manager_get_ldap_db(argv[0], &ldapdb->ldap_db);
+	if (result != ISC_R_SUCCESS)
+		goto clean_lock;
 
 	ldapdb->common.magic = DNS_DB_MAGIC;
 	ldapdb->common.impmagic = LDAPDB_MAGIC;
@@ -743,22 +747,28 @@ clean_lock:
 clean_origin:
 	dns_name_free(&ldapdb->common.origin, mctx);
 clean_ldapdb:
-	isc_mem_put(mctx, ldapdb, sizeof(*ldapdb));
+	isc_mem_putanddetach(&ldapdb->common.mctx, ldapdb, sizeof(*ldapdb));
 
 	return result;
 }
 
 static dns_dbimplementation_t *ldapdb_imp;
-static const char *ldapdb_impname = "dynamic-ldap";
+const char *ldapdb_impname = "dynamic-ldap";
+
 
 isc_result_t
 dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
-		    dns_view_t *view)
+		    dns_view_t *view, dns_zonemgr_t *zmgr)
 {
 	isc_result_t result;
+	ldap_db_t *ldap_db;
 
+	REQUIRE(mctx != NULL);
+	REQUIRE(name != NULL);
 	REQUIRE(argv != NULL);
-	UNUSED(view);
+	REQUIRE(view != NULL);
+
+	ldap_db = NULL;
 
 	log_debug(2, "Registering dynamic ldap driver for %s.", name);
 
@@ -769,6 +779,7 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 		i++;
 	}
 
+	/* Register new DNS DB implementation. */
 	result = dns_db_register(ldapdb_impname, &ldapdb_create, NULL, mctx,
 				 &ldapdb_imp);
 	if (result == ISC_R_EXISTS)
@@ -777,9 +788,8 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 	if (result != ISC_R_SUCCESS)
 		return result;
 
-	CHECK(new_ldap_db(mctx, &driver_data.ldap_db, argv));
-
-	get_zone_list(driver_data.ldap_db);
+	CHECK(new_ldap_db(mctx, view, &ldap_db, argv));
+	CHECK(manager_add_db_instance(mctx, name, ldap_db, zmgr));
 
 	/*
 	 * XXX now fetch all zones and initialize ldap zone manager
@@ -806,6 +816,9 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 	return ISC_R_SUCCESS;
 
 cleanup:
+	if (ldap_db != NULL)
+		destroy_ldap_db(&ldap_db);
+
 	return result;
 }
 
@@ -813,5 +826,5 @@ void
 dynamic_driver_destroy(void)
 {
 	dns_db_unregister(&ldapdb_imp);
-	destroy_ldap_db(&driver_data.ldap_db);
+	destroy_manager();
 }
