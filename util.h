@@ -25,6 +25,27 @@
 		if (result != ISC_R_SUCCESS) goto cleanup;	\
 	} while (0)
 
+#define CHECKED_MEM_GET(m, target_ptr, s)			\
+	do {							\
+		(target_ptr) = isc_mem_get((m), (s));		\
+		if ((target_ptr) == NULL) {			\
+			result = ISC_R_NOMEMORY;		\
+			goto cleanup;				\
+		}						\
+	} while (0)
+
+#define CHECKED_MEM_GET_PTR(m, target_ptr)			\
+	CHECKED_MEM_GET(m, target_ptr, sizeof(*(target_ptr)))
+
+#define CHECKED_MEM_STRDUP(m, source, target)			\
+	do {							\
+		(target) = isc_mem_strdup((m), (source));	\
+		if ((target) == NULL) {				\
+			result = ISC_R_NOMEMORY;		\
+			goto cleanup;				\
+		}						\
+	} while (0)
+
 #define ZERO_PTR(ptr) memset((ptr), 0, sizeof(*(ptr)))
 
 #endif /* !_LD_UTIL_H_ */
