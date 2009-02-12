@@ -454,16 +454,28 @@ findrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	     dns_rdatatype_t type, dns_rdatatype_t covers, isc_stdtime_t now,
 	     dns_rdataset_t *rdataset, dns_rdataset_t *sigrdataset)
 {
+	ldapdbnode_t *ldapdbnode = (ldapdbnode_t *) node;
+	dns_rdatalist_t *rdlist = NULL;
+	isc_result_t result;
+
 	UNUSED(db);
-	UNUSED(node);
-	UNUSED(version);
-	UNUSED(type);
-	UNUSED(covers);
 	UNUSED(now);
-	UNUSED(rdataset);
 	UNUSED(sigrdataset);
 
-	return ISC_R_NOTIMPLEMENTED;
+	REQUIRE(covers == 0); /* Only meaningful with DNSSEC capable DB*/
+	REQUIRE(VALID_LDAPDBNODE(ldapdbnode));
+
+	if (version != NULL) {
+		REQUIRE(version == ldapdb_version);
+	}
+
+	result = ldapdb_rdatalist_findrdatatype(&ldapdbnode->rdatalist, type,
+						&rdlist);
+	if (result != ISC_R_SUCCESS)
+		return result;
+
+	dns_rdatalist_tordataset(rdlist, rdataset);
+	return ISC_R_SUCCESS;
 }
 
 static isc_result_t
