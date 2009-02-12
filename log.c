@@ -1,6 +1,6 @@
 /* Authors: Martin Nagy <mnagy@redhat.com>
  *
- * Copyright (C) 2008  Red Hat
+ * Copyright (C) 2008, 2009  Red Hat
  * see file 'COPYING' for use and warranty information
  *
  * This program is free software; you can redistribute it and/or
@@ -41,27 +41,36 @@
 void
 log_debug(int level, const char *format, ...)
 {
-    char buf[MSG_BUFFER_SIZE];
-    va_list args;
+	char buf[MSG_BUFFER_SIZE];
+	va_list args;
 
-    va_start(args, format);
-    vsnprintf(buf, MSG_BUFFER_SIZE, format, args);
-    va_end(args);
+	va_start(args, format);
+	vsnprintf(buf, MSG_BUFFER_SIZE, format, args);
+	va_end(args);
 
-    isc_log_write(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
-                  ISC_LOG_DEBUG(level), "%s", buf);
+	/*
+	isc_log_write(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
+		      ISC_LOG_DEBUG(level), "%s", buf);
+	*/
+	/*
+	 * For now, behave same as log_error(), so we can see every debugging
+	 * logs without the need to specify -d.
+	 */
+	(void)level;
+	isc_log_write(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
+		      ISC_LOG_ERROR, "%s", buf);
 }
 
 void
 log_error(const char *format, ...)
 {
-    char buf[MSG_BUFFER_SIZE];
-    va_list args;
+	char buf[MSG_BUFFER_SIZE];
+	va_list args;
 
-    va_start(args, format);
-    vsnprintf(buf, MSG_BUFFER_SIZE, format, args);
-    va_end(args);
+	va_start(args, format);
+	vsnprintf(buf, MSG_BUFFER_SIZE, format, args);
+	va_end(args);
 
-    isc_log_write(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
-                  ISC_LOG_ERROR, "%s", buf);
+	isc_log_write(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
+		      ISC_LOG_ERROR, "%s", buf);
 }
