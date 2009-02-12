@@ -1,6 +1,6 @@
 /* Authors: Martin Nagy <mnagy@redhat.com>
  *
- * Copyright (C) 2008  Red Hat
+ * Copyright (C) 2008, 2009  Red Hat
  * see file 'COPYING' for use and warranty information
  *
  * This program is free software; you can redistribute it and/or
@@ -28,6 +28,18 @@
 /*
  * Change these to use our string library.
  */
+
+#define log_func(logstr)	log_debug(2, "%s: %s", __func__, (logstr))
+#define log_func_va(logstr, ...)		\
+	log_debug(2, "%s: " logstr, __func__, __VA_ARGS__)
+
+#define log_func_enter()	log_func("entering")
+#define log_func_enter_args(logstr, ...)	\
+	log_func_va("entering, args: " logstr, __VA_ARGS__)
+
+#define log_func_exit()		log_func("exiting")
+#define log_func_exit_result(res)		\
+	log_func_va("exiting with %s", isc_result_totext(res))
 
 /* Basic logging functions */
 void log_debug(int level, const char *format, ...);
