@@ -1,6 +1,6 @@
 /* Authors: Martin Nagy <mnagy@redhat.com>
  *
- * Copyright (C) 2008  Red Hat
+ * Copyright (C) 2008, 2009  Red Hat
  * see file 'COPYING' for use and warranty information
  *
  * This program is free software; you can redistribute it and/or
@@ -22,6 +22,8 @@
 
 #include <isc/mem.h>
 
+#define LD_MAX_SPLITS	256
+
 #if ISC_MEM_TRACKLINES
 #define _STR_MEM_FILELINE	, __FILE__, __LINE__
 #define _STR_MEM_FLARG		, const char *file, int line
@@ -33,6 +35,7 @@
 #endif
 
 typedef struct ld_string	ld_string_t;
+typedef struct ld_split		ld_split_t;
 
 /*
  * Public functions.
@@ -50,6 +53,12 @@ isc_result_t str_cat_char(ld_string_t *dest, const char *src);
 isc_result_t str_cat(ld_string_t *dest, const ld_string_t *src);
 isc_result_t str_sprintf(ld_string_t *dest, const char *format, ...);
 isc_result_t str_vsprintf(ld_string_t *dest, const char *format, va_list ap);
+
+isc_result_t str_new_split(isc_mem_t *mctx, ld_split_t **splitp);
+void str_destroy_split(ld_split_t **splitp);
+isc_result_t str_split(const ld_string_t *src, const char delimiter, ld_split_t *split);
+size_t str_split_count(const ld_split_t *split);
+const char * str_split_get(const ld_split_t *split, unsigned int split_number);
 
 /* These are pseudo-private functions and shouldn't be called directly. */
 isc_result_t str__new(isc_mem_t *mctx, ld_string_t **new_str _STR_MEM_FLARG);

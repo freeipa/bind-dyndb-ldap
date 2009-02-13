@@ -46,15 +46,22 @@
 
 /* Custom string, these shouldn't use these directly */
 struct ld_string {
+	isc_mem_t	*mctx;		/* Memory context.		*/
 	char		*data;		/* String is stored here.	*/
 	size_t		allocated;	/* Number of bytes allocated.	*/
-	isc_mem_t	*mctx;		/* Memory context.		*/
 #if ISC_MEM_TRACKLINES
 	const char	*file;		/* File where the allocation occured. */
 	int		line;		/* Line in the file.		*/
 #endif
 };
 
+struct ld_split {
+	isc_mem_t	*mctx;		/* Memory context.		*/
+	char		*data;		/* Splits.			*/
+	size_t		allocated;	/* Number of bytes allocated.	*/
+	char		*splits[LD_MAX_SPLITS];
+	size_t		split_count;	/* Number of splits.		*/
+};
 
 /*
  * Private functions.
@@ -93,7 +100,7 @@ str_alloc(ld_string_t *str, size_t len)
 	if (str->data != NULL) {
 		strncpy(new_buffer, str->data, len);
 		new_buffer[len] = '\0';
-		isc_mem_put(str->mctx, str->data, new_size);
+		isc_mem_put(str->mctx, str->data, str->allocated);
 	} else {
 		new_buffer[0] = '\0';
 	}
@@ -351,4 +358,128 @@ str_vsprintf(ld_string_t *dest, const char *format, va_list ap)
 
 cleanup:
 	return result;
+}
+
+/*
+ * TODO: Review.
+ */
+isc_result_t
+str_new_split(isc_mem_t *mctx, ld_split_t **splitp)
+{
+	isc_result_t result;
+	ld_split_t *split;
+
+	REQUIRE(splitp != NULL && *splitp == NULL);
+
+	CHECKED_MEM_GET_PTR(mctx, split);
+	ZERO_PTR(split);
+	isc_mem_attach(mctx, &split->mctx);
+
+	*splitp = split;
+	return ISC_R_SUCCESS;
+
+cleanup:
+	return result;
+}
+
+void
+str_destroy_split(ld_split_t **splitp)
+{
+	ld_split_t *split;
+
+	IGNORE(splitp == NULL || *splitp == NULL);
+
+	split = *splitp;
+
+	if (split->allocated)
+		isc_mem_free(split->mctx, split->data);
+
+	isc_mem_putanddetach(&split->mctx, split, sizeof(*split));
+
+	*splitp = NULL;
+}
+
+static isc_result_t
+str_split_initialize(ld_split_t *split, const char *str)
+{
+	size_t size;
+
+	REQUIRE(split != NULL);
+	REQUIRE(split->mctx != NULL);
+	REQUIRE(str != NULL && *str != '\0');
+
+	if (split->allocated != 0) {
+		isc_mem_put(split->mctx, split->data, split->allocated);
+		split->allocated = 0;
+	}
+	split->splits[0] = NULL;
+	split->split_count = 0;
+
+	size = strlen(str) + 1;
+	split->data = isc_mem_strdup(split->mctx, str);
+	if (split->data == NULL)
+		return ISC_R_NOMEMORY;
+
+	split->allocated = size;
+
+	return ISC_R_SUCCESS;
+}
+
+isc_result_t
+str_split(const ld_string_t *src, const char delimiter, ld_split_t *split)
+{
+	isc_result_t result;
+	unsigned int current_pos;
+	int save;
+
+	REQUIRE(src != NULL);
+	REQUIRE(delimiter != '\0');
+	REQUIRE(split != NULL);
+
+	CHECK(str_split_initialize(split, src->data));
+
+	/* Replace all delimiters with '\0'. */
+	for (unsigned int i = 0; i < split->allocated; i++) {
+		if (split->data[i] == delimiter)
+			split->data[i] = '\0';
+	}
+
+	/* Now save the right positions. */
+	current_pos = 0;
+	save = 1;
+	for (unsigned int i = 0;
+	     i < split->allocated && current_pos < LD_MAX_SPLITS;
+	     i++) {
+		if (save && split->data[i] != '\0') {
+			split->splits[current_pos] = split->data + i;
+			current_pos++;
+			save = 0;
+		} else if (split->data[i] == '\0') {
+			save = 1;
+		}
+	}
+	split->splits[current_pos] = NULL;
+	split->split_count = current_pos;
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	return result;
+}
+
+size_t
+str_split_count(const ld_split_t *split)
+{
+	REQUIRE(split != NULL);
+
+	return split->split_count;
+}
+
+const char *
+str_split_get(const ld_split_t *split, unsigned int split_number)
+{
+	REQUIRE(split != NULL);
+	REQUIRE(split->split_count >= split_number);
+
+	return split->splits[split_number];
 }
