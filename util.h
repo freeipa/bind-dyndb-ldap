@@ -48,4 +48,14 @@
 
 #define ZERO_PTR(ptr) memset((ptr), 0, sizeof(*(ptr)))
 
+#define SAFE_MEM_PUT(m, target_ptr, target_size)		\
+	do {							\
+		if ((target_ptr) != NULL)			\
+			isc_mem_put((m), (target_ptr),		\
+				    (target_size));		\
+	} while (0)
+
+#define SAFE_MEM_PUT_PTR(m, target_ptr)				\
+	SAFE_MEM_PUT((m), (target_ptr), sizeof(*(target_ptr)))
+
 #endif /* !_LD_UTIL_H_ */
