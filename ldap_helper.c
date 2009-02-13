@@ -55,6 +55,12 @@
 
 typedef struct ldap_auth_pair	ldap_auth_pair_t;
 typedef struct settings		settings_t;
+typedef struct ldap_value	ldap_value_t;
+typedef struct ldap_attribute	ldap_attribute_t;
+typedef struct ldap_entry	ldap_entry_t;
+typedef LIST(ldap_value_t)	ldap_value_list_t;
+typedef LIST(ldap_attribute_t)	ldap_attribute_list_t;
+typedef LIST(ldap_entry_t)	ldap_entry_list_t;
 
 /* Authentication method. */
 typedef enum ldap_auth {
@@ -85,6 +91,24 @@ struct ldap_db {
 	ldap_auth_t		auth_method;
 };
 
+struct ldap_value {
+	char			*value;
+	LINK(ldap_value_t)	link;
+};
+
+struct ldap_attribute {
+	char			*name;
+	char			**ldap_values;
+	ldap_value_list_t	values;
+	LINK(ldap_attribute_t)	link;
+};
+
+struct ldap_entry {
+	LDAPMessage		*entry;
+	ldap_attribute_list_t	attributes;
+	LINK(ldap_entry_t)	link;
+};
+
 struct ldap_instance {
 	ldap_db_t		*database;
 	isc_mutex_t		lock;
@@ -94,6 +118,15 @@ struct ldap_instance {
 
 	LDAP			*handle;
 	LDAPMessage		*result;
+
+	/* Parsing. */
+	isc_lex_t		*lex;
+	isc_buffer_t		rdata_target;
+	unsigned char		*rdata_target_mem;
+
+	/* Cache. */
+	ldap_entry_list_t	ldap_entries;
+	isc_boolean_t		cache_active;
 
 	/* Temporary stuff. */
 	LDAPMessage		*entry;
@@ -133,6 +166,20 @@ static void put_connection(ldap_instance_t *ldap_inst);
 static isc_result_t ldap_connect(ldap_instance_t *ldap_inst);
 static isc_result_t ldap_query(ldap_instance_t *ldap_inst, int scope,
 		char **attrs, int attrsonly, const char *filter, ...);
+
+
+static ldap_attribute_t * next_named_attribute(ldap_attribute_t *ldap_attr,
+		const char *name);
+static isc_result_t fill_cache_if_empty(ldap_instance_t *inst);
+static isc_result_t cache_query_results(ldap_instance_t *inst);
+static isc_result_t fill_ldap_entry(ldap_instance_t *inst,
+		ldap_entry_t *ldap_entry);
+static isc_result_t fill_ldap_attribute(ldap_instance_t *inst,
+		ldap_attribute_t *ldap_attr);
+static void free_query_cache(ldap_instance_t *inst);
+static void free_ldap_attributes(isc_mem_t *mctx, ldap_entry_t *entry);
+static void free_ldap_values(isc_mem_t *mctx, ldap_attribute_t *attr);
+
 
 static const LDAPMessage *next_entry(ldap_instance_t *inst);
 static const char *next_attribute(ldap_instance_t *inst);
@@ -624,6 +671,7 @@ get_connection(ldap_db_t *ldap_db)
 
 	RUNTIME_CHECK(ldap_inst != NULL);
 
+	INIT_LIST(ldap_inst->ldap_entries);
 	/* TODO: find a clever way to not really require this */
 	str_copy(ldap_inst->base, ldap_db->base);
 
@@ -654,6 +702,8 @@ put_connection(ldap_instance_t *ldap_inst)
 		ldap_inst->result = NULL;
 	}
 
+	free_query_cache(ldap_inst);
+
 	UNLOCK(&ldap_inst->lock);
 	semaphore_signal(&ldap_inst->database->conn_semaphore);
 }
@@ -682,6 +732,198 @@ ldap_query(ldap_instance_t *ldap_inst, int scope, char **attrs,
 		  ldap_inst->result));
 
 	return ISC_R_SUCCESS;
+}
+
+static ldap_attribute_t *
+next_named_attribute(ldap_attribute_t *ldap_attr, const char *name)
+{
+	ldap_attribute_t *iterator;
+
+	REQUIRE(ldap_attr != NULL);
+	REQUIRE(name != NULL);
+
+	iterator = NEXT(ldap_attr, link);
+	while (iterator != NULL) {
+		if (strcasecmp(name, iterator->name) == 0)
+			return iterator;
+		iterator = NEXT(iterator, link);
+	}
+
+	return NULL;
+}
+
+static isc_result_t
+fill_cache_if_empty(ldap_instance_t *inst)
+{
+	if (inst->cache_active)
+		return ISC_R_SUCCESS;
+
+	return cache_query_results(inst);
+}
+
+static isc_result_t
+cache_query_results(ldap_instance_t *inst)
+{
+	isc_result_t result;
+	LDAP *ld;
+	LDAPMessage *res;
+	LDAPMessage *entry;
+	ldap_entry_t *ldap_entry;
+
+	REQUIRE(inst != NULL);
+	REQUIRE(EMPTY(inst->ldap_entries));
+	REQUIRE(inst->result != NULL);
+
+	INIT_LIST(inst->ldap_entries);
+
+	if (inst->cache_active)
+		free_query_cache(inst);
+
+	ld = inst->handle;
+	res = inst->result;
+
+	for (entry = ldap_first_entry(ld, res);
+	     entry != NULL;
+	     entry = ldap_next_entry(ld, entry)) {
+		CHECKED_MEM_GET_PTR(inst->database->mctx, ldap_entry);
+		ZERO_PTR(ldap_entry);
+
+		ldap_entry->entry = entry;
+		INIT_LIST(ldap_entry->attributes);
+		INIT_LINK(ldap_entry, link);
+		CHECK(fill_ldap_entry(inst, ldap_entry));
+
+		APPEND(inst->ldap_entries, ldap_entry, link);
+	}
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	free_query_cache(inst);
+
+	return result;
+}
+
+static isc_result_t
+fill_ldap_entry(ldap_instance_t *inst, ldap_entry_t *ldap_entry)
+{
+	isc_result_t result;
+	ldap_attribute_t *ldap_attr;
+	char *attribute;
+	BerElement *ber;
+	LDAPMessage *entry;
+
+	REQUIRE(inst != NULL);
+	REQUIRE(ldap_entry != NULL);
+
+	result = ISC_R_SUCCESS;
+	entry = ldap_entry->entry;
+
+	for (attribute = ldap_first_attribute(inst->handle, entry, &ber);
+	     attribute != NULL;
+	     attribute = ldap_next_attribute(inst->handle, entry, ber)) {
+		CHECKED_MEM_GET_PTR(inst->database->mctx, ldap_attr);
+		ZERO_PTR(ldap_attr);
+
+		ldap_attr->name = attribute;
+		INIT_LIST(ldap_attr->values);
+		INIT_LINK(ldap_attr, link);
+		CHECK(fill_ldap_attribute(inst, ldap_attr));
+
+		APPEND(ldap_entry->attributes, ldap_attr, link);
+	}
+
+	if (ber != NULL)
+		ber_free(ber, 0);
+
+cleanup:
+	if (result != ISC_R_SUCCESS) {
+		free_ldap_attributes(inst->database->mctx, ldap_entry);
+	}
+
+	return result;
+}
+
+static isc_result_t
+fill_ldap_attribute(ldap_instance_t *inst, ldap_attribute_t *ldap_attr)
+{
+	isc_result_t result;
+	char **values;
+	ldap_value_t *ldap_val;
+
+	REQUIRE(inst != NULL);
+	REQUIRE(ldap_attr != NULL);
+
+	values = ldap_get_values(inst->handle, inst->result, ldap_attr->name);
+	/* TODO: proper ldap error handling */
+	if (values == NULL)
+		return ISC_R_FAILURE;
+
+	ldap_attr->ldap_values = values;
+
+	for (unsigned int i = 0; values[i] != NULL; i++) {
+		CHECKED_MEM_GET_PTR(inst->database->mctx, ldap_val);
+		ldap_val->value = values[i];
+		INIT_LINK(ldap_val, link);
+
+		APPEND(ldap_attr->values, ldap_val, link);
+	}
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	free_ldap_values(inst->database->mctx, ldap_attr);
+	ldap_value_free(values);
+
+	return result;
+}
+
+static void
+free_query_cache(ldap_instance_t *inst)
+{
+	ldap_entry_t *entry, *next;
+
+	entry = HEAD(inst->ldap_entries);
+	while (entry != NULL) {
+		next = NEXT(entry, link);
+		UNLINK(inst->ldap_entries, entry, link);
+		free_ldap_attributes(inst->database->mctx, entry);
+		isc_mem_put(inst->database->mctx, entry, sizeof(*entry));
+		entry = next;
+	}
+
+	inst->cache_active = isc_boolean_false;
+}
+
+static void
+free_ldap_attributes(isc_mem_t *mctx, ldap_entry_t *entry)
+{
+	ldap_attribute_t *attr, *next;
+
+	attr = HEAD(entry->attributes);
+	while (attr != NULL) {
+		next = NEXT(attr, link);
+		UNLINK(entry->attributes, attr, link);
+		free_ldap_values(mctx, attr);
+		ldap_value_free(attr->ldap_values);
+		ldap_memfree(attr->name);
+		isc_mem_put(mctx, attr, sizeof(*attr));
+		attr = next;
+	}
+}
+
+static void
+free_ldap_values(isc_mem_t *mctx, ldap_attribute_t *attr)
+{
+	ldap_value_t *value, *next;
+
+	value = HEAD(attr->values);
+	while (value != NULL) {
+		next = NEXT(value, link);
+		UNLINK(attr->values, value, link);
+		isc_mem_put(mctx, value, sizeof(*value));
+		value = next;
+	}
 }
 
 static const LDAPMessage *
