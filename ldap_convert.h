@@ -20,6 +20,8 @@
 #ifndef _LD_LDAP_CONVERT_H_
 #define _LD_LDAP_CONVERT_H_
 
+#include "str.h"
+
 /*
  * Convert LDAP DN 'dn', to dns_name_t 'target'. 'target' needs to be
  * initialized with dns_name_init() before the call and freed by the caller
@@ -27,5 +29,8 @@
  */
 isc_result_t dn_to_dnsname(isc_mem_t *mctx, const char *dn, const char *root_dn,
 			   dns_name_t *target);
+
+isc_result_t dnsname_to_dn(isc_mem_t *mctx, dns_name_t *name,
+			   const char *root_dn, ld_string_t *target);
 
 #endif /* !_LD_LDAP_CONVERT_H_ */

@@ -178,3 +178,53 @@ count_rdns(char **exploded)
 
 	return ret;
 }
+
+isc_result_t
+dnsname_to_dn(isc_mem_t *mctx, dns_name_t *name, const char *root_dn,
+	      ld_string_t *target)
+{
+	isc_result_t result;
+	isc_buffer_t target_buffer;
+	char target_base[DNS_NAME_MAXTEXT + 1];
+	ld_string_t *str;
+	ld_split_t *split;
+	unsigned int split_count;
+
+	REQUIRE(mctx != NULL);
+	REQUIRE(name != NULL);
+	REQUIRE(target != NULL);
+
+	str = NULL;
+	split = NULL;
+	CHECK(str_new(mctx, &str));
+	CHECK(str_new_split(mctx, &split));
+	isc_buffer_init(&target_buffer, target_base, sizeof(target_base));
+	CHECK(dns_name_totext(name, isc_boolean_true, &target_buffer));
+
+	target_base[isc_buffer_usedlength(&target_buffer)] = '\0';
+	CHECK(str_init_char(str, target_base));
+	CHECK(str_split(str, '.', split));
+	split_count = str_split_count(split);
+
+	for (unsigned int i = 0; i < split_count - 1; i++) {
+		CHECK(str_cat_char(target, "idnsName="));
+		CHECK(str_cat_char(target, str_split_get(split, i)));
+		if (split_count - i > 2)
+			CHECK(str_cat_char(target, ", "));
+	}
+
+	CHECK(str_cat_char(target, "."));
+	CHECK(str_cat_char(target, str_split_get(split, split_count - 1)));
+
+	if (root_dn != NULL) {
+		CHECK(str_cat_char(target, ", "));
+		CHECK(str_cat_char(target, root_dn));
+	}
+
+	log_error("%s", str_buf(target));
+cleanup:
+	str_destroy_split(&split);
+	str_destroy(&str);
+
+	return result;
+}
