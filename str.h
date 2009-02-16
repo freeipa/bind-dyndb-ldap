@@ -48,6 +48,7 @@ size_t str_len(const ld_string_t *str);
 const char * str_buf(const ld_string_t *src);
 isc_result_t str_copy(ld_string_t *dest, const ld_string_t *src);
 isc_result_t str_clone(ld_string_t **dest, const ld_string_t *src _STR_MEM_FLARG);
+void str_clear(ld_string_t *dest);
 isc_result_t str_init_char(ld_string_t *dest, const char *src);
 isc_result_t str_cat_char(ld_string_t *dest, const char *src);
 isc_result_t str_cat(ld_string_t *dest, const ld_string_t *src);

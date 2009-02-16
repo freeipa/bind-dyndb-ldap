@@ -120,7 +120,7 @@ dn_to_text(const char *dn, const char *root_dn, ld_string_t *target)
 		count -= count_root;
 	}
 
-	str_init_char(target, "");
+	str_clear(target);
 	for (unsigned int i = 0; exploded_dn[i] != NULL && i < count; i++) {
 		str_cat_char(target, exploded_dn[i]);
 		str_cat_char(target, ".");

@@ -257,6 +257,15 @@ cleanup:
 	return result;
 }
 
+void
+str_clear(ld_string_t *dest)
+{
+	REQUIRE(dest != NULL);
+
+	if (dest->allocated)
+		dest->data[0] = '\0';
+}
+
 /*
  * Initialize string from char *.
  */
