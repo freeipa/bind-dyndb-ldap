@@ -293,7 +293,7 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
 	isc_result_t result;
 	ldapdbnode_t *node = NULL;
-	dns_rdatalist_t *rdlist;
+	dns_rdatalist_t *rdlist = NULL;
 	isc_boolean_t is_cname = ISC_FALSE;
 	ldapdb_rdatalist_t rdatalist;
 
@@ -318,21 +318,11 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	if (result != ISC_R_SUCCESS && result != DNS_R_PARTIALMATCH)
 		return result;
 
-	result = ldapdbnode_create(ldapdb->common.mctx, name, &node);
-	if (result != ISC_R_SUCCESS) {
-		ldapdb_rdatalist_destroy(ldapdb->common.mctx, &rdatalist);
-		return result;
-	}
-
-	memcpy(&node->rdatalist, &rdatalist, sizeof(rdatalist));
-
-	result = ldapdb_rdatalist_findrdatatype(&node->rdatalist, type,
-						&rdlist);
-
+	result = ldapdb_rdatalist_findrdatatype(&rdatalist, type, &rdlist);
 	if (result != ISC_R_SUCCESS) {
 		/* No exact rdtype match. Check CNAME */
 
-		rdlist = HEAD(node->rdatalist);
+		rdlist = HEAD(rdatalist);
 		while (rdlist != NULL && rdlist->type != dns_rdatatype_cname)
 			rdlist = NEXT(rdlist, link);
 
@@ -348,21 +338,30 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 		goto cleanup;
 	}
 
-	/* dns_rdatalist_tordataset returns success only */
-	result = dns_rdatalist_tordataset(rdlist, rdataset);
-	INSIST(result == ISC_R_SUCCESS);
-
 	/* XXX currently we implemented only exact authoritative matches */
-	result = dns_name_dupwithoffsets(name, ldapdb->common.mctx, foundname);
+	result = dns_name_copy(name, foundname, NULL);
 	if (result != ISC_R_SUCCESS)
 		goto cleanup;
 
-	*nodep = node;
+	if (rdataset != NULL) {
+		/* dns_rdatalist_tordataset returns success only */
+		result = dns_rdatalist_tordataset(rdlist, rdataset);
+		INSIST(result == ISC_R_SUCCESS);
+	}
+
+	if (nodep != NULL) {
+		result = ldapdbnode_create(ldapdb->common.mctx, name, &node);
+		if (result != ISC_R_SUCCESS) {
+			goto cleanup;
+		}
+		memcpy(&node->rdatalist, &rdatalist, sizeof(rdatalist));
+		*nodep = node;
+	}
 
 	return (is_cname == ISC_TRUE) ? DNS_R_CNAME : ISC_R_SUCCESS;
 
 cleanup:
-	detachnode(db, ((dns_dbnode_t **) &node));
+	ldapdb_rdatalist_destroy(ldapdb->common.mctx, &rdatalist);
 	return result;
 }
 
