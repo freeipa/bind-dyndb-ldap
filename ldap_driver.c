@@ -23,6 +23,7 @@
 #include <isc/util.h>
 
 #include <dns/db.h>
+#include <dns/rdata.h>
 #include <dns/rdatalist.h>
 #include <dns/result.h>
 #include <dns/types.h>
@@ -93,6 +94,65 @@ ldapdbnode_create(isc_mem_t *mctx, dns_name_t *owner, ldapdbnode_t **nodep)
 
 cleanup:
 	isc_mem_put(mctx, node, sizeof(*node));
+	return result;
+}
+
+/*
+ * Clone rdlist and convert it into rdataset.
+ */
+static isc_result_t
+clone_rdatalist_to_rdataset(isc_mem_t *mctx, dns_rdatalist_t *rdlist,
+			    dns_rdataset_t *rdataset)
+{
+	isc_result_t result;
+	dns_rdatalist_t *new_rdlist;
+	dns_rdata_t *rdata;
+	dns_rdata_t *new_rdata;
+
+	REQUIRE(mctx != NULL);
+
+	CHECKED_MEM_GET_PTR(mctx, new_rdlist);
+
+	new_rdlist->rdclass = rdlist->rdclass;
+	new_rdlist->type = rdlist->type;
+	new_rdlist->covers = rdlist->covers;
+	new_rdlist->ttl = rdlist->ttl;
+
+	INIT_LIST(new_rdlist->rdata);
+	INIT_LINK(new_rdlist, link);
+
+	for (rdata = HEAD(rdlist->rdata);
+	     rdata != NULL;
+	     rdata = NEXT(rdata, link)) {
+		CHECKED_MEM_GET_PTR(mctx, new_rdata);
+		ZERO_PTR(new_rdata);
+
+		CHECKED_MEM_GET(mctx, new_rdata->data, rdata->length);
+		memcpy(new_rdata->data, rdata->data, rdata->length);
+		new_rdata->length = rdata->length;
+		new_rdata->rdclass = rdata->rdclass;
+		new_rdata->type = rdata->type;
+		new_rdata->flags = rdata->flags;
+		INIT_LINK(new_rdata, link);
+
+		APPEND(new_rdlist->rdata, new_rdata, link);
+	}
+
+	result = dns_rdatalist_tordataset(new_rdlist, rdataset);
+
+	return result;
+
+cleanup:
+	if (new_rdlist != NULL) {
+		for (rdata = HEAD(new_rdlist->rdata);
+		     rdata != NULL;
+		     rdata = NEXT(rdata, link)) {
+			SAFE_MEM_PUT(mctx, rdata->data, rdata->length);
+			SAFE_MEM_PUT_PTR(mctx, rdata);
+		}
+	}
+	SAFE_MEM_PUT_PTR(mctx, new_rdlist);
+
 	return result;
 }
 
@@ -304,9 +364,8 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	log_func_enter();
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
-
-	/* XXX not yet implemented */
-	INSIST(type != dns_rdatatype_any);
+	REQUIRE(!(node != NULL && type == dns_rdatatype_any));
+	//REQUIRE(!(node == NULL && rdataset != NULL));
 
 	if (version != NULL) {
 		REQUIRE(version == ldapdb_version);
@@ -343,10 +402,10 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	if (result != ISC_R_SUCCESS)
 		goto cleanup;
 
-	if (rdataset != NULL) {
+	if (rdataset != NULL && type != dns_rdatatype_any) {
 		/* dns_rdatalist_tordataset returns success only */
-		result = dns_rdatalist_tordataset(rdlist, rdataset);
-		INSIST(result == ISC_R_SUCCESS);
+		CHECK(clone_rdatalist_to_rdataset(ldapdb->common.mctx, rdlist,
+						  rdataset));
 	}
 
 	if (nodep != NULL) {
@@ -356,6 +415,8 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 		}
 		memcpy(&node->rdatalist, &rdatalist, sizeof(rdatalist));
 		*nodep = node;
+	} else {
+		ldapdb_rdatalist_destroy(ldapdb->common.mctx, &rdatalist);
 	}
 
 	return (is_cname == ISC_TRUE) ? DNS_R_CNAME : ISC_R_SUCCESS;
