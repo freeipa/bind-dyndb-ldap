@@ -20,6 +20,8 @@
 #ifndef _LD_LDAP_CONVERT_H_
 #define _LD_LDAP_CONVERT_H_
 
+#include <dns/types.h>
+
 #include "str.h"
 
 /*
@@ -32,5 +34,8 @@ isc_result_t dn_to_dnsname(isc_mem_t *mctx, const char *dn, const char *root_dn,
 
 isc_result_t dnsname_to_dn(isc_mem_t *mctx, dns_name_t *name,
 			   const char *root_dn, ld_string_t *target);
+
+isc_result_t ldap_record_to_rdatatype(const char *ldap_record,
+				      dns_rdatatype_t *rdtype);
 
 #endif /* !_LD_LDAP_CONVERT_H_ */

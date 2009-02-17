@@ -23,16 +23,41 @@
 #include <isc/util.h>
 
 #include <dns/name.h>
+#include <dns/rdatatype.h>
+#include <dns/types.h>
 
-#include <errno.h>
 #define LDAP_DEPRECATED 1
 #include <ldap.h>
+
+#include <errno.h>
+#include <strings.h>
 
 #include "str.h"
 #include "ldap_convert.h"
 #include "log.h"
 #include "util.h"
 
+/*
+ * Consistency must be preserved in these tables.
+ * ldap_dns_records[i] must always corespond to dns_records[i]
+ */
+const char *ldap_dns_records[] = {
+	"ARecord",     "AAAARecord",  "A6Record",    "NSRecord",
+	"CNAMERecord", "PTRRecord",   "SRVRecord",   "TXTRecord",   "MXRecord",
+	"MDRecord",    "HINFORecord", "MINFORecord", "AFSDBRecord", "SIGRecord",
+	"KEYRecord",   "LOCRecord",   "NXTRecord",   "NAPTRRecord", "KXRecord",
+	"CERTRecord",  "DNAMERecord", "DSRecord",    "SSHFPRecord",
+	"RRSIGRecord", "NSECRecord",  NULL
+};
+
+const char *dns_records[] = {
+	"a",     "aaaa",  "a6",    "ns",
+	"cname", "ptr",   "srv",   "txt",   "mx",
+	"md",    "hinfo", "minfo", "afsdb", "sig",
+	"key",   "loc",   "NXT",   "NAPTR", "KX",
+	"CERT",  "DNAME", "DS",    "SSHFP",
+	"RRSIG", "NSEC",  NULL
+};
 
 static isc_result_t dn_to_text(const char *dn, const char *root_dn,
 			       ld_string_t *target);
@@ -225,6 +250,30 @@ dnsname_to_dn(isc_mem_t *mctx, dns_name_t *name, const char *root_dn,
 cleanup:
 	str_destroy_split(&split);
 	str_destroy(&str);
+
+	return result;
+}
+
+isc_result_t
+ldap_record_to_rdatatype(const char *ldap_record, dns_rdatatype_t *rdtype)
+{
+	isc_result_t result;
+	unsigned i;
+	isc_consttextregion_t region;
+
+	for (i = 0; ldap_dns_records[i] != NULL; i++) {
+		if (!strcasecmp(ldap_record, ldap_dns_records[i]))
+			break;
+	}
+	if (dns_records[i] == NULL)
+		return ISC_R_NOTFOUND;
+
+	region.base = dns_records[i];
+	region.length = strlen(region.base);
+	result = dns_rdatatype_fromtext(rdtype, (isc_textregion_t *)&region);
+	if (result != ISC_R_SUCCESS) {
+		log_error("dns_rdatatype_fromtext() failed");
+	}
 
 	return result;
 }
