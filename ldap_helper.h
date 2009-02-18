@@ -59,6 +59,13 @@ void ldapdb_rdatalist_destroy(isc_mem_t *mctx, ldapdb_rdatalist_t *rdatalist);
  * Free rdatalist list and free all associated rdata buffers.
  */
 
+void free_rdatalist(isc_mem_t *mctx, dns_rdatalist_t *rdlist);
+/*
+ * free_rdatalist
+ *
+ * Free all dynamically allocated memory inside rdlist.
+ */
+
 isc_result_t ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_db_t *ldap_db,
 				  dns_name_t *name,
 				  ldapdb_rdatalist_t *rdatalist);

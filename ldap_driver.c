@@ -25,6 +25,7 @@
 #include <dns/db.h>
 #include <dns/rdata.h>
 #include <dns/rdatalist.h>
+#include <dns/rdataset.h>
 #include <dns/result.h>
 #include <dns/types.h>
 
@@ -42,6 +43,8 @@
 #define LDAPDBNODE_MAGIC		ISC_MAGIC('L', 'D', 'P', 'N')
 #define VALID_LDAPDBNODE(ldapdbnode)	ISC_MAGIC_VALID(ldapdbnode, \
 							LDAPDBNODE_MAGIC)
+
+static dns_rdatasetmethods_t rdataset_methods;
 
 typedef struct {
 	dns_db_t			common;
@@ -62,7 +65,6 @@ static void *ldapdb_version = &dummy;
 
 static void free_ldapdb(ldapdb_t *ldapdb);
 static void detachnode(dns_db_t *db, dns_dbnode_t **targetp);
-
 
 /* ldapdbnode_t functions */
 static isc_result_t
@@ -138,22 +140,44 @@ clone_rdatalist_to_rdataset(isc_mem_t *mctx, dns_rdatalist_t *rdlist,
 		APPEND(new_rdlist->rdata, new_rdata, link);
 	}
 
-	result = dns_rdatalist_tordataset(new_rdlist, rdataset);
+	CHECK(dns_rdatalist_tordataset(new_rdlist, rdataset));
+	rdataset->methods = &rdataset_methods;
+	isc_mem_attach(mctx, (isc_mem_t **)&rdataset->private5);
 
 	return result;
 
 cleanup:
 	if (new_rdlist != NULL) {
-		for (rdata = HEAD(new_rdlist->rdata);
-		     rdata != NULL;
-		     rdata = NEXT(rdata, link)) {
-			SAFE_MEM_PUT(mctx, rdata->data, rdata->length);
-			SAFE_MEM_PUT_PTR(mctx, rdata);
-		}
+		free_rdatalist(mctx, rdlist);
+		isc_mem_put(mctx, new_rdlist, sizeof(*new_rdlist));
 	}
-	SAFE_MEM_PUT_PTR(mctx, new_rdlist);
 
 	return result;
+}
+
+/*
+ * Our own function for disassociating rdatasets. We will also free the
+ * rdatalist that we put inside from clone_rdatalist_to_rdataset.
+ */
+void
+ldapdb_rdataset_disassociate(dns_rdataset_t *rdataset)
+{
+	dns_rdatalist_t *rdlist;
+	isc_mem_t *mctx;
+
+	REQUIRE(rdataset != NULL);
+
+	rdlist = rdataset->private1;
+	mctx = rdataset->private5;
+	if (rdlist == NULL)
+		return;
+	rdataset->private1 = NULL;
+	rdataset->private5 = NULL;
+
+	free_rdatalist(mctx, rdlist);
+	isc_mem_put(mctx, rdlist, sizeof(*rdlist));
+
+	isc_mem_detach(&mctx);
 }
 
 /*
@@ -843,6 +867,23 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 	while (argv[i] != NULL) {
 		log_debug(2, "Arg: %s", argv[i]);
 		i++;
+	}
+
+	/*
+	 * We need to discover what rdataset methods does
+	 * dns_rdatalist_tordataset use. We then make a copy for ourselves
+	 * with the exception that we modify the disassociate method to free
+	 * the rdlist we allocate for it in clone_rdatalist_to_rdataset().
+	 */
+	if (rdataset_methods.disassociate == NULL) {
+		dns_rdataset_t rdset;
+		dns_rdatalist_t rdatalist;
+
+		dns_rdataset_init(&rdset);
+		dns_rdatalist_tordataset(&rdatalist, &rdset);
+		memcpy(&rdataset_methods, rdset.methods,
+		       sizeof(dns_rdatasetmethods_t));
+		rdataset_methods.disassociate = ldapdb_rdataset_disassociate;
 	}
 
 	/* Register new DNS DB implementation. */

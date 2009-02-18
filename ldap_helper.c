@@ -558,23 +558,32 @@ ldapdb_rdatalist_findrdatatype(ldapdb_rdatalist_t *rdatalist,
 void
 ldapdb_rdatalist_destroy(isc_mem_t *mctx, ldapdb_rdatalist_t *rdatalist)
 {
-	dns_rdata_t *rdata;
 	dns_rdatalist_t *rdlist;
-	isc_region_t r;
 
 	REQUIRE(rdatalist != NULL);
 
 	while (!EMPTY(*rdatalist)) {
 		rdlist = HEAD(*rdatalist);
-		while (!EMPTY(rdlist->rdata)) {
-			rdata = HEAD(rdlist->rdata);
-			UNLINK(rdlist->rdata, rdata, link);
-			dns_rdata_toregion(rdata, &r);
-			isc_mem_put(mctx, r.base, r.length);
-			isc_mem_put(mctx, rdata, sizeof(*rdata));
-		}
+		free_rdatalist(mctx, rdlist);
 		UNLINK(*rdatalist, rdlist, link);
 		isc_mem_put(mctx, rdlist, sizeof(*rdlist));
+	}
+}
+
+void
+free_rdatalist(isc_mem_t *mctx, dns_rdatalist_t *rdlist)
+{
+	dns_rdata_t *rdata;
+	isc_region_t r;
+
+	REQUIRE(rdlist != NULL);
+
+	while (!EMPTY(rdlist->rdata)) {
+		rdata = HEAD(rdlist->rdata);
+		UNLINK(rdlist->rdata, rdata, link);
+		dns_rdata_toregion(rdata, &r);
+		isc_mem_put(mctx, r.base, r.length);
+		isc_mem_put(mctx, rdata, sizeof(*rdata));
 	}
 }
 
