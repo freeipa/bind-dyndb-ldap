@@ -59,7 +59,8 @@ void ldapdb_rdatalist_destroy(isc_mem_t *mctx, ldapdb_rdatalist_t *rdatalist);
  * Free rdatalist list and free all associated rdata buffers.
  */
 
-isc_result_t ldapdb_rdatalist_get(isc_mem_t *mctx, dns_name_t *name,
+isc_result_t ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_db_t *ldap_db,
+				  dns_name_t *name,
 				  ldapdb_rdatalist_t *rdatalist);
 /*
  * ldapdb_rdatalist_get

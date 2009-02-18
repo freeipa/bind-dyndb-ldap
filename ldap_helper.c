@@ -49,6 +49,10 @@
 #include "util.h"
 
 
+/* Max type length definitions, from lib/dns/master.c */
+#define MINTSIZ (65535 - 12 - 1 - 2 - 2 - 4 - 2)
+#define TOKENSIZ (8*1024)
+
 /*
  * LDAP related typedefs and structs.
  */
@@ -91,24 +95,6 @@ struct ldap_db {
 	ldap_auth_t		auth_method;
 };
 
-struct ldap_value {
-	char			*value;
-	LINK(ldap_value_t)	link;
-};
-
-struct ldap_attribute {
-	char			*name;
-	char			**ldap_values;
-	ldap_value_list_t	values;
-	LINK(ldap_attribute_t)	link;
-};
-
-struct ldap_entry {
-	LDAPMessage		*entry;
-	ldap_attribute_list_t	attributes;
-	LINK(ldap_entry_t)	link;
-};
-
 struct ldap_instance {
 	ldap_db_t		*database;
 	isc_mutex_t		lock;
@@ -136,6 +122,27 @@ struct ldap_instance {
 	char			*dn;
 };
 
+struct ldap_entry {
+	LDAPMessage		*entry;
+	ldap_attribute_t	*last_attr;
+	ldap_attribute_list_t	attributes;
+	LINK(ldap_entry_t)	link;
+};
+
+struct ldap_attribute {
+	char			*name;
+	char			**ldap_values;
+	ldap_value_t		*last_value;
+	ldap_value_list_t	values;
+	LINK(ldap_attribute_t)	link;
+};
+
+struct ldap_value {
+	char			*value;
+	LINK(ldap_value_t)	link;
+};
+
+
 /*
  * Constants.
  */
@@ -156,21 +163,38 @@ const ldap_auth_pair_t supported_ldap_auth[] = {
  * Forward declarations.
  */
 
+/* TODO: reorganize this stuff & clean it up. */
 static isc_result_t new_ldap_instance(ldap_db_t *ldap_db,
 		ldap_instance_t **ldap_instp);
 static void destroy_ldap_instance(ldap_instance_t **ldap_instp);
 static isc_result_t add_or_modify_zone(ldap_db_t *ldap_db, const char *dn,
 		const char *db_name, dns_zonemgr_t *zmgr);
-static ldap_instance_t * get_connection(ldap_db_t *ldap_db);
-static void put_connection(ldap_instance_t *ldap_inst);
-static isc_result_t ldap_connect(ldap_instance_t *ldap_inst);
-static isc_result_t ldap_query(ldap_instance_t *ldap_inst, int scope,
-		char **attrs, int attrsonly, const char *filter, ...);
 
+static isc_result_t findrdatatype_or_create(isc_mem_t *mctx,
+		ldapdb_rdatalist_t *rdatalist, ldap_entry_t *entry,
+		dns_rdatatype_t rdtype, dns_rdatalist_t **rdlistp);
+static isc_result_t add_soa_record(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
+		dns_name_t *name, ldap_entry_t *entry,
+		ldapdb_rdatalist_t *rdatalist);
+static dns_rdataclass_t get_rdataclass(ldap_entry_t *ldap_entry);
+static dns_ttl_t get_ttl(ldap_entry_t *ldap_entry);
+static isc_result_t get_values(const ldap_entry_t *entry,
+		const char *attr_name, ldap_value_list_t *values);
+static isc_result_t get_soa_record(ldap_entry_t *entry, ld_string_t *target);
+static ldap_attribute_t *get_next_attr(ldap_entry_t *entry,
+		const char **attr_list);
+static ldap_value_t *get_next_value(ldap_attribute_t *attr);
+static isc_boolean_t array_contains_nocase(const char **haystack,
+		const char *needle);
+static isc_result_t get_next_rdatatype(ldap_entry_t *entry,
+		ldap_attribute_t **attr, dns_rdatatype_t *rdtype);
+static isc_result_t get_next_rdatatext(ldap_attribute_t *attr,
+		ld_string_t *rdata_text);
+static isc_result_t parse_rdata(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
+		dns_rdataclass_t rdclass, dns_rdatatype_t rdtype,
+		dns_name_t *origin, const char *rdata_text,
+		dns_rdata_t **rdatap);
 
-static ldap_attribute_t * next_named_attribute(ldap_attribute_t *ldap_attr,
-		const char *name);
-static isc_result_t fill_cache_if_empty(ldap_instance_t *inst);
 static isc_result_t cache_query_results(ldap_instance_t *inst);
 static isc_result_t fill_ldap_entry(ldap_instance_t *inst,
 		ldap_entry_t *ldap_entry);
@@ -182,10 +206,14 @@ static void free_ldap_values(isc_mem_t *mctx, ldap_attribute_t *attr);
 
 
 static const LDAPMessage *next_entry(ldap_instance_t *inst);
-static const char *next_attribute(ldap_instance_t *inst);
-static const char *get_attribute(ldap_instance_t *inst);
-static char **get_values(ldap_instance_t *inst);
 static const char *get_dn(ldap_instance_t *inst);
+
+static ldap_instance_t * get_connection(ldap_db_t *ldap_db);
+static void put_connection(ldap_instance_t *ldap_inst);
+static isc_result_t ldap_connect(ldap_instance_t *ldap_inst);
+static isc_result_t ldap_query(ldap_instance_t *ldap_inst, const char *base,
+		int scope, char **attrs, int attrsonly, const char *filter, ...);
+
 
 isc_result_t
 new_ldap_db(isc_mem_t *mctx, dns_view_t *view, ldap_db_t **ldap_dbp,
@@ -310,6 +338,9 @@ new_ldap_instance(ldap_db_t *ldap_db, ldap_instance_t **ldap_instp)
 	CHECK(str_new(ldap_db->mctx, &ldap_inst->query_string));
 	CHECK(str_new(ldap_db->mctx, &ldap_inst->base));
 
+	CHECK(isc_lex_create(ldap_db->mctx, TOKENSIZ, &ldap_inst->lex));
+	CHECKED_MEM_GET(ldap_db->mctx, ldap_inst->rdata_target_mem, MINTSIZ);
+
 	*ldap_instp = ldap_inst;
 
 	return ISC_R_SUCCESS;
@@ -335,6 +366,13 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	str_destroy(&ldap_inst->query_string);
 	str_destroy(&ldap_inst->base);
 
+	if (ldap_inst->lex != NULL)
+		isc_lex_destroy(&ldap_inst->lex);
+	if (ldap_inst->rdata_target_mem != NULL) {
+		isc_mem_put(ldap_inst->database->mctx,
+			    ldap_inst->rdata_target_mem, MINTSIZ);
+	}
+
 	isc_mem_put(ldap_inst->database->mctx, *ldap_instp, sizeof(ldap_instance_t));
 	*ldap_instp = NULL;
 }
@@ -357,8 +395,8 @@ refresh_zones_from_ldap(ldap_db_t *ldap_db, const char *name,
 
 	ldap_inst = get_connection(ldap_db);
 
-	ldap_query(ldap_inst, LDAP_SCOPE_SUBTREE, attrs, 0,
-		   "(objectClass=idnsZone)");
+	ldap_query(ldap_inst, str_buf(ldap_db->base), LDAP_SCOPE_SUBTREE,
+		   attrs, 0, "(objectClass=idnsZone)");
 
 	while (next_entry(ldap_inst))
 		CHECK(add_or_modify_zone(ldap_db, get_dn(ldap_inst), name, zmgr));
@@ -369,6 +407,21 @@ cleanup:
 	log_debug(2, "finished refreshing list of zones");
 
 	return result;
+}
+
+static const char *
+get_dn(ldap_instance_t *inst)
+{
+	if (inst->dn) {
+		ldap_memfree(inst->dn);
+		inst->dn = NULL;
+	}
+
+	if (inst->handle && inst->entry)
+		inst->dn = ldap_get_dn(inst->handle, inst->entry);
+
+	return inst->dn;
+
 }
 
 static isc_result_t
@@ -435,6 +488,53 @@ cleanup:
 	return result;
 }
 
+static isc_result_t
+findrdatatype_or_create(isc_mem_t *mctx, ldapdb_rdatalist_t *rdatalist,
+			ldap_entry_t *entry, dns_rdatatype_t rdtype,
+			dns_rdatalist_t **rdlistp)
+{
+	isc_result_t result;
+	dns_rdatalist_t *rdlist = NULL;
+	dns_ttl_t ttl;
+
+	REQUIRE(rdatalist != NULL);
+	REQUIRE(entry != NULL);
+	REQUIRE(rdlistp != NULL);
+
+	*rdlistp = NULL;
+
+	ttl = get_ttl(entry);
+
+	result = ldapdb_rdatalist_findrdatatype(rdatalist, rdtype, &rdlist);
+	if (result != ISC_R_SUCCESS) {
+		CHECKED_MEM_GET_PTR(mctx, rdlist);
+
+		dns_rdatalist_init(rdlist);
+		rdlist->rdclass = get_rdataclass(entry);
+		rdlist->type = rdtype;
+		rdlist->ttl = ttl;
+		APPEND(*rdatalist, rdlist, link);
+		result = ISC_R_SUCCESS;
+	} else {
+		/*
+		 * No support for different TTLs yet.
+		 */
+		if (rdlist->ttl != ttl)
+			result = ISC_R_FAILURE;
+	}
+
+	*rdlistp = rdlist;
+	return ISC_R_SUCCESS;
+
+cleanup:
+	SAFE_MEM_PUT_PTR(mctx, rdlist);
+
+	return result;
+}
+
+/*
+ * ldapdb_rdatalist_t related functions.
+ */
 isc_result_t
 ldapdb_rdatalist_findrdatatype(ldapdb_rdatalist_t *rdatalist,
 			       dns_rdatatype_t rdtype,
@@ -479,182 +579,350 @@ ldapdb_rdatalist_destroy(isc_mem_t *mctx, ldapdb_rdatalist_t *rdatalist)
 }
 
 isc_result_t
-ldapdb_rdatalist_get(isc_mem_t *mctx, dns_name_t *name,
+ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_db_t *ldap_db, dns_name_t *name,
 		     ldapdb_rdatalist_t *rdatalist)
 {
-
-	/* Max type length definitions, from lib/dns/master.c */
-	#define MINTSIZ (65535 - 12 - 1 - 2 - 2 - 4 - 2)
-	#define TOKENSIZ (8*1024) /* Could be smaller */
-
-	isc_lex_t *lex = NULL;
 	isc_result_t result;
-	isc_buffer_t target, lexbuffer;
-	unsigned char *targetmem;
-	isc_region_t rdatamem;
+	ldap_instance_t *ldap_inst;
+	ldap_entry_t *entry;
+	ldap_attribute_t *attr;
+	ld_string_t *string = NULL;
+
 	dns_rdataclass_t rdclass;
-	dns_rdatatype_t rdtype;
-	isc_textregion_t rdtype_text, rdclass_text, ttl_text, rdata_text;
 	dns_ttl_t ttl;
-	isc_boolean_t seen_error = ISC_FALSE;
-	dns_rdata_t *rdata;
+	dns_rdatatype_t rdtype;
+	dns_rdata_t *rdata = NULL;
 	dns_rdatalist_t *rdlist = NULL;
 
+	REQUIRE(mctx != NULL);
+	REQUIRE(ldap_db != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(rdatalist != NULL);
 
 	log_func_enter();
 
-	/*
-	 * Get info from ldap - name, type, class, TTL + value. Try avoid
-	 * ENOMEM as much as possible, if nothing found return ISC_R_NOTFOUND
-	 */
-
-	result = isc_lex_create(mctx, TOKENSIZ, &lex);
-	if (result != ISC_R_SUCCESS)
-		return result;
-
-	targetmem = isc_mem_get(mctx, MINTSIZ);
-	if (targetmem == NULL) {
-		result = ISC_R_NOMEMORY;
-		goto cleanup;
-	}
+	ldap_inst = get_connection(ldap_db);
 
 	INIT_LIST(*rdatalist);
+	CHECK(str_new(mctx, &string));
+	CHECK(dnsname_to_dn(mctx, name, str_buf(ldap_db->base), string));
 
-	for (int i = 0; i < 1; i++) {
-		/*
-		 * Note: if rdclass_text and rdtype_text are ttl_text are allocated
-		 * free() them correctly before break and before next iteration!
-		 */
-		rdclass_text.base = "in";
-		rdclass_text.length = strlen(rdclass_text.base);
-		result = dns_rdataclass_fromtext(&rdclass, &rdclass_text);
-		if (result != ISC_R_SUCCESS) {
-			seen_error = ISC_TRUE;
-			/* XXX write nice error message here */
-			break;
+	CHECK(ldap_query(ldap_inst, str_buf(string), LDAP_SCOPE_BASE, NULL, 0,
+				"(objectClass=idnsRecord)"));
+	CHECK(cache_query_results(ldap_inst));
+
+	for (entry = HEAD(ldap_inst->ldap_entries);
+	     entry != NULL;
+	     entry = NEXT(entry, link)) {
+
+		result = add_soa_record(mctx, ldap_inst, name, entry,
+					rdatalist);
+		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
+			goto cleanup;
+
+		rdclass = get_rdataclass(entry);
+		ttl = get_ttl(entry);
+
+		for (result = get_next_rdatatype(entry, &attr, &rdtype);
+		     result == ISC_R_SUCCESS;
+		     result = get_next_rdatatype(entry, &attr, &rdtype)) {
+
+			CHECK(findrdatatype_or_create(mctx, rdatalist, entry,
+						      rdtype, &rdlist));
+			for (result = get_next_rdatatext(attr, string);
+			     result == ISC_R_SUCCESS;
+			     result = get_next_rdatatext(attr, string)) {
+				CHECK(parse_rdata(mctx, ldap_inst, rdclass,
+						  rdtype, name, str_buf(string),
+						  &rdata));
+				APPEND(rdlist->rdata, rdata, link);
+				rdata = NULL;
+			}
+			rdlist = NULL;
 		}
-		/* Everything else than IN class is pretty bad */
-		INSIST(rdclass == dns_rdataclass_in);
-
-		//rdtype_text.base = "a";
-		rdtype_text.base = "ns";
-		rdtype_text.length = strlen(rdtype_text.base);
-		result = dns_rdatatype_fromtext(&rdtype, &rdtype_text);
-		if (result != ISC_R_SUCCESS) {
-			seen_error = ISC_TRUE;
-			/* XXX write something romantic here as well... */
-			break;
-		}
-
-		ttl_text.base = "86400";
-		ttl_text.length = strlen(ttl_text.base);
-		result = dns_ttl_fromtext(&ttl_text, &ttl);
-		if (result != ISC_R_SUCCESS) {
-			seen_error = ISC_TRUE;
-			break;
-		}
-
-		/* put record in master file format here */
-		//rdata_text.base = "192.168.1.1";
-		rdata_text.base = "wolverine.englab.brq.redhat.com.";
-		rdata_text.length = strlen(rdata_text.base);
-
-		isc_buffer_init(&lexbuffer, rdata_text.base, rdata_text.length);
-		isc_buffer_add(&lexbuffer, rdata_text.length);
-		isc_buffer_setactive(&lexbuffer, rdata_text.length);
-
-		result = isc_lex_openbuffer(lex, &lexbuffer);
-		if (result != ISC_R_SUCCESS) {
-			seen_error = ISC_TRUE;
-			break;
-		}
-
-		isc_buffer_init(&target, targetmem, MINTSIZ);
-
-		/*
-		 * If ldap returns relative domain name then tune it here, via
-		 * "origin" parameter.
-		 *
-		 * We might want to use the last parameter - error callbacks but
-		 * use default ones for now.
-		 */
-		result = dns_rdata_fromtext(NULL, rdclass, rdtype, lex, NULL,
-					    0, mctx, &target, NULL);
-
-		if (result != ISC_R_SUCCESS) {
-			seen_error = ISC_TRUE;
-			break;
-		}
-
-		result = isc_lex_close(lex);
-		/* Use strong condition here, error is suspicious */
-		INSIST(result == ISC_R_SUCCESS);
-
-		/* Don't waste memory, use exact buffers for rdata */
-		rdata = isc_mem_get(mctx, sizeof(*rdata));
-		if (rdata == NULL)
-			goto for_cleanup1;
-		dns_rdata_init(rdata);
-
-		rdatamem.length = isc_buffer_usedlength(&target);
-		rdatamem.base = isc_mem_get(mctx, rdatamem.length);
-		if (rdatamem.base == NULL)
-			goto for_cleanup2;
-
-		memcpy(rdatamem.base, isc_buffer_base(&target), rdatamem.length);
-		dns_rdata_fromregion(rdata, rdclass, rdtype, &rdatamem);
-
-		result = ldapdb_rdatalist_findrdatatype(rdatalist, rdtype,
-							&rdlist);
-
-		/* no rdata with rdtype exist in rdatalist => add it */
-		if (result != ISC_R_SUCCESS) {
-			rdlist = isc_mem_get(mctx, sizeof(*rdlist));
-			if (rdlist == NULL)
-				goto for_cleanup3;
-
-			dns_rdatalist_init(rdlist);
-			rdlist->rdclass = rdclass;
-			rdlist->type = rdtype;
-			rdlist->ttl = ttl;
-			APPEND(*rdatalist, rdlist, link);
-			result = ISC_R_SUCCESS;
-		} else {
-			/*
-			 * Use strong condition here, we are not allowing
-			 * different TTLs for one name.
-			 */
-			INSIST(rdlist->ttl == ttl);
-		}
-
-		APPEND(rdlist->rdata, rdata, link);
-
-		continue;
-
-for_cleanup3:
-		isc_mem_put(mctx, rdatamem.base, rdatamem.length);
-for_cleanup2:
-		isc_mem_put(mctx, rdata, sizeof(*rdata));
-for_cleanup1:
-		result = ISC_R_NOMEMORY;
-		seen_error = ISC_TRUE;
-		break;
 	}
 
-	if (seen_error == ISC_TRUE)
-		ldapdb_rdatalist_destroy(mctx, rdatalist);
+	result = ISC_R_SUCCESS;
 
 cleanup:
-	isc_mem_put(mctx, targetmem, MINTSIZ);
-	isc_lex_destroy(&lex);
+	put_connection(ldap_inst);
+	str_destroy(&string);
 
-	log_func_exit_result(result);
+	if (result != ISC_R_SUCCESS)
+		ldapdb_rdatalist_destroy(mctx, rdatalist);
 
 	return result;
 }
 
+static dns_rdataclass_t
+get_rdataclass(ldap_entry_t *ldap_entry)
+{
+	UNUSED(ldap_entry);
+
+	/*
+	 * Not implemented for now.
+	 * Probably won't ever be.
+	 */
+
+	return dns_rdataclass_in;
+}
+
+static dns_ttl_t
+get_ttl(ldap_entry_t *ldap_entry)
+{
+	UNUSED(ldap_entry);
+
+	/*
+	 * TODO: Not implemented yet.
+	 */
+#if 0
+	isc_textregion_t ttl_text;
+
+	ttl_text.base = "86400";
+	ttl_text.length = strlen(ttl_text.base);
+	result = dns_ttl_fromtext(&ttl_text, &ttl);
+	if (result != ISC_R_SUCCESS) {
+		seen_error = ISC_TRUE;
+		break;
+	}
+#endif
+
+	return 86400;
+}
+
+static isc_result_t
+get_soa_record(ldap_entry_t *entry, ld_string_t *target)
+{
+	isc_result_t result;
+	ldap_value_list_t values;
+
+	const char *soa_attrs[] = {
+		"idnsSOAmName", "idnsSOArName", "idnsSOAserial",
+		"idnsSOArefresh", "idnsSOAretry", "idnsSOAexpire",
+		"idnsSOAminimum", NULL
+	};
+
+	REQUIRE(entry != NULL);
+	REQUIRE(target != NULL);
+
+	str_clear(target);
+	for (unsigned i = 0; soa_attrs[i] != NULL; i++) {
+		CHECK(get_values(entry, soa_attrs[i], &values));
+		CHECK(str_cat_char(target, HEAD(values)->value));
+		CHECK(str_cat_char(target, " "));
+	}
+
+cleanup:
+	return result;
+}
+
+static isc_result_t
+add_soa_record(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *name,
+	       ldap_entry_t *entry, ldapdb_rdatalist_t *rdatalist)
+{
+	isc_result_t result;
+	ld_string_t *string = NULL;
+	dns_rdataclass_t rdclass;
+	dns_rdata_t *rdata = NULL;
+	dns_rdatalist_t *rdlist = NULL;
+
+	CHECK(str_new(mctx, &string));
+
+	CHECK(get_soa_record(entry, string));
+	rdclass = get_rdataclass(entry);
+
+	CHECK(get_soa_record(entry, string));
+	CHECK(parse_rdata(mctx, ldap_inst, rdclass, dns_rdatatype_soa, name,
+			  str_buf(string), &rdata));
+
+	CHECK(findrdatatype_or_create(mctx, rdatalist, entry, dns_rdatatype_soa,
+				      &rdlist));
+
+	APPEND(rdlist->rdata, rdata, link);
+
+cleanup:
+	str_destroy(&string);
+	if (result != ISC_R_SUCCESS)
+		SAFE_MEM_PUT_PTR(mctx, rdata);
+
+	return result;
+}
+
+static isc_result_t
+get_next_rdatatype(ldap_entry_t *entry, ldap_attribute_t **attrp,
+		   dns_rdatatype_t *rdtype)
+{
+	isc_result_t result;
+	ldap_attribute_t *attr;
+
+	result = ISC_R_NOTFOUND;
+
+	for (attr = get_next_attr(entry, NULL);
+	     attr != NULL;
+	     attr = get_next_attr(entry, NULL)) {
+		result = ldap_record_to_rdatatype(attr->name, rdtype);
+		if (result == ISC_R_SUCCESS)
+			break;
+	}
+
+	if (result == ISC_R_SUCCESS)
+		*attrp = attr;
+	else if (result == ISC_R_NOTFOUND)
+		*attrp = NULL;
+
+	return result;
+}
+
+static isc_result_t
+get_next_rdatatext(ldap_attribute_t *attr, ld_string_t *rdata_text)
+{
+	ldap_value_t *value;
+
+	REQUIRE(attr != NULL);
+	REQUIRE(rdata_text != NULL);
+
+	str_clear(rdata_text);
+
+	value = get_next_value(attr);
+	if (value == NULL)
+		return ISC_R_NOTFOUND;
+
+	str_init_char(rdata_text, value->value);
+
+	return ISC_R_SUCCESS;
+}
+
+static isc_result_t
+parse_rdata(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
+	    dns_rdataclass_t rdclass, dns_rdatatype_t rdtype,
+	    dns_name_t *origin, const char *rdata_text, dns_rdata_t **rdatap)
+{
+	isc_result_t result;
+	isc_consttextregion_t text;
+	isc_buffer_t lex_buffer;
+	isc_region_t rdatamem;
+	dns_rdata_t *rdata;
+
+	REQUIRE(mctx != NULL);
+	REQUIRE(ldap_inst != NULL);
+	REQUIRE(rdata_text != NULL);
+	REQUIRE(rdatap != NULL);
+
+	rdata = NULL;
+	rdatamem.base = NULL;
+
+	text.base = rdata_text;
+	text.length = strlen(text.base);
+
+	isc_buffer_init(&lex_buffer, text.base, text.length);
+	isc_buffer_add(&lex_buffer, text.length);
+	isc_buffer_setactive(&lex_buffer, text.length);
+
+	CHECK(isc_lex_openbuffer(ldap_inst->lex, &lex_buffer));
+
+	isc_buffer_init(&ldap_inst->rdata_target, ldap_inst->rdata_target_mem,
+			MINTSIZ);
+	CHECK(dns_rdata_fromtext(NULL, rdclass, rdtype, ldap_inst->lex, origin,
+				 0, mctx, &ldap_inst->rdata_target, NULL));
+
+	CHECKED_MEM_GET_PTR(mctx, rdata);
+	dns_rdata_init(rdata);
+
+	rdatamem.length = isc_buffer_usedlength(&ldap_inst->rdata_target);
+	CHECKED_MEM_GET(mctx, rdatamem.base, rdatamem.length);
+
+	memcpy(rdatamem.base, isc_buffer_base(&ldap_inst->rdata_target),
+	       rdatamem.length);
+	dns_rdata_fromregion(rdata, rdclass, rdtype, &rdatamem);
+
+	isc_lex_close(ldap_inst->lex);
+
+	*rdatap = rdata;
+	return ISC_R_SUCCESS;
+
+cleanup:
+	isc_lex_close(ldap_inst->lex);
+	if (rdata != NULL)
+		isc_mem_put(mctx, rdata, sizeof(*rdata));
+	if (rdatamem.base != NULL)
+		isc_mem_put(mctx, rdatamem.base, rdatamem.length);
+
+	return result;
+}
+
+static ldap_attribute_t *
+get_next_attr(ldap_entry_t *entry, const char **attr_list)
+{
+	ldap_attribute_t *attr;
+
+	REQUIRE(entry != NULL);
+
+	if (entry->last_attr == NULL)
+		attr = HEAD(entry->attributes);
+	else
+		attr = NEXT(entry->last_attr, link);
+
+	if (attr_list != NULL) {
+		while (attr != NULL && !array_contains_nocase(attr_list, attr->name))
+			attr = NEXT(attr, link);
+	}
+
+	if (attr != NULL)
+		entry->last_attr = attr;
+
+	return attr;
+}
+
+static isc_result_t
+get_values(const ldap_entry_t *entry, const char *attr_name,
+	   ldap_value_list_t *values)
+{
+	ldap_attribute_t *attr;
+
+	REQUIRE(entry != NULL);
+	REQUIRE(attr_name != NULL);
+	REQUIRE(values != NULL);
+
+	for (attr = HEAD(entry->attributes);
+	     attr != NULL;
+	     attr = NEXT(attr, link)) {
+		if (!strcasecmp(attr->name, attr_name)) {
+			*values = attr->values;
+			return ISC_R_SUCCESS;
+		}
+	}
+
+	return ISC_R_NOTFOUND;
+}
+
+static ldap_value_t *
+get_next_value(ldap_attribute_t *attr)
+{
+	ldap_value_t *value;
+
+	REQUIRE(attr != NULL);
+
+	if (attr->last_value == NULL)
+		value = HEAD(attr->values);
+	else
+		value = NEXT(attr->last_value, link);
+
+	if (value != NULL)
+		attr->last_value = value;
+
+	return value;
+}
+
+static isc_boolean_t
+array_contains_nocase(const char **haystack, const char *needle)
+{
+	for (unsigned int i = 0; haystack[i] != NULL; i++) {
+		if (strcasecmp(needle, haystack[i]) == 0)
+			return isc_boolean_true;
+	}
+
+	return isc_boolean_false;
+}
 
 static ldap_instance_t *
 get_connection(ldap_db_t *ldap_db)
@@ -710,7 +978,7 @@ put_connection(ldap_instance_t *ldap_inst)
 
 
 static isc_result_t
-ldap_query(ldap_instance_t *ldap_inst, int scope, char **attrs,
+ldap_query(ldap_instance_t *ldap_inst, const char *base, int scope, char **attrs,
 	   int attrsonly, const char *filter, ...)
 {
 	va_list ap;
@@ -720,11 +988,11 @@ ldap_query(ldap_instance_t *ldap_inst, int scope, char **attrs,
 	str_vsprintf(ldap_inst->query_string, filter, ap);
 	va_end(ap);
 
-	log_debug(2, "querying '%s' with '%s'", str_buf(ldap_inst->base),
+	log_debug(2, "querying '%s' with '%s'", base,
 		  str_buf(ldap_inst->query_string));
 
-	ret = ldap_search_ext_s(ldap_inst->handle, str_buf(ldap_inst->base),
-				scope, str_buf(ldap_inst->query_string), attrs,
+	ret = ldap_search_ext_s(ldap_inst->handle, base, scope,
+				str_buf(ldap_inst->query_string), attrs,
 				attrsonly, NULL, NULL, NULL, LDAP_NO_LIMIT,
 				&ldap_inst->result);
 
@@ -732,33 +1000,6 @@ ldap_query(ldap_instance_t *ldap_inst, int scope, char **attrs,
 		  ldap_inst->result));
 
 	return ISC_R_SUCCESS;
-}
-
-static ldap_attribute_t *
-next_named_attribute(ldap_attribute_t *ldap_attr, const char *name)
-{
-	ldap_attribute_t *iterator;
-
-	REQUIRE(ldap_attr != NULL);
-	REQUIRE(name != NULL);
-
-	iterator = NEXT(ldap_attr, link);
-	while (iterator != NULL) {
-		if (strcasecmp(name, iterator->name) == 0)
-			return iterator;
-		iterator = NEXT(iterator, link);
-	}
-
-	return NULL;
-}
-
-static isc_result_t
-fill_cache_if_empty(ldap_instance_t *inst)
-{
-	if (inst->cache_active)
-		return ISC_R_SUCCESS;
-
-	return cache_query_results(inst);
 }
 
 static isc_result_t
@@ -773,6 +1014,8 @@ cache_query_results(ldap_instance_t *inst)
 	REQUIRE(inst != NULL);
 	REQUIRE(EMPTY(inst->ldap_entries));
 	REQUIRE(inst->result != NULL);
+
+	log_func_enter();
 
 	INIT_LIST(inst->ldap_entries);
 
@@ -796,11 +1039,13 @@ cache_query_results(ldap_instance_t *inst)
 		APPEND(inst->ldap_entries, ldap_entry, link);
 	}
 
+	log_func_exit_result(ISC_R_SUCCESS);
 	return ISC_R_SUCCESS;
 
 cleanup:
 	free_query_cache(inst);
 
+	log_func_exit_result(result);
 	return result;
 }
 
@@ -815,6 +1060,8 @@ fill_ldap_entry(ldap_instance_t *inst, ldap_entry_t *ldap_entry)
 
 	REQUIRE(inst != NULL);
 	REQUIRE(ldap_entry != NULL);
+
+	log_func_enter();
 
 	result = ISC_R_SUCCESS;
 	entry = ldap_entry->entry;
@@ -841,6 +1088,7 @@ cleanup:
 		free_ldap_attributes(inst->database->mctx, ldap_entry);
 	}
 
+	log_func_exit_result(result);
 	return result;
 }
 
@@ -875,6 +1123,7 @@ cleanup:
 	free_ldap_values(inst->database->mctx, ldap_attr);
 	ldap_value_free(values);
 
+	log_func_exit_result(result);
 	return result;
 }
 
@@ -926,6 +1175,7 @@ free_ldap_values(isc_mem_t *mctx, ldap_attribute_t *attr)
 	}
 }
 
+/* FIXME: this function is obsolete, remove. */
 static const LDAPMessage *
 next_entry(ldap_instance_t *inst)
 {
@@ -944,82 +1194,6 @@ next_entry(ldap_instance_t *inst)
 	return inst->entry;
 }
 
-static const char *
-next_attribute(ldap_instance_t *inst)
-{
-	if (inst->attribute) {
-		ldap_memfree(inst->attribute);
-		inst->attribute = NULL;
-	}
-
-	if (inst->handle && inst->entry && inst->ber)
-		inst->attribute = ldap_next_attribute(inst->handle, inst->entry,
-						      inst->ber);
-	else if (inst->handle && inst->entry)
-		inst->attribute = ldap_first_attribute(inst->handle, inst->entry,
-						       &inst->ber);
-
-	return inst->attribute;
-}
-
-static const char *
-get_attribute(ldap_instance_t *inst)
-{
-	return inst->attribute;
-}
-
-static char **
-get_values(ldap_instance_t *inst)
-{
-	if (inst->values) {
-		ldap_value_free(inst->values);
-		inst->values = NULL;
-	}
-
-	if (inst->handle && inst->entry && inst->attribute)
-		inst->values = ldap_get_values(inst->handle, inst->entry,
-					       inst->attribute);
-
-	return inst->values;
-}
-
-static const char *
-get_dn(ldap_instance_t *inst)
-{
-	if (inst->dn) {
-		ldap_memfree(inst->dn);
-		inst->dn = NULL;
-	}
-
-	if (inst->handle && inst->entry)
-		inst->dn = ldap_get_dn(inst->handle, inst->entry);
-
-	return inst->dn;
-
-}
-
-#if 0
-static const char *
-next_value(ldap_instance_t *inst)
-{
-	if (inst->values == NULL)
-		get_values(inst);
-
-	if (inst->values[inst->value_cnt])
-		inst->value_cnt++;
-
-	return inst->values[inst->value_cnt - 1];
-}
-
-static const char *
-get_value(ldap_instance_t *inst)
-{
-	if (inst->values)
-		return inst->values[inst->value_cnt - 1];
-	else
-		return NULL;
-}
-#endif
 
 static isc_result_t
 ldap_connect(ldap_instance_t *ldap_inst)

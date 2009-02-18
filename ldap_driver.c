@@ -303,10 +303,10 @@ findnode(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 	ldapdb_rdatalist_t rdatalist;
 	ldapdbnode_t *node = NULL;
 
-	log_func_enter_args("name=%s, create=%d", name->ndata, create);
 	REQUIRE(VALID_LDAPDB(ldapdb));
 
-	result = ldapdb_rdatalist_get(ldapdb->common.mctx, name, &rdatalist);
+	result = ldapdb_rdatalist_get(ldapdb->common.mctx, ldapdb->ldap_db,
+				      name, &rdatalist);
 	INSIST(result != DNS_R_PARTIALMATCH); /* XXX notimp yet */
 
 	/* If ldapdb_rdatalist_get has no memory node creation will fail as well */
@@ -331,14 +331,10 @@ findnode(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 
 	*nodep = node;
 
-	log_func_exit_result(ISC_R_SUCCESS);
-
 	return ISC_R_SUCCESS;
 
 cleanup:
 	ldapdb_rdatalist_destroy(ldapdb->common.mctx, &rdatalist);
-
-	log_func_exit_result(result);
 
 	return result;
 }
@@ -361,8 +357,6 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	UNUSED(options);
 	UNUSED(sigrdataset);
 
-	log_func_enter();
-
 	REQUIRE(VALID_LDAPDB(ldapdb));
 	REQUIRE(!(node != NULL && type == dns_rdatatype_any));
 	//REQUIRE(!(node == NULL && rdataset != NULL));
@@ -371,7 +365,8 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 		REQUIRE(version == ldapdb_version);
 	}
 
-	result = ldapdb_rdatalist_get(ldapdb->common.mctx, name, &rdatalist);
+	result = ldapdb_rdatalist_get(ldapdb->common.mctx, ldapdb->ldap_db,
+				      name, &rdatalist);
 	INSIST(result != DNS_R_PARTIALMATCH); /* XXX Not yet implemented */
 
 	if (result != ISC_R_SUCCESS && result != DNS_R_PARTIALMATCH)
@@ -469,7 +464,6 @@ detachnode(dns_db_t *db, dns_dbnode_t **targetp)
 	 */
 
 	REQUIRE(VALID_LDAPDBNODE(node));
-
 	isc_refcount_decrement(&node->refs, &refs);
 	if (refs == 0) {
 		ldapdb_rdatalist_destroy(ldapdb->common.mctx, &node->rdatalist);
