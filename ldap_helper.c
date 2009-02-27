@@ -36,6 +36,7 @@
 
 #define LDAP_DEPRECATED 1
 #include <ldap.h>
+#include <sasl/sasl.h>
 #include <stddef.h>
 #include <string.h>
 #include <strings.h>
@@ -52,6 +53,14 @@
 /* Max type length definitions, from lib/dns/master.c */
 #define MINTSIZ (65535 - 12 - 1 - 2 - 2 - 4 - 2)
 #define TOKENSIZ (8*1024)
+
+#define LDAP_OPT_CHECK(r, ...)						\
+	do {								\
+		if ((r) != LDAP_OPT_SUCCESS) {				\
+			log_error(__VA_ARGS__);				\
+			goto cleanup;					\
+		}							\
+	} while (0)
 
 /*
  * LDAP related typedefs and structs.
@@ -93,6 +102,11 @@ struct ldap_db {
 	ld_string_t		*base;
 	unsigned int		connections;
 	ldap_auth_t		auth_method;
+	ld_string_t		*bind_dn;
+	ld_string_t		*password;
+	ld_string_t		*sasl_mech;
+	ld_string_t		*sasl_user;
+	ld_string_t		*sasl_realm;
 };
 
 struct ldap_instance {
@@ -152,10 +166,8 @@ extern const char *ldapdb_impname;
 /* Supported authentication types. */
 const ldap_auth_pair_t supported_ldap_auth[] = {
 	{ AUTH_NONE,	"none"		},
-#if 0
 	{ AUTH_SIMPLE,	"simple"	},
 	{ AUTH_SASL,	"sasl"		},
-#endif
 	{ AUTH_INVALID, NULL		},
 };
 
@@ -223,10 +235,17 @@ new_ldap_db(isc_mem_t *mctx, dns_view_t *view, ldap_db_t **ldap_dbp,
 	isc_result_t result;
 	ldap_db_t *ldap_db;
 	ldap_instance_t *ldap_inst;
+	ld_string_t *auth_method_str = NULL;
 	setting_t ldap_settings[] = {
-		{ "host",	 no_default_string, NULL },
-		{ "connections", default_uint(1),   NULL },
-		{ "base",	 no_default_string, NULL },
+		{ "host",	 no_default_string		},
+		{ "connections", default_uint(1)		},
+		{ "base",	 no_default_string		},
+		{ "auth_method", default_string("none")		},
+		{ "bind_dn",	 default_string("")		},
+		{ "password",	 default_string("")		},
+		{ "sasl_mech",	 default_string("ANONYMOUS")	},
+		{ "sasl_user",	 default_string("")		},
+		{ "sasl_realm",	 default_string("")		},
 		end_of_settings
 	};
 
@@ -246,18 +265,47 @@ new_ldap_db(isc_mem_t *mctx, dns_view_t *view, ldap_db_t **ldap_dbp,
 	//dns_view_attach(view, &ldap_db->view);
 
 	INIT_LIST(ldap_db->conn_list);
-	ldap_db->auth_method = AUTH_NONE;	/* todo: should be in settings */
 
+	CHECK(str_new(ldap_db->mctx, &auth_method_str));
 	CHECK(str_new(ldap_db->mctx, &ldap_db->host));
 	CHECK(str_new(ldap_db->mctx, &ldap_db->base));
+	CHECK(str_new(ldap_db->mctx, &ldap_db->bind_dn));
+	CHECK(str_new(ldap_db->mctx, &ldap_db->password));
+	CHECK(str_new(ldap_db->mctx, &ldap_db->sasl_mech));
+	CHECK(str_new(ldap_db->mctx, &ldap_db->sasl_user));
+	CHECK(str_new(ldap_db->mctx, &ldap_db->sasl_realm));
 
 	ldap_settings[0].target = ldap_db->host;
 	ldap_settings[1].target = &ldap_db->connections;
 	ldap_settings[2].target = ldap_db->base;
+	ldap_settings[3].target = auth_method_str;
+	ldap_settings[4].target = ldap_db->bind_dn;
+	ldap_settings[5].target = ldap_db->password;
+	ldap_settings[6].target = ldap_db->sasl_mech;
+	ldap_settings[7].target = ldap_db->sasl_user;
+	ldap_settings[8].target = ldap_db->sasl_realm;
 
 	CHECK(set_settings(ldap_settings, argv));
+
+	/* Validate and check settings. */
+	str_toupper(ldap_db->sasl_mech);
 	if (ldap_db->connections < 1) {
 		log_error("at least one connection is required");
+		result = ISC_R_FAILURE;
+		goto cleanup;
+	}
+	/* Select authentication method. */
+	ldap_db->auth_method = AUTH_INVALID;
+	for (i = 0; supported_ldap_auth[i].name != NULL; i++) {
+		if (!str_casecmp_char(auth_method_str,
+				      supported_ldap_auth[i].name)) {
+			ldap_db->auth_method = supported_ldap_auth[i].value;
+			break;
+		}
+	}
+	if (ldap_db->auth_method == AUTH_INVALID) {
+		log_error("unknown authentication method '%s'",
+			  str_buf(auth_method_str));
 		result = ISC_R_FAILURE;
 		goto cleanup;
 	}
@@ -271,12 +319,13 @@ new_ldap_db(isc_mem_t *mctx, dns_view_t *view, ldap_db_t **ldap_dbp,
 		APPEND(ldap_db->conn_list, ldap_inst, link);
 	}
 
-	*ldap_dbp = ldap_db;
-
-	return ISC_R_SUCCESS;
-
 cleanup:
-	destroy_ldap_db(&ldap_db);
+	if (result != ISC_R_SUCCESS)
+		destroy_ldap_db(&ldap_db);
+	else
+		*ldap_dbp = ldap_db;
+
+	str_destroy(&auth_method_str);
 
 	return result;
 }
@@ -302,6 +351,11 @@ destroy_ldap_db(ldap_db_t **ldap_dbp)
 
 	str_destroy(&ldap_db->host);
 	str_destroy(&ldap_db->base);
+	str_destroy(&ldap_db->bind_dn);
+	str_destroy(&ldap_db->password);
+	str_destroy(&ldap_db->sasl_mech);
+	str_destroy(&ldap_db->sasl_user);
+	str_destroy(&ldap_db->sasl_realm);
 
 	semaphore_destroy(&ldap_db->conn_semaphore);
 	/* commented out for now, causes named to hang */
@@ -992,6 +1046,7 @@ put_connection(ldap_instance_t *ldap_inst)
 }
 
 
+/* FIXME: handle disconect */
 static isc_result_t
 ldap_query(ldap_instance_t *ldap_inst, const char *base, int scope, char **attrs,
 	   int attrsonly, const char *filter, ...)
@@ -1201,52 +1256,130 @@ next_entry(ldap_instance_t *inst)
 	return inst->entry;
 }
 
+/* FIXME: Not tested. */
+static int
+ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
+{
+	sasl_interact_t *in = (sasl_interact_t *)sin;
+	ldap_db_t *ldap_db = (ldap_db_t *)defaults;
 
+	REQUIRE(ldap_db != NULL);
+	UNUSED(flags);
+
+	if (ld == NULL || sin == NULL)
+		return LDAP_PARAM_ERROR;
+
+	for (in = sin; in != NULL && in->id != SASL_CB_LIST_END; in++) {
+		switch (in->id) {
+		case SASL_CB_USER:
+			log_error("SASL_CB_USER");
+			in->result = str_buf(ldap_db->sasl_user);
+			in->len = str_len(ldap_db->sasl_user);
+			break;
+		case SASL_CB_NOECHOPROMPT:
+			log_error("SASL_CB_NOECHOPROMPT");
+			break;
+		case SASL_CB_ECHOPROMPT:
+			log_error("SASL_CB_ECHOPROMPT");
+			break;
+		case SASL_CB_GETREALM:
+			log_error("SASL_CB_GETREALM");
+			break;
+		case SASL_CB_AUTHNAME:
+			log_error("SASL_CB_AUTHNAME");
+			in->result = str_buf(ldap_db->sasl_user);
+			in->len = str_len(ldap_db->sasl_user);
+			break;
+		case SASL_CB_PASS:
+			log_error("SASL_CB_PASS");
+			in->result = str_buf(ldap_db->password);
+			in->len = str_len(ldap_db->password);
+			break;
+		default:
+			log_error("SASL_UNKNOWN");
+			in->result = "";
+			in->len = 0;
+			break;
+		}
+		log_error("result: %s", in->result);
+	}
+
+	return LDAP_SUCCESS;
+}
+
+/*
+ * Initialize the LDAP handle and bind to the server. Needed authentication
+ * credentials and settings are available from the ldap_inst->database.
+ */
 static isc_result_t
 ldap_connect(ldap_instance_t *ldap_inst)
 {
 	LDAP *ld;
 	int ret;
+	int version;
+	const char *bind_dn;
+	const char *password;
+	struct berval *servercred = NULL;
 	ldap_db_t *ldap_db;
 
 	REQUIRE(ldap_inst != NULL);
 
 	ldap_db = ldap_inst->database;
 
-	/* XXX: port should be overridable */
+	if (str_len(ldap_db->bind_dn) == 0 ||
+	    str_len(ldap_db->password) == 0) {
+		bind_dn = NULL;
+		password = NULL;
+	} else {
+		bind_dn = str_buf(ldap_db->bind_dn);
+		password = str_buf(ldap_db->password);
+	}
+
 	ret = ldap_initialize(&ld, str_buf(ldap_db->host));
 	if (ret != LDAP_SUCCESS) {
-		log_error("LDAP initialization failed: %s", ldap_err2string(ret));
+		log_error("LDAP initialization failed: %s",
+			  ldap_err2string(ret));
 		goto cleanup;
 	}
+
+	version = LDAP_VERSION3;
+	ret = ldap_set_option(ld, LDAP_OPT_PROTOCOL_VERSION, &version);
+	LDAP_OPT_CHECK(ret, "failed to set LDAP version");
 
 	/*
 	ret = ldap_set_option(ld, LDAP_OPT_TIMELIMIT, (void *)&ldap_db->timeout);
-	if (ret != LDAP_OPT_SUCCESS) {
-		log_error("Failed to set timeout: %s", ldap_err2string(ret));
-		goto cleanup;
-	}
+	LDAP_OPT_CHECK(ret, "failed to set timeout: %s", ldap_err2string(ret));
 	*/
 
-	log_debug(2, "Trying to make an LDAP connection to %s", str_buf(ldap_db->host));
+	log_debug(2, "trying to establish LDAP connection to %s",
+		  str_buf(ldap_db->host));
+
 
 	switch (ldap_db->auth_method) {
 	case AUTH_NONE:
 		ret = ldap_simple_bind_s(ld, NULL, NULL);
 		break;
 	case AUTH_SIMPLE:
-		fatal_error("Simple auth not supported yet.");
+		ret = ldap_simple_bind_s(ld, bind_dn, password);
 		break;
 	case AUTH_SASL:
-		fatal_error("SASL auth not supported yet.");
+		log_error("%s", str_buf(ldap_db->sasl_mech));
+		ret = ldap_sasl_interactive_bind_s(ld, NULL,
+						   str_buf(ldap_db->sasl_mech),
+						   NULL, NULL, LDAP_SASL_QUIET,
+						   ldap_sasl_interact,
+						   ldap_db);
+		ber_bvfree(servercred);
 		break;
 	default:
-		fatal_error("Bug in ldap_connect(): unsupported authentication mechanism");
-		return ISC_R_UNEXPECTED;
+		fatal_error("bug in ldap_connect(): unsupported "
+			    "authentication mechanism");
+		goto cleanup;
 	}
 
 	if (ret != LDAP_SUCCESS) {
-		log_error("Bind to LDAP server failed: %s", ldap_err2string(ret));
+		log_error("bind to LDAP server failed: %s",
+			  ldap_err2string(ret));
 		goto cleanup;
 	}
 

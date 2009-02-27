@@ -53,16 +53,16 @@ struct setting {
  *         "name", no_default_string, &target_variable
  * }
  */
-#define default_string(val)	0, 1, ST_LD_STRING, { .value_char = (val) }
-#define default_sint(val)	0, 1, ST_SIGNED_INTEGER, { .value_sint = (val) }
-#define default_uint(val)	0, 1, ST_UNSIGNED_INTEGER, { .value_uint = (val) }
+#define default_string(val)	0, 1, ST_LD_STRING, { .value_char = (val) }, NULL
+#define default_sint(val)	0, 1, ST_SIGNED_INTEGER, { .value_sint = (val) }, NULL
+#define default_uint(val)	0, 1, ST_UNSIGNED_INTEGER, { .value_uint = (val) }, NULL
 /* No defaults. */
-#define no_default_string	0, 0, ST_LD_STRING, { .value_char = NULL }
-#define no_default_sint		0, 0, ST_SIGNED_INTEGER, { .value_sint = 0 }
-#define no_default_uint		0, 0, ST_UNSIGNED_INTEGER, { .value_uint = 0 }
+#define no_default_string	0, 0, ST_LD_STRING, { .value_char = NULL }, NULL
+#define no_default_sint		0, 0, ST_SIGNED_INTEGER, { .value_sint = 0 }, NULL
+#define no_default_uint		0, 0, ST_UNSIGNED_INTEGER, { .value_uint = 0 }, NULL
 
 /* This is used in the end of setting_t arrays. */
-#define end_of_settings	{ NULL, default_sint(0), NULL }
+#define end_of_settings	{ NULL, default_sint(0) }
 
 /*
  * Prototypes.
