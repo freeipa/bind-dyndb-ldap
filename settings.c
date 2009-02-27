@@ -35,7 +35,7 @@
  */
 static int args_are_equal(const char *setting_argument,
 		const char *argv_argument);
-static isc_result_t set_value(setting_t *setting, const char *arg);
+static isc_result_t set_value(setting_t *setting, const char *value);
 static isc_result_t set_default_value(setting_t *setting);
 static const char * get_value_str(const char *arg);
 
@@ -44,11 +44,13 @@ set_settings(setting_t settings[], const char * const* argv)
 {
 	isc_result_t result;
 	int i, j;
+	const char *value;
 
 	for (i = 0; argv[i] != NULL; i++) {
 		for (j = 0; settings[j].name != NULL; j++) {
 			if (args_are_equal(settings[j].name, argv[i])) {
-				CHECK(set_value(&settings[j], argv[i]));
+				value = get_value_str(argv[i]);
+				CHECK(set_value(&settings[j], value));
 				break;
 			}
 		}
@@ -104,13 +106,10 @@ args_are_equal(const char *setting_argument, const char *argv_argument)
 }
 
 static isc_result_t
-set_value(setting_t *setting, const char *arg)
+set_value(setting_t *setting, const char *value)
 {
 	isc_result_t result;
 	int numeric_value;
-	const char *value;
-
-	value = get_value_str(arg);
 
 	if (setting->type == ST_LD_STRING) {
 		CHECK(str_init_char((ld_string_t *)setting->target, value));
