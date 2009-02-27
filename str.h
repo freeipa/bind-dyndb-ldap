@@ -54,6 +54,9 @@ isc_result_t str_cat_char(ld_string_t *dest, const char *src);
 isc_result_t str_cat(ld_string_t *dest, const ld_string_t *src);
 isc_result_t str_sprintf(ld_string_t *dest, const char *format, ...);
 isc_result_t str_vsprintf(ld_string_t *dest, const char *format, va_list ap);
+void str_toupper(ld_string_t *str);
+
+int str_casecmp_char(const ld_string_t *s1, const char *s2);
 
 isc_result_t str_new_split(isc_mem_t *mctx, ld_split_t **splitp);
 void str_destroy_split(ld_split_t **splitp);

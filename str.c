@@ -30,10 +30,12 @@
 
 #include <dns/result.h>
 
+#include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "str.h"
 #include "util.h"
@@ -206,7 +208,7 @@ str_len(const ld_string_t *str)
 }
 
 /*
- * Retrun a const char * type.
+ * Return a const char * type.
  */
 const char *
 str_buf(const ld_string_t *src)
@@ -367,6 +369,29 @@ str_vsprintf(ld_string_t *dest, const char *format, va_list ap)
 
 cleanup:
 	return result;
+}
+
+void
+str_toupper(ld_string_t *str)
+{
+	char *ptr;
+
+	REQUIRE(str != NULL);
+
+	if (str->data == NULL)
+		return;
+
+	for (ptr = str->data; *ptr != '\0'; ptr++)
+		*ptr = toupper((unsigned char)*ptr);
+}
+
+int
+str_casecmp_char(const ld_string_t *s1, const char *s2)
+{
+	REQUIRE(s1 != NULL && s1->data != NULL);
+	REQUIRE(s2 != NULL);
+
+	return strcasecmp(s1->data, s2);
 }
 
 /*
