@@ -33,7 +33,6 @@
 /*
  * TODO:
  * - Some compiler format checks would be nice.
- * - Change these to use isc_log_vwrite().
  * - Think about log_unexpected_file_line(), maybe use something else.
  */
 
@@ -41,36 +40,32 @@
 void
 log_debug(int level, const char *format, ...)
 {
-	char buf[MSG_BUFFER_SIZE];
 	va_list args;
 
 	va_start(args, format);
-	vsnprintf(buf, MSG_BUFFER_SIZE, format, args);
-	va_end(args);
-
 	/*
-	isc_log_write(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
-		      ISC_LOG_DEBUG(level), "%s", buf);
+	isc_log_vwrite(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
+		      ISC_LOG_DEBUG(level), format, args);
 	*/
 	/*
 	 * For now, behave same as log_error(), so we can see every debugging
 	 * logs without the need to specify -d.
 	 */
+	isc_log_vwrite(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
+		      ISC_LOG_ERROR, format, args);
 	(void)level;
-	isc_log_write(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
-		      ISC_LOG_ERROR, "%s", buf);
+
+	va_end(args);
 }
 
 void
 log_error(const char *format, ...)
 {
-	char buf[MSG_BUFFER_SIZE];
 	va_list args;
 
 	va_start(args, format);
-	vsnprintf(buf, MSG_BUFFER_SIZE, format, args);
+	isc_log_vwrite(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
+		      ISC_LOG_ERROR, format, args);
 	va_end(args);
 
-	isc_log_write(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
-		      ISC_LOG_ERROR, "%s", buf);
 }
