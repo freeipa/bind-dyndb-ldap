@@ -95,7 +95,8 @@ dn_to_dnsname(isc_mem_t *mctx, const char *dn, const char *root_dn,
 	dns_name_init(&tmp_name, NULL);
 	dns_name_setbuffer(&tmp_name, &target_buffer);
 
-	dns_name_fromtext(&tmp_name, &source_buffer, dns_rootname, 0, NULL);
+	CHECK(dns_name_fromtext(&tmp_name, &source_buffer, dns_rootname, 0,
+				NULL));
 
 cleanup:
 	if (result != ISC_R_FAILURE)

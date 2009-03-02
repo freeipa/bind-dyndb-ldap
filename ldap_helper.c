@@ -486,7 +486,8 @@ add_or_modify_zone(ldap_db_t *ldap_db, const char *dn, const char *db_name,
 	 */
 
 cleanup:
-	dns_name_free(&name, ldap_db->mctx);
+	if (dns_name_dynamic(&name))
+		dns_name_free(&name, ldap_db->mctx);
 	if (zone != NULL)
 		dns_zone_detach(&zone);
 
