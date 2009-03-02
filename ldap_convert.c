@@ -139,7 +139,7 @@ dn_to_text(const char *dn, const char *root_dn, ld_string_t *target)
 
 		CHECK(explode_dn(root_dn, &exploded_root, 1));
 		count_root = count_rdns(exploded_root);
-		if (exploded_root > exploded_dn) {
+		if (count_root > count) {
 			result = ISC_R_FAILURE;
 			goto cleanup;
 		}
