@@ -431,6 +431,7 @@ add_or_modify_zone(ldap_db_t *ldap_db, const char *dn, const char *db_name,
 	isc_result_t result;
 	dns_zone_t *zone;
 	dns_name_t name;
+	dns_acl_t *updateacl = NULL;
 	const char *argv[2];
 
 	REQUIRE(ldap_db != NULL);
@@ -456,6 +457,12 @@ add_or_modify_zone(ldap_db_t *ldap_db, const char *dn, const char *db_name,
 		dns_zone_setclass(zone, dns_rdataclass_in);
 		dns_zone_settype(zone, dns_zone_master);
 		CHECK(dns_zone_setdbtype(zone, 2, argv));
+
+		/* XXX Temporary set update ACLs to any */
+		CHECK(dns_acl_any(ldap_db->mctx, &updateacl));
+		dns_zone_setupdateacl(zone, updateacl);
+		dns_acl_detach(&updateacl);
+
 		log_func_va("adding zone %s", dn);
 		CHECK(dns_zonemgr_managezone(zmgr, zone));
 		CHECK(dns_view_addzone(ldap_db->view, zone));
