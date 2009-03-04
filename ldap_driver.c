@@ -18,14 +18,17 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
+#include <isc/buffer.h>
 #include <isc/mem.h>
 #include <isc/refcount.h>
 #include <isc/util.h>
 
 #include <dns/db.h>
 #include <dns/rdata.h>
+#include <dns/rdataclass.h>
 #include <dns/rdatalist.h>
 #include <dns/rdataset.h>
+#include <dns/rdatatype.h>
 #include <dns/result.h>
 #include <dns/types.h>
 
@@ -68,6 +71,95 @@ static void *ldapdb_version = &dummy;
 
 static void free_ldapdb(ldapdb_t *ldapdb);
 static void detachnode(dns_db_t *db, dns_dbnode_t **targetp);
+
+static isc_result_t
+write_to_ldap(dns_name_t *owner, ldapdb_t *ldapdb, dns_rdatalist_t *rdlist)
+{
+	dns_rdata_t *rdata;
+	/* TODO - MINTSIZ is already defined in ldap_helper.c */
+	#define MINTSIZ (65535 - 12 - 1 - 2 - 2 - 4 - 2)
+	isc_buffer_t *rdatatext = NULL;
+	isc_buffer_t *ownertext = NULL;
+	isc_buffer_t *classtext = NULL;
+	isc_buffer_t *typetext = NULL;
+	isc_result_t result;
+	/* Temporary and ugly debug hack. Should be MINTSIZ */
+	char buf[1024];
+
+	result = isc_buffer_allocate(ldapdb->common.mctx, &rdatatext, 19999);
+
+	if (result != ISC_R_SUCCESS)
+		return result;
+
+	result = isc_buffer_allocate(ldapdb->common.mctx, &ownertext,
+				     DNS_NAME_MAXWIRE + 1);
+	if (result != ISC_R_SUCCESS)
+		goto cleanup;
+
+	result = isc_buffer_allocate(ldapdb->common.mctx, &classtext,
+				     sizeof("CLASS65535"));
+	if (result != ISC_R_SUCCESS)
+		goto cleanup;
+
+	result = isc_buffer_allocate(ldapdb->common.mctx, &typetext,
+				     sizeof("TYPE65535"));
+	if (result != ISC_R_SUCCESS)
+		goto cleanup;
+
+	rdata = HEAD(rdlist->rdata);
+	while (rdata != NULL) { 
+		/* Debug hacking... Probably might be reused. */
+		result = dns_name_totext(owner, ISC_FALSE, ownertext);
+		if (result != ISC_R_SUCCESS)
+			goto cleanup;
+
+		*((char *)ownertext->base + isc_buffer_usedlength(ownertext)) = '\0';
+
+		result = dns_rdataclass_totext(rdlist->rdclass, classtext);
+		if (result != ISC_R_SUCCESS)
+			goto cleanup;
+
+		*((char *)classtext->base + isc_buffer_usedlength(classtext)) = '\0';
+
+		result = dns_rdatatype_totext(rdlist->type, typetext);
+		if (result != ISC_R_SUCCESS)
+			goto cleanup;
+
+		*((char *)typetext->base + isc_buffer_usedlength(typetext)) = '\0';
+
+		result = dns_rdata_totext(rdata, NULL, rdatatext);
+		if (result != ISC_R_SUCCESS)
+			goto cleanup;
+
+		INSIST(isc_buffer_usedlength(rdatatext) < 1024);
+		memcpy(buf, rdatatext->base, 1024);
+		buf[isc_buffer_usedlength(rdatatext)] = '\0';
+		log_debug(2, "Modifying %s %s %s %s.", ownertext->base,
+			  classtext->base, typetext->base, buf);
+		rdata = NEXT(rdata, link);
+	}
+
+cleanup:
+
+	if (typetext != NULL)
+		isc_buffer_free(&typetext);
+
+	if (classtext != NULL)
+		isc_buffer_free(&classtext);
+
+	if (ownertext != NULL)
+		isc_buffer_free(&ownertext);
+
+	isc_buffer_free(&rdatatext);
+
+	return result;
+}
+
+static isc_result_t
+remove_from_ldap(dns_name_t *owner, ldapdb_t *ldapdb, dns_rdatalist_t *rdlist)
+{
+	return write_to_ldap(owner, ldapdb, rdlist);
+}
 
 /* ldapdbnode_t functions */
 static isc_result_t
@@ -545,20 +637,136 @@ allrdatasets(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	return ISC_R_NOTIMPLEMENTED;
 }
 
+/*
+ * Remove duplicates between rdlists. If rm_from1 == true then remove rdata
+ * from the first rdatalist. same rdata are removed from rdlist1 or 2 and are
+ * returned in diff.
+ */
+static void
+rdatalist_removedups(dns_rdatalist_t *rdlist1, dns_rdatalist_t *rdlist2,
+		     isc_boolean_t rm_from1,
+		     dns_rdatalist_t *diff)
+{
+	dns_rdata_t *rdata1, *rdata2;
+
+	rdata1 = HEAD(rdlist1->rdata);
+	while (rdata1 != NULL) {
+		rdata2 = HEAD(rdlist2->rdata);
+		while (rdata2 != NULL) {
+			if (dns_rdata_compare(rdata1, rdata2) == 0) {
+				/* same rdata has been found */
+				if (rm_from1) {
+					APPEND(diff->rdata, rdata1, link);
+					ISC_LIST_UNLINK(rdlist1->rdata, rdata1,
+							link);
+				} else {
+					APPEND(diff->rdata, rdata2, link);
+					ISC_LIST_UNLINK(rdlist2->rdata, rdata2,
+							link);
+				}
+				break;
+			}
+			rdata2 = NEXT(rdata2, link);
+		}
+		rdata1 = NEXT(rdata1, link);
+	}
+}
+
 static isc_result_t
 addrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	    isc_stdtime_t now, dns_rdataset_t *rdataset, unsigned int options,
 	    dns_rdataset_t *addedrdataset)
 {
-	UNUSED(db);
-	UNUSED(node);
-	UNUSED(version);
+	ldapdbnode_t *ldapdbnode = (ldapdbnode_t *) node;
+	ldapdb_t *ldapdb = (ldapdb_t *) db;
+	dns_rdatalist_t *rdlist = NULL, *new_rdlist = NULL;
+	dns_rdatalist_t *found_rdlist = NULL;
+	dns_rdatalist_t diff;
+	isc_result_t result;
+	isc_boolean_t rdatalist_exists = ISC_FALSE;
+
 	UNUSED(now);
-	UNUSED(rdataset);
-	UNUSED(options);
+	UNUSED(db);
 	UNUSED(addedrdataset);
 
-	return ISC_R_NOTIMPLEMENTED;
+	REQUIRE(VALID_LDAPDBNODE(ldapdbnode));
+	/* version == NULL is valid only for cache databases */
+	REQUIRE(version == ldapdb_version);
+	REQUIRE((options & DNS_DBADD_FORCE) == 0);
+
+	dns_rdatalist_init(&diff);
+
+	result = dns_rdatalist_fromrdataset(rdataset, &rdlist);
+	INSIST(result == ISC_R_SUCCESS);
+	INSIST(rdlist->rdclass == dns_rdataclass_in);
+
+	result = rdatalist_clone(ldapdb->common.mctx, rdlist, &new_rdlist);
+	if (result != ISC_R_SUCCESS)
+		goto cleanup;
+
+	result = ldapdb_rdatalist_findrdatatype(&ldapdbnode->rdatalist,
+						rdlist->type, &found_rdlist);
+	if (result == ISC_R_SUCCESS) {
+		rdatalist_exists = ISC_TRUE;
+
+		if (rdlist->ttl != found_rdlist->ttl) {
+			/*
+			 * TODO: support it. When supported handle
+			 * DNS_DBADD_EXACTTTL option well.
+			 */
+			log_error("Multiple TTLs for one name are not "
+				  "supported");
+			result = ISC_R_NOTIMPLEMENTED;
+			goto cleanup;
+		}
+
+		if ((options & DNS_DBADD_MERGE) != 0 ||
+		    (options & DNS_DBADD_EXACT) != 0) {
+			rdatalist_removedups(found_rdlist, new_rdlist,
+					     ISC_FALSE, &diff);
+
+			if ((options & DNS_DBADD_MERGE) != 0)
+				free_rdatalist(ldapdb->common.mctx, &diff);
+			else if (rdatalist_length(&diff) != 0) {
+				free_rdatalist(ldapdb->common.mctx, &diff);
+				result = DNS_R_NOTEXACT;
+				goto cleanup;
+			}
+		} else {
+			/* Replace existing rdataset */
+			free_rdatalist(ldapdb->common.mctx, found_rdlist);
+		}
+	}
+
+	result = write_to_ldap(&ldapdbnode->owner, ldapdb, new_rdlist);
+	if (result != ISC_R_SUCCESS)
+		goto cleanup;
+
+	if (addedrdataset != NULL) {
+		result = dns_rdatalist_tordataset(new_rdlist, addedrdataset);
+		/* Use strong condition here, returns only SUCCESS */
+		INSIST(result == ISC_R_SUCCESS);
+	}
+
+	if (rdatalist_exists) {
+		ISC_LIST_APPENDLIST(found_rdlist->rdata, new_rdlist->rdata,
+				    link);
+		isc_mem_put(ldapdb->common.mctx, new_rdlist,
+			    sizeof(*new_rdlist));
+	} else
+		APPEND(ldapdbnode->rdatalist, new_rdlist, link);
+
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	if (new_rdlist != NULL) {
+		free_rdatalist(ldapdb->common.mctx, new_rdlist);
+		isc_mem_put(ldapdb->common.mctx, new_rdlist,
+			    sizeof(*new_rdlist));
+	}
+
+	return result;
 }
 
 static isc_result_t
@@ -573,6 +781,8 @@ subtractrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	UNUSED(options);
 	UNUSED(newrdataset);
 
+	REQUIRE("subtractrdataset" == NULL);
+
 	return ISC_R_NOTIMPLEMENTED;
 }
 
@@ -586,6 +796,8 @@ deleterdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	UNUSED(type);
 	UNUSED(covers);
 
+	REQUIRE("deleterdataset" == NULL);
+
 	return ISC_R_NOTIMPLEMENTED;
 }
 
@@ -594,7 +806,7 @@ issecure(dns_db_t *db)
 {
 	UNUSED(db);
 
-	return ISC_R_NOTIMPLEMENTED;
+	return ISC_FALSE;
 }
 
 static unsigned int
