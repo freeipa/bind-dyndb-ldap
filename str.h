@@ -51,6 +51,7 @@ isc_result_t str_clone(ld_string_t **dest, const ld_string_t *src _STR_MEM_FLARG
 void str_clear(ld_string_t *dest);
 isc_result_t str_init_char(ld_string_t *dest, const char *src);
 isc_result_t str_cat_char(ld_string_t *dest, const char *src);
+isc_result_t str_cat_char_len(ld_string_t *dest, const char *src, size_t len);
 isc_result_t str_cat(ld_string_t *dest, const ld_string_t *src);
 isc_result_t str_sprintf(ld_string_t *dest, const char *format, ...);
 isc_result_t str_vsprintf(ld_string_t *dest, const char *format, va_list ap);

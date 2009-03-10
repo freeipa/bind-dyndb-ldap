@@ -250,7 +250,6 @@ dnsname_to_dn(isc_mem_t *mctx, dns_name_t *name, const char *root_dn,
 		CHECK(str_cat_char(target, root_dn));
 	}
 
-	log_error("%s", str_buf(target));
 cleanup:
 	str_destroy_split(&split);
 	str_destroy(&str);

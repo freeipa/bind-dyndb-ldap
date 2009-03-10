@@ -90,4 +90,12 @@ void destroy_ldap_db(ldap_db_t **ldap_db);
 isc_result_t refresh_zones_from_ldap(ldap_db_t *ldap_db, const char *name,
 				     dns_zonemgr_t *zmgr);
 
+/* Functions for writing to LDAP. */
+isc_result_t ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
+		char ***valsp);
+isc_result_t write_to_ldap(dns_name_t *owner, ldap_db_t *ldap_db,
+		dns_rdatalist_t *rdlist);
+isc_result_t remove_from_ldap(dns_name_t *owner, ldap_db_t *ldap_db,
+		dns_rdatalist_t *rdlist);
+
 #endif /* !_LD_LDAP_HELPER_H_ */

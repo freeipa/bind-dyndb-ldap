@@ -230,7 +230,7 @@ str_copy(ld_string_t *dest, const ld_string_t *src)
 	REQUIRE(src != NULL);
 	IGNORE_R(src->data == NULL);
 
-	CHECK(str_alloc(dest, str_len_internal(src) * sizeof(char)));
+	CHECK(str_alloc(dest, str_len_internal(src)));
 	strncpy(dest->data, src->data, dest->allocated);
 
 	return ISC_R_SUCCESS;
@@ -279,7 +279,7 @@ str_init_char(ld_string_t *dest, const char *src)
 	REQUIRE(dest != NULL);
 	IGNORE_R(src == NULL);
 
-	CHECK(str_alloc(dest, strlen(src) * sizeof(char)));
+	CHECK(str_alloc(dest, strlen(src)));
 	strncpy(dest->data, src, dest->allocated);
 
 	return ISC_R_SUCCESS;
@@ -290,6 +290,7 @@ cleanup:
 
 /*
  * Concatenate char *src to string dest.
+ * TODO: make str_cat_char() simply use str_cat_char_len()
  */
 isc_result_t
 str_cat_char(ld_string_t *dest, const char *src)
@@ -305,9 +306,38 @@ str_cat_char(ld_string_t *dest, const char *src)
 	dest_size = str_len_internal(dest);
 	src_size = strlen(src);
 
-	CHECK(str_alloc(dest, (dest_size + src_size) * sizeof(char)));
+	IGNORE_R(src_size == 0);
+
+	CHECK(str_alloc(dest, dest_size + src_size));
 	from = dest->data + dest_size;
 	strncpy(from, src, src_size + 1);
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	return result;
+}
+
+isc_result_t
+str_cat_char_len(ld_string_t *dest, const char *src, size_t len)
+{
+	isc_result_t result;
+	char *from;
+	size_t dest_size;
+	size_t src_size;
+
+	REQUIRE(dest != NULL);
+	IGNORE_R(src != NULL);
+
+	dest_size = str_len_internal(dest);
+	src_size = ISC_MAX(strlen(src), len);
+
+	IGNORE_R(src_size == 0);
+
+	CHECK(str_alloc(dest, dest_size + src_size));
+	from = dest->data + dest_size;
+	strncpy(from, src, src_size);
+	from[src_size - 1] = '\0';
 
 	return ISC_R_SUCCESS;
 

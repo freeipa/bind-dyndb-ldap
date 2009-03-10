@@ -226,6 +226,15 @@ static isc_result_t ldap_connect(ldap_instance_t *ldap_inst);
 static isc_result_t ldap_query(ldap_instance_t *ldap_inst, const char *base,
 		int scope, char **attrs, int attrsonly, const char *filter, ...);
 
+/* Functions for writing to LDAP. */
+static isc_result_t ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn,
+		LDAPMod **mods);
+static isc_result_t ldap_rdatalist_to_ldapmod(isc_mem_t *mctx,
+		dns_rdatalist_t *rdlist, LDAPMod ***change_listp, int mod_op);
+static void free_ldapmod_array(isc_mem_t *mctx, LDAPMod ***change_listp);
+static void free_char_array(isc_mem_t *mctx, char ***valsp);
+static isc_result_t modify_ldap_common(dns_name_t *owner, ldap_db_t *ldap_db,
+		dns_rdatalist_t *rdlist, int mod_op);
 
 isc_result_t
 new_ldap_db(isc_mem_t *mctx, dns_view_t *view, ldap_db_t **ldap_dbp,
@@ -998,6 +1007,8 @@ get_connection(ldap_db_t *ldap_db)
 {
 	ldap_instance_t *ldap_inst;
 
+	REQUIRE(ldap_db != NULL);
+
 	semaphore_wait(&ldap_db->conn_semaphore);
 	ldap_inst = HEAD(ldap_db->conn_list);
 	while (ldap_inst != NULL) {
@@ -1018,6 +1029,9 @@ get_connection(ldap_db_t *ldap_db)
 static void
 put_connection(ldap_instance_t *ldap_inst)
 {
+	if (ldap_inst == NULL)
+		return;
+
 	if (ldap_inst->dn) {
 		ldap_memfree(ldap_inst->dn);
 		ldap_inst->dn = NULL;
@@ -1046,13 +1060,16 @@ put_connection(ldap_instance_t *ldap_inst)
 }
 
 
-/* FIXME: handle disconect */
+/* FIXME: Handle the case where the LDAP handle is NULL -> try to reconnect. */
 static isc_result_t
 ldap_query(ldap_instance_t *ldap_inst, const char *base, int scope, char **attrs,
 	   int attrsonly, const char *filter, ...)
 {
 	va_list ap;
 	int ret;
+	const char *err_string;
+
+	REQUIRE(ldap_inst != NULL);
 
 	va_start(ap, filter);
 	str_vsprintf(ldap_inst->query_string, filter, ap);
@@ -1060,6 +1077,11 @@ ldap_query(ldap_instance_t *ldap_inst, const char *base, int scope, char **attrs
 
 	log_debug(2, "querying '%s' with '%s'", base,
 		  str_buf(ldap_inst->query_string));
+
+	if (ldap_inst->handle == NULL) {
+		err_string = "not connected";
+		goto cleanup;
+	}
 
 	ret = ldap_search_ext_s(ldap_inst->handle, base, scope,
 				str_buf(ldap_inst->query_string), attrs,
@@ -1070,6 +1092,11 @@ ldap_query(ldap_instance_t *ldap_inst, const char *base, int scope, char **attrs
 		  ldap_inst->result));
 
 	return ISC_R_SUCCESS;
+
+cleanup:
+	log_error("error reading from ldap: %s", err_string);
+
+	return ISC_R_FAILURE;
 }
 
 static isc_result_t
@@ -1393,4 +1420,215 @@ cleanup:
 		ldap_unbind_ext_s(ld, NULL, NULL);
 
 	return ISC_R_FAILURE;
+}
+
+/* FIXME: Handle the case where the LDAP handle is NULL -> try to reconnect. */
+/* FIXME: Handle cases where the entry actually doesn't exist. */
+static isc_result_t
+ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn, LDAPMod **mods)
+{
+	int ret;
+
+	REQUIRE(ldap_inst != NULL);
+	REQUIRE(dn != NULL);
+	REQUIRE(mods != NULL);
+
+	log_debug(2, "writing to to '%s'", dn);
+
+	ret = ldap_modify_ext_s(ldap_inst->handle, dn, mods, NULL, NULL);
+	if (ret != LDAP_SUCCESS) {
+		log_error("error writing to ldap: %s", ldap_err2string(ret));
+		return ISC_R_FAILURE;
+	}
+
+	return ISC_R_SUCCESS;
+}
+
+static isc_result_t
+ldap_rdatalist_to_ldapmod(isc_mem_t *mctx, dns_rdatalist_t *rdlist,
+			  LDAPMod ***change_listp, int mod_op)
+{
+	isc_result_t result;
+	unsigned int i;
+	unsigned int rdtype_count;
+	size_t change_list_size;
+	LDAPMod **change_list = NULL;
+	dns_rdatalist_t *node;
+
+	REQUIRE(change_listp != NULL && *change_listp == NULL);
+
+	/* Count number of rdtypes. */
+	rdtype_count = 0;
+	for (node = rdlist; node != NULL; node = NEXT(node, link))
+		rdtype_count++;
+
+	change_list_size = (rdtype_count + 1) * sizeof(LDAPMod *);
+	CHECKED_MEM_GET(mctx, change_list, change_list_size);
+	memset(change_list, 0, change_list_size);
+
+	node = rdlist;
+	for (i = 0; i < rdtype_count && node != NULL; i++) {
+		char **vals;
+		const char *attr_name_c;
+		char *attr_name;
+
+		vals = NULL;
+		CHECKED_MEM_GET_PTR(mctx, change_list[i]);
+		ZERO_PTR(change_list[i]);
+
+		result = rdatatype_to_ldap_attribute(node->type, &attr_name_c);
+		if (result != ISC_R_SUCCESS) {
+			result = ISC_R_FAILURE;
+			goto cleanup;
+		}
+		DE_CONST(attr_name_c, attr_name);
+		CHECK(ldap_rdata_to_char_array(mctx, HEAD(node->rdata),
+					       &vals));
+
+		change_list[i]->mod_op = mod_op;
+		change_list[i]->mod_type = attr_name;
+		change_list[i]->mod_values = vals;
+
+		node = NEXT(node, link);
+	}
+
+	*change_listp = change_list;
+	return ISC_R_SUCCESS;
+
+cleanup:
+	free_ldapmod_array(mctx, &change_list);
+
+	return result;
+}
+
+static void
+free_ldapmod_array(isc_mem_t *mctx, LDAPMod ***change_listp)
+{
+	LDAPMod **change_list;
+	unsigned int item;
+
+	REQUIRE(change_listp != NULL);
+
+	change_list = *change_listp;
+	if (change_list == NULL)
+		return;
+
+	for (item = 0; change_list[item] != NULL; item++) {
+		free_char_array(mctx, &change_list[item]->mod_values);
+		SAFE_MEM_PUT_PTR(mctx, change_list[item]);
+	}
+	isc_mem_free(mctx, change_list);
+	*change_listp = NULL;
+}
+
+isc_result_t
+ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
+			 char ***valsp)
+{
+	isc_result_t result;
+	char **vals;
+	unsigned int i;
+	unsigned int rdata_count = 0;
+	size_t vals_size;
+	dns_rdata_t *rdata;
+
+	REQUIRE(rdata_head != NULL);
+	REQUIRE(valsp != NULL && *valsp == NULL);
+
+	for (rdata = rdata_head; rdata != NULL; rdata = NEXT(rdata, link))
+		rdata_count++;
+
+	vals_size = (rdata_count + 1) * sizeof(char *);
+	CHECKED_MEM_GET(mctx, vals, vals_size);
+	memset(vals, 0, vals_size);
+
+	rdata = rdata_head;
+	for (i = 0; i < rdata_count && rdata != NULL; i++) {
+		isc_buffer_t buffer;
+		isc_region_t region;
+		char data[MINTSIZ];
+
+		/* Convert rdata to text. */
+		isc_buffer_init(&buffer, data, MINTSIZ);
+		CHECK(dns_rdata_totext(rdata, NULL, &buffer));
+		isc_buffer_usedregion(&buffer, &region);
+
+		/* Now allocate the string with the right size. */
+		CHECKED_MEM_GET(mctx, vals[i], region.length + 1);
+		memcpy(vals[i], region.base, region.length);
+		vals[i][region.length] = '\0';
+
+		rdata = NEXT(rdata, link);
+	}
+
+	*valsp = vals;
+	return ISC_R_SUCCESS;
+
+cleanup:
+	free_char_array(mctx, &vals);
+	return result;
+}
+
+static void
+free_char_array(isc_mem_t *mctx, char ***valsp)
+{
+	char **vals;
+	unsigned int i;
+
+	REQUIRE(valsp != NULL);
+
+	vals = *valsp;
+	if (vals == NULL)
+		return;
+
+	for (i = 0; vals[i] != NULL; i++) {
+		isc_mem_free(mctx, vals[i]);
+	}
+
+	isc_mem_free(mctx, vals);
+	*valsp = NULL;
+}
+
+/*
+ * TODO: Handle updating of the SOA record, use the settings to determine if
+ * this is allowed.
+ */
+static isc_result_t
+modify_ldap_common(dns_name_t *owner, ldap_db_t *ldap_db,
+		   dns_rdatalist_t *rdlist, int mod_op)
+{
+	isc_result_t result;
+	isc_mem_t *mctx;
+	ldap_instance_t *ldap_inst;
+	ld_string_t *owner_dn = NULL;
+	LDAPMod **change_list = NULL;
+
+	mctx = ldap_db->mctx;
+	ldap_inst = get_connection(ldap_db);
+
+	CHECK(str_new(mctx, &owner_dn));
+	CHECK(dnsname_to_dn(mctx, owner, str_buf(ldap_db->base), owner_dn));
+
+	CHECK(ldap_rdatalist_to_ldapmod(mctx, rdlist, &change_list, mod_op));
+
+	CHECK(ldap_modify_do(ldap_inst, str_buf(owner_dn), change_list));
+
+cleanup:
+	put_connection(ldap_inst);
+	free_ldapmod_array(mctx, &change_list);
+
+	return result;
+}
+
+isc_result_t
+write_to_ldap(dns_name_t *owner, ldap_db_t *ldap_db, dns_rdatalist_t *rdlist)
+{
+	return modify_ldap_common(owner, ldap_db, rdlist, LDAP_MOD_ADD);
+}
+
+isc_result_t
+remove_from_ldap(dns_name_t *owner, ldap_db_t *ldap_db,
+		 dns_rdatalist_t *rdlist)
+{
+	return modify_ldap_common(owner, ldap_db, rdlist, LDAP_MOD_DELETE);
 }
