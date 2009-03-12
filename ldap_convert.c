@@ -51,10 +51,10 @@ const char *ldap_dns_records[] = {
 };
 
 const char *dns_records[] = {
-	"a",     "aaaa",  "a6",    "ns",
-	"cname", "ptr",   "srv",   "txt",   "mx",
-	"md",    "hinfo", "minfo", "afsdb", "sig",
-	"key",   "loc",   "NXT",   "NAPTR", "KX",
+	"A",     "AAAA",  "A6",    "NS",
+	"CNAME", "PTR",   "SRV",   "TXT",   "MX",
+	"MD",    "HINFO", "MINFO", "AFSDB", "SIG",
+	"KEY",   "LOC",   "NXT",   "NAPTR", "KX",
 	"CERT",  "DNAME", "DS",    "SSHFP",
 	"RRSIG", "NSEC",  NULL
 };
@@ -205,6 +205,9 @@ count_rdns(char **exploded)
 	return ret;
 }
 
+/*
+ * FIXME: Don't assume that the last RDN consists of the last two labels.
+ */
 isc_result_t
 dnsname_to_dn(isc_mem_t *mctx, dns_name_t *name, const char *root_dn,
 	      ld_string_t *target)
@@ -277,4 +280,23 @@ ldap_record_to_rdatatype(const char *ldap_record, dns_rdatatype_t *rdtype)
 	}
 
 	return result;
+}
+
+isc_result_t
+rdatatype_to_ldap_attribute(dns_rdatatype_t rdtype, const char **target)
+{
+	unsigned i;
+	char rdtype_str[DNS_RDATATYPE_FORMATSIZE];
+
+	dns_rdatatype_format(rdtype, rdtype_str, DNS_RDATATYPE_FORMATSIZE);
+	for (i = 0; dns_records[i] != NULL; i++) {
+		if (!strcmp(rdtype_str, dns_records[i]))
+			break;
+	}
+	if (ldap_dns_records[i] == NULL)
+		return ISC_R_NOTFOUND;
+
+	*target = ldap_dns_records[i];
+
+	return ISC_R_SUCCESS;
 }

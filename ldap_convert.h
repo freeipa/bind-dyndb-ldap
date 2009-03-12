@@ -38,4 +38,7 @@ isc_result_t dnsname_to_dn(isc_mem_t *mctx, dns_name_t *name,
 isc_result_t ldap_record_to_rdatatype(const char *ldap_record,
 				      dns_rdatatype_t *rdtype);
 
+isc_result_t rdatatype_to_ldap_attribute(dns_rdatatype_t rdtype,
+					 const char **target);
+
 #endif /* !_LD_LDAP_CONVERT_H_ */
