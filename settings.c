@@ -82,16 +82,14 @@ cleanup:
 static int
 args_are_equal(const char *setting_argument, const char *argv_argument)
 {
-	if (setting_argument == argv_argument)
-		return 1;
 	if (setting_argument == NULL || argv_argument == NULL)
 		return 0;
 
-	while (1) {
-		if (*argv_argument == '\0')
-			return 0;
+	for (;;) {
 		if (*setting_argument == '\0')
 			break;
+		if (*argv_argument == '\0')
+			return 0;
 		if (*setting_argument != *argv_argument)
 			return 0;
 		setting_argument++;
@@ -99,7 +97,7 @@ args_are_equal(const char *setting_argument, const char *argv_argument)
 	}
 
 	/* Now make sure we also found a space at the end of argv_argument. */
-	if (*argv_argument != ' ')
+	if (!isspace(*argv_argument) && *argv_argument != '\0')
 		return 0;
 
 	return 1;
@@ -123,12 +121,12 @@ set_value(setting_t *setting, const char *value)
 		numeric_value = atoi(value);
 		if (setting->type == ST_SIGNED_INTEGER) {
 			(*(signed *)setting->target) = (signed)numeric_value;
+		} else if (numeric_value < 0) {
+			log_error("argument %s must be an unsigned integer",
+				  setting->name);
+			result = ISC_R_FAILURE;
+			goto cleanup;
 		} else {
-			if (numeric_value < 0) {
-				log_error("argument %s must be an unsigned integer", setting->name);
-				result = ISC_R_FAILURE;
-				goto cleanup;
-			}
 			(*(unsigned *)setting->target) = (unsigned)numeric_value;
 		}
 	} else {
@@ -153,10 +151,10 @@ set_default_value(setting_t *setting)
 		return set_value(setting, setting->default_value.value_char);
 		break;
 	case ST_SIGNED_INTEGER:
-		(*(signed *)setting->target) = setting->default_value.value_sint;
+		*(signed *)setting->target = setting->default_value.value_sint;
 		break;
 	case ST_UNSIGNED_INTEGER:
-		(*(unsigned *)setting->target) = setting->default_value.value_uint;
+		*(unsigned *)setting->target = setting->default_value.value_uint;
 		break;
 	default:
 		fatal_error("unknown type in function set_default_value()");
@@ -169,9 +167,9 @@ set_default_value(setting_t *setting)
 static const char *
 get_value_str(const char *arg)
 {
-	while (*arg != '\0' && !isblank(*arg))
+	while (*arg != '\0' && !isspace(*arg))
 		arg++;
-	while (*arg != '\0' && isblank(*arg))
+	while (*arg != '\0' && isspace(*arg))
 		arg++;
 
 	return arg;
