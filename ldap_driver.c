@@ -73,95 +73,6 @@ static void free_ldapdb(ldapdb_t *ldapdb);
 static void detachnode(dns_db_t *db, dns_dbnode_t **targetp);
 static unsigned int rdatalist_length(const dns_rdatalist_t *rdlist);
 
-static isc_result_t
-write_to_ldap(dns_name_t *owner, ldapdb_t *ldapdb, dns_rdatalist_t *rdlist)
-{
-	dns_rdata_t *rdata;
-	/* TODO - MINTSIZ is already defined in ldap_helper.c */
-	#define MINTSIZ (65535 - 12 - 1 - 2 - 2 - 4 - 2)
-	isc_buffer_t *rdatatext = NULL;
-	isc_buffer_t *ownertext = NULL;
-	isc_buffer_t *classtext = NULL;
-	isc_buffer_t *typetext = NULL;
-	isc_result_t result;
-	/* Temporary and ugly debug hack. Should be MINTSIZ */
-	char buf[1024];
-
-	result = isc_buffer_allocate(ldapdb->common.mctx, &rdatatext, 19999);
-
-	if (result != ISC_R_SUCCESS)
-		return result;
-
-	result = isc_buffer_allocate(ldapdb->common.mctx, &ownertext,
-				     DNS_NAME_MAXWIRE + 1);
-	if (result != ISC_R_SUCCESS)
-		goto cleanup;
-
-	result = isc_buffer_allocate(ldapdb->common.mctx, &classtext,
-				     sizeof("CLASS65535"));
-	if (result != ISC_R_SUCCESS)
-		goto cleanup;
-
-	result = isc_buffer_allocate(ldapdb->common.mctx, &typetext,
-				     sizeof("TYPE65535"));
-	if (result != ISC_R_SUCCESS)
-		goto cleanup;
-
-	rdata = HEAD(rdlist->rdata);
-	while (rdata != NULL) { 
-		/* Debug hacking... Probably might be reused. */
-		result = dns_name_totext(owner, ISC_FALSE, ownertext);
-		if (result != ISC_R_SUCCESS)
-			goto cleanup;
-
-		*((char *)ownertext->base + isc_buffer_usedlength(ownertext)) = '\0';
-
-		result = dns_rdataclass_totext(rdlist->rdclass, classtext);
-		if (result != ISC_R_SUCCESS)
-			goto cleanup;
-
-		*((char *)classtext->base + isc_buffer_usedlength(classtext)) = '\0';
-
-		result = dns_rdatatype_totext(rdlist->type, typetext);
-		if (result != ISC_R_SUCCESS)
-			goto cleanup;
-
-		*((char *)typetext->base + isc_buffer_usedlength(typetext)) = '\0';
-
-		result = dns_rdata_totext(rdata, NULL, rdatatext);
-		if (result != ISC_R_SUCCESS)
-			goto cleanup;
-
-		INSIST(isc_buffer_usedlength(rdatatext) < 1024);
-		memcpy(buf, rdatatext->base, 1024);
-		buf[isc_buffer_usedlength(rdatatext)] = '\0';
-		log_debug(2, "Modifying %s %s %s %s.", ownertext->base,
-			  classtext->base, typetext->base, buf);
-		rdata = NEXT(rdata, link);
-	}
-
-cleanup:
-
-	if (typetext != NULL)
-		isc_buffer_free(&typetext);
-
-	if (classtext != NULL)
-		isc_buffer_free(&classtext);
-
-	if (ownertext != NULL)
-		isc_buffer_free(&ownertext);
-
-	isc_buffer_free(&rdatatext);
-
-	return result;
-}
-
-static isc_result_t
-remove_from_ldap(dns_name_t *owner, ldapdb_t *ldapdb, dns_rdatalist_t *rdlist)
-{
-	return write_to_ldap(owner, ldapdb, rdlist);
-}
-
 /* ldapdbnode_t functions */
 static isc_result_t
 ldapdbnode_create(isc_mem_t *mctx, dns_name_t *owner, ldapdbnode_t **nodep)
@@ -738,7 +649,8 @@ addrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 		}
 	}
 
-	result = write_to_ldap(&ldapdbnode->owner, ldapdb, new_rdlist);
+	result = write_to_ldap(&ldapdbnode->owner, ldapdb->ldap_db,
+			       new_rdlist);
 	if (result != ISC_R_SUCCESS)
 		goto cleanup;
 
@@ -829,7 +741,7 @@ subtractrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 		goto cleanup;
 	}
 
-	result = remove_from_ldap(&ldapdbnode->owner, ldapdb, &diff);
+	result = remove_from_ldap(&ldapdbnode->owner, ldapdb->ldap_db, &diff);
 	if (result != ISC_R_SUCCESS)
 		goto cleanup;
 
