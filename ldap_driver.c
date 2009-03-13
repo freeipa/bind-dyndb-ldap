@@ -528,6 +528,7 @@ findrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	     dns_rdatatype_t type, dns_rdatatype_t covers, isc_stdtime_t now,
 	     dns_rdataset_t *rdataset, dns_rdataset_t *sigrdataset)
 {
+	ldapdb_t *ldapdb = (ldapdb_t *) db;
 	ldapdbnode_t *ldapdbnode = (ldapdbnode_t *) node;
 	dns_rdatalist_t *rdlist = NULL;
 	isc_result_t result;
@@ -548,8 +549,10 @@ findrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	if (result != ISC_R_SUCCESS)
 		return result;
 
-	dns_rdatalist_tordataset(rdlist, rdataset);
-	return ISC_R_SUCCESS;
+	result = clone_rdatalist_to_rdataset(ldapdb->common.mctx, rdlist,
+					     rdataset);
+
+	return result;
 }
 
 static isc_result_t
