@@ -314,10 +314,6 @@ closeversion(dns_db_t *db, dns_dbversion_t **versionp, isc_boolean_t commit)
 	*versionp = NULL;
 }
 
-/*
- * this is "extended" version of findnode which allows partial matches for
- * internal usage. Note that currently only exact matches work.
- */
 static isc_result_t
 findnode(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 	 dns_dbnode_t **nodep)
@@ -394,7 +390,7 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	INSIST(result != DNS_R_PARTIALMATCH); /* XXX Not yet implemented */
 
 	if (result != ISC_R_SUCCESS && result != DNS_R_PARTIALMATCH)
-		return result;
+		return (result == ISC_R_NOTFOUND) ? DNS_R_NXDOMAIN : result;
 
 	result = ldapdb_rdatalist_findrdatatype(&rdatalist, type, &rdlist);
 	if (result != ISC_R_SUCCESS) {
