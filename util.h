@@ -58,4 +58,8 @@
 #define SAFE_MEM_PUT_PTR(m, target_ptr)				\
 	SAFE_MEM_PUT((m), (target_ptr), sizeof(*(target_ptr)))
 
+#define MEM_PUT_AND_DETACH(target_ptr)				\
+	isc_mem_putanddetach(&(target_ptr)->mctx, target_ptr,	\
+			     sizeof(*(target_ptr)))
+
 #endif /* !_LD_UTIL_H_ */
