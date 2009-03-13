@@ -33,6 +33,7 @@
 
 #include "ldap_helper.h"
 #include "log.h"
+#include "rdlist.h"
 #include "util.h"
 #include "zone_manager.h"
 
@@ -107,38 +108,11 @@ clone_rdatalist_to_rdataset(isc_mem_t *mctx, dns_rdatalist_t *rdlist,
 			    dns_rdataset_t *rdataset)
 {
 	isc_result_t result;
-	dns_rdatalist_t *new_rdlist;
-	dns_rdata_t *rdata;
-	dns_rdata_t *new_rdata;
+	dns_rdatalist_t *new_rdlist = NULL;
 
 	REQUIRE(mctx != NULL);
 
-	CHECKED_MEM_GET_PTR(mctx, new_rdlist);
-
-	new_rdlist->rdclass = rdlist->rdclass;
-	new_rdlist->type = rdlist->type;
-	new_rdlist->covers = rdlist->covers;
-	new_rdlist->ttl = rdlist->ttl;
-
-	INIT_LIST(new_rdlist->rdata);
-	INIT_LINK(new_rdlist, link);
-
-	for (rdata = HEAD(rdlist->rdata);
-	     rdata != NULL;
-	     rdata = NEXT(rdata, link)) {
-		CHECKED_MEM_GET_PTR(mctx, new_rdata);
-		ZERO_PTR(new_rdata);
-
-		CHECKED_MEM_GET(mctx, new_rdata->data, rdata->length);
-		memcpy(new_rdata->data, rdata->data, rdata->length);
-		new_rdata->length = rdata->length;
-		new_rdata->rdclass = rdata->rdclass;
-		new_rdata->type = rdata->type;
-		new_rdata->flags = rdata->flags;
-		INIT_LINK(new_rdata, link);
-
-		APPEND(new_rdlist->rdata, new_rdata, link);
-	}
+	CHECK(rdatalist_clone(mctx, rdlist, &new_rdlist));
 
 	CHECK(dns_rdatalist_tordataset(new_rdlist, rdataset));
 	rdataset->methods = &rdataset_methods;
