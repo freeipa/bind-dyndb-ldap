@@ -653,10 +653,9 @@ settask(dns_db_t *db, isc_task_t *task)
 static isc_result_t
 getoriginnode(dns_db_t *db, dns_dbnode_t **nodep)
 {
-	UNUSED(db);
-	UNUSED(nodep);
+	ldapdb_t *ldapdb = (ldapdb_t *) db;
 
-	return ISC_R_NOTIMPLEMENTED;
+	return findnode(db, &ldapdb->common.origin, ISC_FALSE, nodep);
 }
 
 static void
