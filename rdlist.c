@@ -106,3 +106,33 @@ cleanup:
 
 	return result;
 }
+
+isc_result_t
+ldap_rdatalist_copy(isc_mem_t *mctx, ldapdb_rdatalist_t source,
+		    ldapdb_rdatalist_t *target)
+{
+	dns_rdatalist_t *rdlist;
+	dns_rdatalist_t *new_rdlist;
+	isc_result_t result;
+
+	REQUIRE(mctx != NULL);
+	REQUIRE(target != NULL);
+
+	INIT_LIST(*target);
+
+	rdlist = HEAD(source);
+	while (rdlist != NULL) {
+		new_rdlist = NULL;
+		CHECK(rdatalist_clone(mctx, rdlist, &new_rdlist));
+		APPEND(*target, new_rdlist, link);
+
+		rdlist = NEXT(rdlist, link);
+	}
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	ldapdb_rdatalist_destroy(mctx, target);
+
+	return result;
+}

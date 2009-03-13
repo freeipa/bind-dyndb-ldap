@@ -25,4 +25,8 @@ isc_result_t
 rdatalist_clone(isc_mem_t *mctx, dns_rdatalist_t *source,
 		dns_rdatalist_t **targetp);
 
+isc_result_t
+ldap_rdatalist_copy(isc_mem_t *mctx, ldapdb_rdatalist_t source,
+		    ldapdb_rdatalist_t *target);
+
 #endif /* !_LD_RDLIST_H_ */
