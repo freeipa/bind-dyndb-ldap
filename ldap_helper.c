@@ -438,8 +438,6 @@ add_or_modify_zone(ldap_db_t *ldap_db, const char *dn, const char *db_name,
 	REQUIRE(dn != NULL);
 	REQUIRE(db_name != NULL);
 
-	log_func_enter();
-
 	argv[0] = ldapdb_impname;
 	argv[1] = db_name;
 
@@ -463,7 +461,6 @@ add_or_modify_zone(ldap_db_t *ldap_db, const char *dn, const char *db_name,
 		dns_zone_setupdateacl(zone, updateacl);
 		dns_acl_detach(&updateacl);
 
-		log_func_va("adding zone %s", dn);
 		CHECK(dns_zonemgr_managezone(zmgr, zone));
 		CHECK(dns_view_addzone(ldap_db->view, zone));
 	} else if (result != ISC_R_SUCCESS) {
@@ -490,8 +487,6 @@ cleanup:
 		dns_name_free(&name, ldap_db->mctx);
 	if (zone != NULL)
 		dns_zone_detach(&zone);
-
-	log_func_exit_result(result);
 
 	return result;
 }
@@ -615,8 +610,6 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_db_t *ldap_db, dns_name_t *name,
 	REQUIRE(ldap_db != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(rdatalist != NULL);
-
-	log_func_enter();
 
 	ldap_inst = get_connection(ldap_db);
 
@@ -1032,8 +1025,6 @@ cache_query_results(ldap_instance_t *inst)
 	REQUIRE(EMPTY(inst->ldap_entries));
 	REQUIRE(inst->result != NULL);
 
-	log_func_enter();
-
 	INIT_LIST(inst->ldap_entries);
 
 	if (inst->cache_active)
@@ -1056,13 +1047,11 @@ cache_query_results(ldap_instance_t *inst)
 		APPEND(inst->ldap_entries, ldap_entry, link);
 	}
 
-	log_func_exit_result(ISC_R_SUCCESS);
 	return ISC_R_SUCCESS;
 
 cleanup:
 	free_query_cache(inst);
 
-	log_func_exit_result(result);
 	return result;
 }
 
@@ -1077,8 +1066,6 @@ fill_ldap_entry(ldap_instance_t *inst, ldap_entry_t *ldap_entry)
 
 	REQUIRE(inst != NULL);
 	REQUIRE(ldap_entry != NULL);
-
-	log_func_enter();
 
 	result = ISC_R_SUCCESS;
 	entry = ldap_entry->entry;
@@ -1105,7 +1092,6 @@ cleanup:
 		free_ldap_attributes(inst->database->mctx, ldap_entry);
 	}
 
-	log_func_exit_result(result);
 	return result;
 }
 
@@ -1140,7 +1126,6 @@ cleanup:
 	free_ldap_values(inst->database->mctx, ldap_attr);
 	ldap_value_free(values);
 
-	log_func_exit_result(result);
 	return result;
 }
 
