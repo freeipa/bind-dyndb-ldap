@@ -621,6 +621,11 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_db_t *ldap_db, dns_name_t *name,
 				"(objectClass=idnsRecord)"));
 	CHECK(cache_query_results(ldap_inst));
 
+	if (EMPTY(ldap_inst->ldap_entries)) {
+		result = ISC_R_NOTFOUND;
+		goto cleanup;
+	}
+
 	for (entry = HEAD(ldap_inst->ldap_entries);
 	     entry != NULL;
 	     entry = NEXT(entry, link)) {

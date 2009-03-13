@@ -31,6 +31,7 @@
 
 #include <string.h> /* For memcpy */
 
+#include "cache.h"
 #include "ldap_helper.h"
 #include "log.h"
 #include "rdlist.h"
@@ -52,6 +53,7 @@ typedef struct {
 	isc_refcount_t			refs;
 	isc_mutex_t			lock; /* convert to isc_rwlock_t ? */
 	ldap_db_t			*ldap_db;
+	ldap_cache_t			*ldap_cache;
 } ldapdb_t;
 
 typedef struct {
@@ -299,11 +301,11 @@ findnode(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
 
-	result = ldapdb_rdatalist_get(ldapdb->common.mctx, ldapdb->ldap_db,
-				      name, &rdatalist);
+	result = cached_ldap_rdatalist_get(ldapdb->common.mctx,
+					   ldapdb->ldap_cache, ldapdb->ldap_db,
+					   name, &rdatalist);
 	INSIST(result != DNS_R_PARTIALMATCH); /* XXX notimp yet */
 
-	/* If ldapdb_rdatalist_get has no memory node creation will fail as well */
 	if (result == ISC_R_NOMEMORY)
 		return ISC_R_NOMEMORY;
 
@@ -359,8 +361,9 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 		REQUIRE(version == ldapdb_version);
 	}
 
-	result = ldapdb_rdatalist_get(ldapdb->common.mctx, ldapdb->ldap_db,
-				      name, &rdatalist);
+	result = cached_ldap_rdatalist_get(ldapdb->common.mctx,
+					   ldapdb->ldap_cache, ldapdb->ldap_db,
+					   name, &rdatalist);
 	INSIST(result != DNS_R_PARTIALMATCH); /* XXX Not yet implemented */
 
 	if (result != ISC_R_SUCCESS && result != DNS_R_PARTIALMATCH)
@@ -793,7 +796,8 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 	if (result != ISC_R_SUCCESS)
 		goto clean_lock;
 
-	result = manager_get_ldap_db(argv[0], &ldapdb->ldap_db);
+	result = manager_get_ldap_db_and_cache(argv[0], &ldapdb->ldap_db,
+					       &ldapdb->ldap_cache);
 	if (result != ISC_R_SUCCESS)
 		goto clean_lock;
 
@@ -823,14 +827,13 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 		    dns_view_t *view, dns_zonemgr_t *zmgr)
 {
 	isc_result_t result;
-	ldap_db_t *ldap_db;
+	ldap_db_t *ldap_db = NULL;
+	ldap_cache_t *ldap_cache = NULL;
 
 	REQUIRE(mctx != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(argv != NULL);
 	REQUIRE(view != NULL);
-
-	ldap_db = NULL;
 
 	log_debug(2, "Registering dynamic ldap driver for %s.", name);
 
@@ -868,7 +871,8 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 		return result;
 
 	CHECK(new_ldap_db(mctx, view, &ldap_db, argv));
-	CHECK(manager_add_db_instance(mctx, name, ldap_db, zmgr));
+	CHECK(new_ldap_cache(mctx, &ldap_cache, argv));
+	CHECK(manager_add_db_instance(mctx, name, ldap_db, ldap_cache, zmgr));
 
 	/*
 	 * XXX now fetch all zones and initialize ldap zone manager

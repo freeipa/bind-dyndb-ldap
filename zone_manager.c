@@ -35,6 +35,7 @@ struct db_instance {
 	isc_mem_t		*mctx;
 	char			*name;
 	ldap_db_t		*ldap_db;
+	ldap_cache_t		*ldap_cache;
 	dns_zonemgr_t		*dns_zone_manager;
 	LINK(db_instance_t)	link;
 };
@@ -84,6 +85,7 @@ destroy_db_instance(db_instance_t **db_instp)
 	db_inst = *db_instp;
 
 	destroy_ldap_db(&db_inst->ldap_db);
+	destroy_ldap_cache(&db_inst->ldap_cache);
 	if (db_inst->name != NULL)
 		isc_mem_free(db_inst->mctx, db_inst->name);
 
@@ -94,7 +96,7 @@ destroy_db_instance(db_instance_t **db_instp)
 
 isc_result_t
 manager_add_db_instance(isc_mem_t *mctx, const char *name, ldap_db_t *ldap_db,
-			dns_zonemgr_t *zmgr)
+			ldap_cache_t *ldap_cache, dns_zonemgr_t *zmgr)
 {
 	isc_result_t result;
 	db_instance_t *db_inst;
@@ -102,6 +104,7 @@ manager_add_db_instance(isc_mem_t *mctx, const char *name, ldap_db_t *ldap_db,
 	REQUIRE(mctx != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(ldap_db != NULL);
+	REQUIRE(ldap_cache != NULL);
 	REQUIRE(zmgr != NULL);
 
 	isc_once_do(&initialize_once, initialize_manager);
@@ -123,6 +126,7 @@ manager_add_db_instance(isc_mem_t *mctx, const char *name, ldap_db_t *ldap_db,
 	db_inst->mctx = NULL;
 	isc_mem_attach(mctx, &db_inst->mctx);
 	db_inst->ldap_db = ldap_db;
+	db_inst->ldap_cache = ldap_cache;
 	db_inst->dns_zone_manager = zmgr;
 
 	LOCK(&instance_list_lock);
@@ -157,13 +161,15 @@ manager_refresh_zones(void)
 }
 
 isc_result_t
-manager_get_ldap_db(const char *name, ldap_db_t **ldap_db)
+manager_get_ldap_db_and_cache(const char *name, ldap_db_t **ldap_db,
+			      ldap_cache_t **ldap_cache)
 {
 	isc_result_t result;
 	db_instance_t *db_inst;
 
 	REQUIRE(name != NULL);
 	REQUIRE(ldap_db != NULL);
+	REQUIRE(ldap_cache != NULL);
 
 	isc_once_do(&initialize_once, initialize_manager);
 
@@ -171,6 +177,7 @@ manager_get_ldap_db(const char *name, ldap_db_t **ldap_db)
 	CHECK(find_db_instance(name, &db_inst));
 
 	*ldap_db = db_inst->ldap_db;
+	*ldap_cache = db_inst->ldap_cache;
 
 cleanup:
 	return result;
