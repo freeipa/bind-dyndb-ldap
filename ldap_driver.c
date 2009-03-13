@@ -71,6 +71,7 @@ static void *ldapdb_version = &dummy;
 
 static void free_ldapdb(ldapdb_t *ldapdb);
 static void detachnode(dns_db_t *db, dns_dbnode_t **targetp);
+static unsigned int rdatalist_length(const dns_rdatalist_t *rdlist);
 
 static isc_result_t
 write_to_ldap(dns_name_t *owner, ldapdb_t *ldapdb, dns_rdatalist_t *rdlist)
@@ -653,20 +654,19 @@ rdatalist_removedups(dns_rdatalist_t *rdlist1, dns_rdatalist_t *rdlist2,
 	while (rdata1 != NULL) {
 		rdata2 = HEAD(rdlist2->rdata);
 		while (rdata2 != NULL) {
-			if (dns_rdata_compare(rdata1, rdata2) == 0) {
-				/* same rdata has been found */
-				if (rm_from1) {
-					APPEND(diff->rdata, rdata1, link);
-					ISC_LIST_UNLINK(rdlist1->rdata, rdata1,
-							link);
-				} else {
-					APPEND(diff->rdata, rdata2, link);
-					ISC_LIST_UNLINK(rdlist2->rdata, rdata2,
-							link);
-				}
-				break;
+			if (dns_rdata_compare(rdata1, rdata2) != 0) {
+				rdata2 = NEXT(rdata2, link);
+				continue;
 			}
-			rdata2 = NEXT(rdata2, link);
+			/* same rdata has been found */
+			if (rm_from1) {
+				ISC_LIST_UNLINK(rdlist1->rdata, rdata1, link);
+				APPEND(diff->rdata, rdata1, link);
+			} else {
+				ISC_LIST_UNLINK(rdlist2->rdata, rdata2, link);
+				APPEND(diff->rdata, rdata2, link);
+			}
+			break;
 		}
 		rdata1 = NEXT(rdata1, link);
 	}
@@ -769,21 +769,85 @@ cleanup:
 	return result;
 }
 
+static unsigned int
+rdatalist_length(const dns_rdatalist_t *rdlist)
+{
+	dns_rdata_t *ptr = HEAD(rdlist->rdata);
+	unsigned int length = 0;
+
+	while (ptr != NULL) {
+		length++;
+		ptr = NEXT(ptr, link);
+	}
+
+	return length;
+}
+
 static isc_result_t
 subtractrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 		 dns_rdataset_t *rdataset, unsigned int options,
 		 dns_rdataset_t *newrdataset)
 {
-	UNUSED(db);
-	UNUSED(node);
-	UNUSED(version);
-	UNUSED(rdataset);
-	UNUSED(options);
-	UNUSED(newrdataset);
+	ldapdb_t *ldapdb = (ldapdb_t *) db;
+	ldapdbnode_t *ldapdbnode = (ldapdbnode_t *) node;
+	dns_rdatalist_t *found_rdlist = NULL;
+	dns_rdatalist_t *rdlist;
+	dns_rdatalist_t diff;
+	isc_result_t result;
 
-	REQUIRE("subtractrdataset" == NULL);
+	REQUIRE(version == ldapdb_version);
 
-	return ISC_R_NOTIMPLEMENTED;
+	result = dns_rdatalist_fromrdataset(rdataset, &rdlist);
+	/* Use strong condition here, no other value is returned */
+	INSIST(result == ISC_R_SUCCESS);
+
+	/* Do we want to use memcpy here? */
+	dns_rdatalist_init(&diff);
+	diff.rdclass = rdlist->rdclass;
+	diff.type = rdlist->type;
+	diff.covers = rdlist->covers;
+	diff.ttl = rdlist->ttl;
+
+	result = ldapdb_rdatalist_findrdatatype(&ldapdbnode->rdatalist,
+						rdlist->type, &found_rdlist);
+
+	if (result == ISC_R_NOTFOUND)
+		return DNS_R_NXRRSET;
+
+	/* We found correct type, remove maching rdata */
+	rdatalist_removedups(rdlist, found_rdlist, ISC_FALSE, &diff);
+
+	if ((options & DNS_DBSUB_EXACT) != 0 &&
+	     rdatalist_length(&diff) != rdatalist_length(rdlist)) {
+		/* Not exact match, rollback */
+		result = DNS_R_NOTEXACT;
+		goto cleanup;
+	}
+
+	if (rdatalist_length(&diff) == 0) {
+		result = DNS_R_UNCHANGED;
+		goto cleanup;
+	}
+
+	result = remove_from_ldap(&ldapdbnode->owner, ldapdb, &diff);
+	if (result != ISC_R_SUCCESS)
+		goto cleanup;
+
+	if (newrdataset != NULL) {
+		result = dns_rdatalist_tordataset(found_rdlist, newrdataset);
+		/* Use strong condition here, no other value is returned */
+		INSIST(result == ISC_R_SUCCESS);
+	}
+
+	free_rdatalist(ldapdb->common.mctx, &diff);
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	/* Roll back changes */
+	ISC_LIST_APPENDLIST(found_rdlist->rdata, diff.rdata, link);
+
+	return result;
 }
 
 static isc_result_t
