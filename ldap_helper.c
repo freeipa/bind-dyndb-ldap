@@ -1466,8 +1466,7 @@ ldap_rdatalist_to_ldapmod(isc_mem_t *mctx, dns_rdatalist_t *rdlist,
 		goto cleanup;
 	}
 	DE_CONST(attr_name_c, attr_name);
-	CHECK(ldap_rdata_to_char_array(mctx, HEAD(rdlist->rdata),
-				       &vals));
+	CHECK(ldap_rdata_to_char_array(mctx, HEAD(rdlist->rdata), &vals));
 
 	change->mod_op = mod_op;
 	change->mod_type = attr_name;
@@ -1495,6 +1494,7 @@ free_ldapmod(isc_mem_t *mctx, LDAPMod **changep)
 
 	free_char_array(mctx, &change->mod_values);
 	SAFE_MEM_PUT_PTR(mctx, change);
+
 	*changep = NULL;
 }
 
@@ -1516,7 +1516,7 @@ ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
 		rdata_count++;
 
 	vals_size = (rdata_count + 1) * sizeof(char *);
-	/* Use isc_mem_allocate because we call isc_mem_free */
+
 	vals = isc_mem_allocate(mctx, vals_size);
 	if (vals == NULL) {
 		result = ISC_R_NOMEMORY;
@@ -1535,10 +1535,7 @@ ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
 		CHECK(dns_rdata_totext(rdata, NULL, &buffer));
 		isc_buffer_usedregion(&buffer, &region);
 
-		/*
-		 * Now allocate the string with the right size. Use
-		 * isc_mem_allocate instead of isc_mem_get !
-		 */
+		/* Now allocate the string with the right size. */
 		vals[i] = isc_mem_allocate(mctx, region.length + 1);
 		if (vals[i] == NULL) {
 			result = ISC_R_NOMEMORY;
@@ -1571,9 +1568,8 @@ free_char_array(isc_mem_t *mctx, char ***valsp)
 	if (vals == NULL)
 		return;
 
-	for (i = 0; vals[i] != NULL; i++) {
+	for (i = 0; vals[i] != NULL; i++)
 		isc_mem_free(mctx, vals[i]);
-	}
 
 	isc_mem_free(mctx, vals);
 	*valsp = NULL;
@@ -1601,8 +1597,7 @@ modify_ldap_common(dns_name_t *owner, ldap_db_t *ldap_db,
 	CHECK(str_new(mctx, &owner_dn));
 	CHECK(dnsname_to_dn(mctx, owner, str_buf(ldap_db->base), owner_dn));
 
-	CHECK(ldap_rdatalist_to_ldapmod(mctx, rdlist, &change[0],
-					mod_op));
+	CHECK(ldap_rdatalist_to_ldapmod(mctx, rdlist, &change[0], mod_op));
 
 	CHECK(ldap_modify_do(ldap_inst, str_buf(owner_dn), change));
 
