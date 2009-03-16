@@ -1596,9 +1596,7 @@ modify_ldap_common(dns_name_t *owner, ldap_db_t *ldap_db,
 
 	CHECK(str_new(mctx, &owner_dn));
 	CHECK(dnsname_to_dn(mctx, owner, str_buf(ldap_db->base), owner_dn));
-
 	CHECK(ldap_rdatalist_to_ldapmod(mctx, rdlist, &change[0], mod_op));
-
 	CHECK(ldap_modify_do(ldap_inst, str_buf(owner_dn), change));
 
 cleanup:

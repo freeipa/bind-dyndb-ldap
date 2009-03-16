@@ -654,6 +654,8 @@ addrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	if (result != ISC_R_SUCCESS)
 		goto cleanup;
 
+	CHECK(discard_from_cache(ldapdb->ldap_cache, &ldapdbnode->owner));
+
 	if (addedrdataset != NULL) {
 		result = dns_rdatalist_tordataset(new_rdlist, addedrdataset);
 		/* Use strong condition here, returns only SUCCESS */
