@@ -1603,6 +1603,7 @@ modify_ldap_common(dns_name_t *owner, ldap_db_t *ldap_db,
 
 cleanup:
 	put_connection(ldap_inst);
+	str_destroy(&owner_dn);
 	free_ldapmod(mctx, &change[0]);
 
 	return result;
