@@ -1516,7 +1516,12 @@ ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
 		rdata_count++;
 
 	vals_size = (rdata_count + 1) * sizeof(char *);
-	CHECKED_MEM_GET(mctx, vals, vals_size);
+	/* Use isc_mem_allocate because we call isc_mem_free */
+	vals = isc_mem_allocate(mctx, vals_size);
+	if (vals == NULL) {
+		result = ISC_R_NOMEMORY;
+		goto cleanup;
+	}
 	memset(vals, 0, vals_size);
 
 	rdata = rdata_head;
@@ -1530,8 +1535,16 @@ ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
 		CHECK(dns_rdata_totext(rdata, NULL, &buffer));
 		isc_buffer_usedregion(&buffer, &region);
 
-		/* Now allocate the string with the right size. */
-		CHECKED_MEM_GET(mctx, vals[i], region.length + 1);
+		/*
+		 * Now allocate the string with the right size. Use
+		 * isc_mem_allocate instead of isc_mem_get !
+		 */
+		vals[i] = isc_mem_allocate(mctx, region.length + 1);
+		if (vals[i] == NULL) {
+			result = ISC_R_NOMEMORY;
+			goto cleanup;
+		}
+
 		memcpy(vals[i], region.base, region.length);
 		vals[i][region.length] = '\0';
 
