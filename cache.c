@@ -18,6 +18,7 @@
  */
 
 #include <isc/mem.h>
+#include <isc/mutex.h>
 #include <isc/result.h>
 #include <isc/time.h>
 #include <isc/util.h>
@@ -34,8 +35,23 @@
 #include "settings.h"
 #include "util.h"
 
-/* XXX: Locking? */
+/* These macros require that variable 'is_locked' exists. */
+#define CONTROLED_LOCK(lock)						\
+	do {								\
+		LOCK(lock);						\
+		is_locked = 1;						\
+	} while (0)
+
+#define CONTROLED_UNLOCK(lock)						\
+	do {								\
+		if (is_locked) {					\
+			UNLOCK(lock);					\
+			is_locked = 0;					\
+		}							\
+	} while (0)
+
 struct ldap_cache {
+	isc_mutex_t	mutex;
 	isc_mem_t	*mctx;
 	dns_rbt_t	*rbt;
 	isc_interval_t	cache_ttl;
@@ -110,6 +126,7 @@ new_ldap_cache(isc_mem_t *mctx, ldap_cache_t **cachep,
 	if (cache_ttl) {
 		CHECK(dns_rbt_create(mctx, cache_node_deleter, NULL,
 				     &cache->rbt));
+		CHECK(isc_mutex_init(&cache->mutex));
 	}
 
 	*cachep = cache;
@@ -126,13 +143,19 @@ void
 destroy_ldap_cache(ldap_cache_t **cachep)
 {
 	ldap_cache_t *cache;
+	int is_locked = 0;
 
 	REQUIRE(cachep != NULL && *cachep != NULL);
 
 	cache = *cachep;
 
-	if (cache->rbt)
+	if (cache->rbt) {
+		CONTROLED_LOCK(&cache->mutex);
 		dns_rbt_destroy(&cache->rbt);
+		cache->rbt = NULL;
+		CONTROLED_UNLOCK(&cache->mutex);
+		DESTROYLOCK(&cache->mutex);
+	}
 
 	MEM_PUT_AND_DETACH(cache);
 
@@ -148,12 +171,14 @@ cached_ldap_rdatalist_get(isc_mem_t *mctx, ldap_cache_t *cache,
 	ldapdb_rdatalist_t rdlist;
 	cache_node_t *node = NULL;
 	int in_cache = 0;
+	int is_locked = 0;
 
 	REQUIRE(cache != NULL);
 
 	if (cache->rbt == NULL)
 		return ldapdb_rdatalist_get(mctx, ldap_db, name, rdatalist);
 
+	CONTROLED_LOCK(&cache->mutex);
 	result = dns_rbt_findname(cache->rbt, name, 0, NULL, (void *)&node);
 	if (result == ISC_R_SUCCESS) {
 		isc_time_t now;
@@ -163,7 +188,6 @@ cached_ldap_rdatalist_get(isc_mem_t *mctx, ldap_cache_t *cache,
 		/* Check if the record is still valid. */
 		if (isc_time_compare(&now, &node->valid_until) > 0) {
 			CHECK(dns_rbt_deletename(cache->rbt, name, ISC_FALSE));
-			node = NULL;
 			in_cache = 0;
 		} else {
 			rdlist = node->rdatalist;
@@ -171,17 +195,25 @@ cached_ldap_rdatalist_get(isc_mem_t *mctx, ldap_cache_t *cache,
 		}
 	} else if (result != ISC_R_NOTFOUND && result != DNS_R_PARTIALMATCH) {
 		goto cleanup;
-	} else {
-		node = NULL;
 	}
+	CONTROLED_UNLOCK(&cache->mutex);
 
 	if (!in_cache) {
 		INIT_LIST(rdlist);
 		result = ldapdb_rdatalist_get(mctx, ldap_db, name, &rdlist);
 		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
 			goto cleanup;
-		CHECK(cache_node_create(cache, rdlist, &node));
-		CHECK(dns_rbt_addname(cache->rbt, name, (void *)node));
+		CONTROLED_LOCK(&cache->mutex);
+		/* Check again to make sure. */
+		node = NULL;
+		result = dns_rbt_findname(cache->rbt, name, 0, NULL,
+					  (void *)&node);
+		if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
+			node = NULL;
+			CHECK(cache_node_create(cache, rdlist, &node));
+			CHECK(dns_rbt_addname(cache->rbt, name, (void *)node));
+		}
+		CONTROLED_UNLOCK(&cache->mutex);
 	}
 
 	CHECK(ldap_rdatalist_copy(mctx, rdlist, rdatalist));
@@ -190,6 +222,7 @@ cached_ldap_rdatalist_get(isc_mem_t *mctx, ldap_cache_t *cache,
 		result = ISC_R_NOTFOUND;
 
 cleanup:
+	CONTROLED_UNLOCK(&cache->mutex);
 	return result;
 }
 
@@ -201,10 +234,13 @@ discard_from_cache(ldap_cache_t *cache, dns_name_t *name)
 	REQUIRE(cache != NULL);
 	REQUIRE(name != NULL);
 
-	if (cache->rbt == NULL)
+	if (cache->rbt == NULL) {
 		result = ISC_R_SUCCESS;
-	else
+	} else {
+		LOCK(&cache->mutex);
 		result = dns_rbt_deletename(cache->rbt, name, ISC_FALSE);
+		UNLOCK(&cache->mutex);
+	}
 
 	if (result == ISC_R_NOTFOUND)
 		result = ISC_R_SUCCESS;
