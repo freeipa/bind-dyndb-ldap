@@ -230,8 +230,8 @@ static isc_result_t ldap_query(ldap_instance_t *ldap_inst, const char *base,
 static isc_result_t ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn,
 		LDAPMod **mods);
 static isc_result_t ldap_rdatalist_to_ldapmod(isc_mem_t *mctx,
-		dns_rdatalist_t *rdlist, LDAPMod ***change_listp, int mod_op);
-static void free_ldapmod_array(isc_mem_t *mctx, LDAPMod ***change_listp);
+		dns_rdatalist_t *rdlist, LDAPMod **changep, int mod_op);
+static void free_ldapmod(isc_mem_t *mctx, LDAPMod **changep);
 static void free_char_array(isc_mem_t *mctx, char ***valsp);
 static isc_result_t modify_ldap_common(dns_name_t *owner, ldap_db_t *ldap_db,
 		dns_rdatalist_t *rdlist, int mod_op);
@@ -1446,79 +1446,56 @@ ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn, LDAPMod **mods)
 
 static isc_result_t
 ldap_rdatalist_to_ldapmod(isc_mem_t *mctx, dns_rdatalist_t *rdlist,
-			  LDAPMod ***change_listp, int mod_op)
+			  LDAPMod **changep, int mod_op)
 {
 	isc_result_t result;
-	unsigned int i;
-	unsigned int rdtype_count;
-	size_t change_list_size;
-	LDAPMod **change_list = NULL;
-	dns_rdatalist_t *node;
+	LDAPMod *change = NULL;
+	char **vals = NULL;
+	const char *attr_name_c;
+	char *attr_name;
 
-	REQUIRE(change_listp != NULL && *change_listp == NULL);
 
-	/* Count number of rdtypes. */
-	rdtype_count = 0;
-	for (node = rdlist; node != NULL; node = NEXT(node, link))
-		rdtype_count++;
+	REQUIRE(changep != NULL && *changep == NULL);
 
-	change_list_size = (rdtype_count + 1) * sizeof(LDAPMod *);
-	CHECKED_MEM_GET(mctx, change_list, change_list_size);
-	memset(change_list, 0, change_list_size);
+	CHECKED_MEM_GET_PTR(mctx, change);
+	ZERO_PTR(change);
 
-	node = rdlist;
-	for (i = 0; i < rdtype_count && node != NULL; i++) {
-		char **vals;
-		const char *attr_name_c;
-		char *attr_name;
-
-		vals = NULL;
-		CHECKED_MEM_GET_PTR(mctx, change_list[i]);
-		ZERO_PTR(change_list[i]);
-
-		result = rdatatype_to_ldap_attribute(node->type, &attr_name_c);
-		if (result != ISC_R_SUCCESS) {
-			result = ISC_R_FAILURE;
-			goto cleanup;
-		}
-		DE_CONST(attr_name_c, attr_name);
-		CHECK(ldap_rdata_to_char_array(mctx, HEAD(node->rdata),
-					       &vals));
-
-		change_list[i]->mod_op = mod_op;
-		change_list[i]->mod_type = attr_name;
-		change_list[i]->mod_values = vals;
-
-		node = NEXT(node, link);
+	result = rdatatype_to_ldap_attribute(rdlist->type, &attr_name_c);
+	if (result != ISC_R_SUCCESS) {
+		result = ISC_R_FAILURE;
+		goto cleanup;
 	}
+	DE_CONST(attr_name_c, attr_name);
+	CHECK(ldap_rdata_to_char_array(mctx, HEAD(rdlist->rdata),
+				       &vals));
 
-	*change_listp = change_list;
+	change->mod_op = mod_op;
+	change->mod_type = attr_name;
+	change->mod_values = vals;
+
+	*changep = change;
 	return ISC_R_SUCCESS;
 
 cleanup:
-	free_ldapmod_array(mctx, &change_list);
+	free_ldapmod(mctx, &change);
 
 	return result;
 }
 
 static void
-free_ldapmod_array(isc_mem_t *mctx, LDAPMod ***change_listp)
+free_ldapmod(isc_mem_t *mctx, LDAPMod **changep)
 {
-	LDAPMod **change_list;
-	unsigned int item;
+	LDAPMod *change;
 
-	REQUIRE(change_listp != NULL);
+	REQUIRE(changep != NULL);
 
-	change_list = *change_listp;
-	if (change_list == NULL)
+	change = *changep;
+	if (change == NULL)
 		return;
 
-	for (item = 0; change_list[item] != NULL; item++) {
-		free_char_array(mctx, &change_list[item]->mod_values);
-		SAFE_MEM_PUT_PTR(mctx, change_list[item]);
-	}
-	isc_mem_free(mctx, change_list);
-	*change_listp = NULL;
+	free_char_array(mctx, &change->mod_values);
+	SAFE_MEM_PUT_PTR(mctx, change);
+	*changep = NULL;
 }
 
 isc_result_t
@@ -1601,7 +1578,9 @@ modify_ldap_common(dns_name_t *owner, ldap_db_t *ldap_db,
 	isc_mem_t *mctx;
 	ldap_instance_t *ldap_inst;
 	ld_string_t *owner_dn = NULL;
-	LDAPMod **change_list = NULL;
+	LDAPMod *change[2];
+
+	change[0] = change[1] = NULL;
 
 	mctx = ldap_db->mctx;
 	ldap_inst = get_connection(ldap_db);
@@ -1609,13 +1588,14 @@ modify_ldap_common(dns_name_t *owner, ldap_db_t *ldap_db,
 	CHECK(str_new(mctx, &owner_dn));
 	CHECK(dnsname_to_dn(mctx, owner, str_buf(ldap_db->base), owner_dn));
 
-	CHECK(ldap_rdatalist_to_ldapmod(mctx, rdlist, &change_list, mod_op));
+	CHECK(ldap_rdatalist_to_ldapmod(mctx, rdlist, &change[0],
+					mod_op));
 
-	CHECK(ldap_modify_do(ldap_inst, str_buf(owner_dn), change_list));
+	CHECK(ldap_modify_do(ldap_inst, str_buf(owner_dn), change));
 
 cleanup:
 	put_connection(ldap_inst);
-	free_ldapmod_array(mctx, &change_list);
+	free_ldapmod(mctx, &change[0]);
 
 	return result;
 }
