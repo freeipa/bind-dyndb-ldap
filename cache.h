@@ -48,5 +48,11 @@ cached_ldap_rdatalist_get(isc_mem_t *mctx, ldap_cache_t *cache,
 			  ldap_db_t *ldap_db, dns_name_t *name,
 			  ldapdb_rdatalist_t *rdatalist);
 
+/*
+ * Discard 'name' from the cache. If caching is not really turned on or 'name'
+ * is not cached, this function will still return ISC_R_SUCCESS.
+ */
+isc_result_t
+discard_from_cache(ldap_cache_t *cache, dns_name_t *name);
 
 #endif /* !_LD_CACHE_H_ */

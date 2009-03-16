@@ -192,3 +192,22 @@ cached_ldap_rdatalist_get(isc_mem_t *mctx, ldap_cache_t *cache,
 cleanup:
 	return result;
 }
+
+isc_result_t
+discard_from_cache(ldap_cache_t *cache, dns_name_t *name)
+{
+	isc_result_t result;
+
+	REQUIRE(cache != NULL);
+	REQUIRE(name != NULL);
+
+	if (cache->rbt == NULL)
+		result = ISC_R_SUCCESS;
+	else
+		result = dns_rbt_deletename(cache->rbt, name, ISC_FALSE);
+
+	if (result == ISC_R_NOTFOUND)
+		result = ISC_R_SUCCESS;
+
+	return result;
+}
