@@ -507,7 +507,7 @@ add_or_modify_zone(ldap_db_t *ldap_db, const char *dn, const char *db_name,
 	zone = NULL;
 	dns_name_init(&name, NULL);
 
-	CHECK(dn_to_dnsname(ldap_db->mctx, dn, str_buf(ldap_db->base), &name));
+	CHECK(dn_to_dnsname(ldap_db->mctx, dn, &name));
 
 	/* If the zone doesn't exist, create it. */
 	result = dns_view_findzone(ldap_db->view, &name, &zone);

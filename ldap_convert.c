@@ -59,15 +59,14 @@ const char *dns_records[] = {
 	"RRSIG", "NSEC",  NULL
 };
 
-static isc_result_t dn_to_text(const char *dn, const char *root_dn,
-			       ld_string_t *target);
+static isc_result_t dn_to_text(const char *dn, ld_string_t *target);
 static isc_result_t explode_dn(const char *dn, char ***explodedp, int notypes);
-static unsigned int count_rdns(char **exploded);
+static isc_result_t explode_rdn(const char *rdn, char ***explodedp,
+				int notypes);
 
 
 isc_result_t
-dn_to_dnsname(isc_mem_t *mctx, const char *dn, const char *root_dn,
-	      dns_name_t *target)
+dn_to_dnsname(isc_mem_t *mctx, const char *dn, dns_name_t *target)
 {
 	isc_result_t result;
 	ld_string_t *str;
@@ -84,7 +83,7 @@ dn_to_dnsname(isc_mem_t *mctx, const char *dn, const char *root_dn,
 
 	/* Convert the DN into a DNS name. */
 	CHECK(str_new(mctx, &str));
-	CHECK(dn_to_text(dn, root_dn, str));
+	CHECK(dn_to_text(dn, str));
 
 	/* TODO: fix this */
 	isc_buffer_init(&source_buffer, str_buf(str), str_len(str) - 1);
@@ -119,69 +118,58 @@ cleanup:
  * The resulting string will be "foo.bar.example.org."
  */
 static isc_result_t
-dn_to_text(const char *dn, const char *root_dn, ld_string_t *target)
+dn_to_text(const char *dn, ld_string_t *target)
 {
 	isc_result_t result;
-	unsigned int count;
 	char **exploded_dn = NULL;
-	char **exploded_root = NULL;
+	char **exploded_rdn = NULL;
 
 	REQUIRE(dn != NULL);
 	REQUIRE(target != NULL);
 
 	result = ISC_R_SUCCESS;
 
-	CHECK(explode_dn(dn, &exploded_dn, 1));
-	count = count_rdns(exploded_dn);
-
-	if (root_dn != NULL) {
-		unsigned int count_root;
-
-		CHECK(explode_dn(root_dn, &exploded_root, 1));
-		count_root = count_rdns(exploded_root);
-		if (count_root > count) {
-			result = ISC_R_FAILURE;
-			goto cleanup;
-		}
-		count -= count_root;
-	}
-
+	CHECK(explode_dn(dn, &exploded_dn, 0));
 	str_clear(target);
-	for (unsigned int i = 0; exploded_dn[i] != NULL && i < count; i++) {
-		str_cat_char(target, exploded_dn[i]);
-		str_cat_char(target, ".");
+	for (unsigned int i = 0; exploded_dn[i] != NULL; i++) {
+		if (strncasecmp(exploded_dn[i], "idnsName", 8) != 0)
+			break;
+		CHECK(explode_rdn(exploded_dn[i], &exploded_rdn, 1));
+		CHECK(str_cat_char(target, exploded_rdn[0]));
+		CHECK(str_cat_char(target, "."));
+
+		ldap_value_free(exploded_rdn);
+		exploded_rdn = NULL;
 	}
 
 	if (str_len(target) == 0)
-		str_init_char(target, ".");
+		CHECK(str_init_char(target, "."));
 
 cleanup:
 	if (exploded_dn != NULL)
 		ldap_value_free(exploded_dn);
-	if (exploded_root != NULL)
-		ldap_value_free(exploded_root);
+	if (exploded_rdn != NULL)
+		ldap_value_free(exploded_rdn);
 
+	log_error("converted: %s", str_buf(target));
 	return result;
 }
 
 static isc_result_t
 explode_dn(const char *dn, char ***explodedp, int notypes)
 {
-	isc_result_t result;
 	char **exploded;
 
 	REQUIRE(dn != NULL);
 	REQUIRE(explodedp != NULL && *explodedp == NULL);
-
-	result = ISC_R_SUCCESS;
 
 	exploded = ldap_explode_dn(dn, notypes);
 	if (exploded == NULL) {
 		if (errno == ENOMEM) {
 			return ISC_R_NOMEMORY;
 		} else {
-			log_error("ldap_explode_dn(\"%s\") failed, error code %d",
-				  dn, errno);
+			log_error("ldap_explode_dn(\"%s\") failed, "
+				  "error code %d", dn, errno);
 			return ISC_R_FAILURE;
 		}
 	}
@@ -191,18 +179,28 @@ explode_dn(const char *dn, char ***explodedp, int notypes)
 	return ISC_R_SUCCESS;
 }
 
-static unsigned int
-count_rdns(char **exploded)
+static isc_result_t
+explode_rdn(const char *rdn, char ***explodedp, int notypes)
 {
-	unsigned int ret;
+	char **exploded;
 
-	REQUIRE(exploded != NULL);
+	REQUIRE(rdn != NULL);
+	REQUIRE(explodedp != NULL && *explodedp == NULL);
 
-	ret = 0;
-	while (exploded[ret] != NULL)
-		ret++;
+	exploded = ldap_explode_rdn(rdn, notypes);
+	if (exploded == NULL) {
+		if (errno == ENOMEM) {
+			return ISC_R_NOMEMORY;
+		} else {
+			log_error("ldap_explode_rdn(\"%s\") failed, "
+				  "error code %d", rdn, errno);
+			return ISC_R_FAILURE;
+		}
+	}
 
-	return ret;
+	*explodedp = exploded;
+
+	return ISC_R_SUCCESS;
 }
 
 /*

@@ -29,7 +29,7 @@
  * initialized with dns_name_init() before the call and freed by the caller
  * after it using dns_name_free().
  */
-isc_result_t dn_to_dnsname(isc_mem_t *mctx, const char *dn, const char *root_dn,
+isc_result_t dn_to_dnsname(isc_mem_t *mctx, const char *dn,
 			   dns_name_t *target);
 
 isc_result_t dnsname_to_dn(isc_mem_t *mctx, dns_name_t *name,
