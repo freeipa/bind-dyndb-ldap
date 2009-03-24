@@ -927,61 +927,57 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 	      dns_rdataclass_t rdclass, unsigned int argc, char *argv[],
 	      void *driverarg, dns_db_t **dbp)
 {
-	ldapdb_t *ldapdb;
+	ldapdb_t *ldapdb = NULL;
 	isc_result_t result;
+	int lock_is_initialized = 0;
 
 	UNUSED(driverarg); /* Currently we don't need any data */
 
-	/* Database implementation name and name pointing to ldap_db_t */
+	/* Database instance name. */
 	REQUIRE(argc > 0);
 
 	REQUIRE(type == dns_dbtype_zone);
 	REQUIRE(rdclass == dns_rdataclass_in);
 	REQUIRE(dbp != NULL && *dbp == NULL);
 
-	ldapdb = isc_mem_get(mctx, sizeof(*ldapdb));
-	if (ldapdb == NULL)
-		return ISC_R_NOMEMORY;
+	CHECKED_MEM_GET_PTR(mctx, ldapdb);
+	ZERO_PTR(ldapdb);
+
+	isc_mem_attach(mctx, &ldapdb->common.mctx);
+
+	dns_name_init(&ldapdb->common.origin, NULL);
+	isc_ondestroy_init(&ldapdb->common.ondest);
+
+	CHECK(isc_mutex_init(&ldapdb->lock));
+	lock_is_initialized = 1;
+
+	ldapdb->common.magic = DNS_DB_MAGIC;
+	ldapdb->common.impmagic = LDAPDB_MAGIC;
 
 	ldapdb->common.methods = &ldapdb_methods;
 	ldapdb->common.attributes = 0;
 	ldapdb->common.rdclass = rdclass;
 
-	dns_name_init(&ldapdb->common.origin, NULL);
-	result = dns_name_dupwithoffsets(name, mctx, &ldapdb->common.origin);
-	if (result != ISC_R_SUCCESS)
-		goto clean_ldapdb;
+	CHECK(dns_name_dupwithoffsets(name, mctx, &ldapdb->common.origin));
 
-	isc_ondestroy_init(&ldapdb->common.ondest);
-	ldapdb->common.mctx = NULL;
-	isc_mem_attach(mctx, &ldapdb->common.mctx);
-
-	result = isc_mutex_init(&ldapdb->lock);
-	if (result != ISC_R_SUCCESS)
-		goto clean_origin;
-
-	result = isc_refcount_init(&ldapdb->refs, 1);
-	if (result != ISC_R_SUCCESS)
-		goto clean_lock;
-
-	result = manager_get_ldap_db_and_cache(argv[0], &ldapdb->ldap_db,
-					       &ldapdb->ldap_cache);
-	if (result != ISC_R_SUCCESS)
-		goto clean_lock;
-
-	ldapdb->common.magic = DNS_DB_MAGIC;
-	ldapdb->common.impmagic = LDAPDB_MAGIC;
+	CHECK(isc_refcount_init(&ldapdb->refs, 1));
+	CHECK(manager_get_ldap_db_and_cache(argv[0], &ldapdb->ldap_db,
+					    &ldapdb->ldap_cache));
 
 	*dbp = (dns_db_t *)ldapdb;
 
 	return ISC_R_SUCCESS;
 
-clean_lock:
-	DESTROYLOCK(&ldapdb->lock);
-clean_origin:
-	dns_name_free(&ldapdb->common.origin, mctx);
-clean_ldapdb:
-	isc_mem_putanddetach(&ldapdb->common.mctx, ldapdb, sizeof(*ldapdb));
+cleanup:
+	if (ldapdb != NULL) {
+		if (lock_is_initialized)
+			DESTROYLOCK(&ldapdb->lock);
+		if (dns_name_dynamic(&ldapdb->common.origin))
+			dns_name_free(&ldapdb->common.origin, mctx);
+
+		isc_mem_putanddetach(&ldapdb->common.mctx, ldapdb,
+				     sizeof(*ldapdb));
+	}
 
 	return result;
 }
