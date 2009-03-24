@@ -1066,6 +1066,8 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 cleanup:
 	if (ldap_db != NULL)
 		destroy_ldap_db(&ldap_db);
+	if (ldap_cache != NULL)
+		destroy_ldap_cache(&ldap_cache);
 
 	return result;
 }
