@@ -77,21 +77,16 @@ static unsigned int rdatalist_length(const dns_rdatalist_t *rdlist);
 static isc_result_t
 ldapdbnode_create(isc_mem_t *mctx, dns_name_t *owner, ldapdbnode_t **nodep)
 {
-	ldapdbnode_t *node;
+	ldapdbnode_t *node = NULL;
 	isc_result_t result;
 
 	REQUIRE(nodep != NULL && *nodep == NULL);
 
-	node = isc_mem_get(mctx, sizeof(*node));
-	if (node == NULL)
-		return ISC_R_NOMEMORY;
-
+	CHECKED_MEM_GET_PTR(mctx, node);
 	CHECK(isc_refcount_init(&node->refs, 1));
 
 	dns_name_init(&node->owner, NULL);
-	result = dns_name_dup(owner, mctx, &node->owner);
-	if (result != ISC_R_SUCCESS)
-		goto cleanup;
+	CHECK(dns_name_dup(owner, mctx, &node->owner));
 
 	node->magic = LDAPDBNODE_MAGIC;
 
@@ -102,7 +97,8 @@ ldapdbnode_create(isc_mem_t *mctx, dns_name_t *owner, ldapdbnode_t **nodep)
 	return ISC_R_SUCCESS;
 
 cleanup:
-	isc_mem_put(mctx, node, sizeof(*node));
+	SAFE_MEM_PUT_PTR(mctx, node);
+
 	return result;
 }
 
@@ -155,7 +151,7 @@ ldapdb_rdataset_disassociate(dns_rdataset_t *rdataset)
 	rdataset->private5 = NULL;
 
 	free_rdatalist(mctx, rdlist);
-	isc_mem_put(mctx, rdlist, sizeof(*rdlist));
+	SAFE_MEM_PUT_PTR(mctx, rdlist);
 
 	isc_mem_detach(&mctx);
 }
@@ -308,7 +304,6 @@ findnode(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 	result = cached_ldap_rdatalist_get(ldapdb->common.mctx,
 					   ldapdb->ldap_cache, ldapdb->ldap_db,
 					   name, &rdatalist);
-	INSIST(result != DNS_R_PARTIALMATCH); /* XXX notimp yet */
 
 	if (result == ISC_R_NOMEMORY)
 		return ISC_R_NOMEMORY;
@@ -323,9 +318,7 @@ findnode(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 		}
 	}
 
-	result = ldapdbnode_create(ldapdb->common.mctx, name, &node);
-	if (result != ISC_R_SUCCESS)
-		goto cleanup;
+	CHECK(ldapdbnode_create(ldapdb->common.mctx, name, &node));
 
 	memcpy(&node->rdatalist, &rdatalist, sizeof(rdatalist));
 
@@ -394,9 +387,7 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	}
 
 	/* XXX currently we implemented only exact authoritative matches */
-	result = dns_name_copy(name, foundname, NULL);
-	if (result != ISC_R_SUCCESS)
-		goto cleanup;
+	CHECK(dns_name_copy(name, foundname, NULL));
 
 	if (rdataset != NULL && type != dns_rdatatype_any) {
 		/* dns_rdatalist_tordataset returns success only */
@@ -405,10 +396,7 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	}
 
 	if (nodep != NULL) {
-		result = ldapdbnode_create(ldapdb->common.mctx, name, &node);
-		if (result != ISC_R_SUCCESS) {
-			goto cleanup;
-		}
+		CHECK(ldapdbnode_create(ldapdb->common.mctx, name, &node));
 		memcpy(&node->rdatalist, &rdatalist, sizeof(rdatalist));
 		*nodep = node;
 	} else {
@@ -469,7 +457,7 @@ detachnode(dns_db_t *db, dns_dbnode_t **targetp)
 	if (refs == 0) {
 		ldapdb_rdatalist_destroy(ldapdb->common.mctx, &node->rdatalist);
 		dns_name_free(&node->owner, ldapdb->common.mctx);
-		isc_mem_put(ldapdb->common.mctx, node, sizeof(*node));
+		SAFE_MEM_PUT_PTR(ldapdb->common.mctx, node);
 	}
 
 	*targetp = NULL;
@@ -611,9 +599,7 @@ addrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	INSIST(result == ISC_R_SUCCESS);
 	INSIST(rdlist->rdclass == dns_rdataclass_in);
 
-	result = rdatalist_clone(ldapdb->common.mctx, rdlist, &new_rdlist);
-	if (result != ISC_R_SUCCESS)
-		goto cleanup;
+	CHECK(rdatalist_clone(ldapdb->common.mctx, rdlist, &new_rdlist));
 
 	result = ldapdb_rdatalist_findrdatatype(&ldapdbnode->rdatalist,
 						rdlist->type, &found_rdlist);
@@ -649,11 +635,7 @@ addrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 		}
 	}
 
-	result = write_to_ldap(&ldapdbnode->owner, ldapdb->ldap_db,
-			       new_rdlist);
-	if (result != ISC_R_SUCCESS)
-		goto cleanup;
-
+	CHECK(write_to_ldap(&ldapdbnode->owner, ldapdb->ldap_db, new_rdlist));
 	CHECK(discard_from_cache(ldapdb->ldap_cache, &ldapdbnode->owner));
 
 	if (addedrdataset != NULL) {
@@ -665,8 +647,7 @@ addrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	if (rdatalist_exists) {
 		ISC_LIST_APPENDLIST(found_rdlist->rdata, new_rdlist->rdata,
 				    link);
-		isc_mem_put(ldapdb->common.mctx, new_rdlist,
-			    sizeof(*new_rdlist));
+		SAFE_MEM_PUT_PTR(ldapdb->common.mctx, new_rdlist);
 	} else
 		APPEND(ldapdbnode->rdatalist, new_rdlist, link);
 
@@ -676,8 +657,7 @@ addrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 cleanup:
 	if (new_rdlist != NULL) {
 		free_rdatalist(ldapdb->common.mctx, new_rdlist);
-		isc_mem_put(ldapdb->common.mctx, new_rdlist,
-			    sizeof(*new_rdlist));
+		SAFE_MEM_PUT_PTR(ldapdb->common.mctx, new_rdlist);
 	}
 
 	return result;
@@ -743,9 +723,7 @@ subtractrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 		goto cleanup;
 	}
 
-	result = remove_from_ldap(&ldapdbnode->owner, ldapdb->ldap_db, &diff);
-	if (result != ISC_R_SUCCESS)
-		goto cleanup;
+	CHECK(remove_from_ldap(&ldapdbnode->owner, ldapdb->ldap_db, &diff));
 
 	if (newrdataset != NULL) {
 		result = dns_rdatalist_tordataset(found_rdlist, newrdataset);
@@ -1054,10 +1032,7 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 	/* Register new DNS DB implementation. */
 	result = dns_db_register(ldapdb_impname, &ldapdb_create, NULL, mctx,
 				 &ldapdb_imp);
-	if (result == ISC_R_EXISTS)
-		result = ISC_R_SUCCESS;
-
-	if (result != ISC_R_SUCCESS)
+	if (result != ISC_R_SUCCESS && result != ISC_R_EXISTS)
 		return result;
 
 	CHECK(new_ldap_db(mctx, view, &ldap_db, argv));
