@@ -25,6 +25,15 @@
 		if (result != ISC_R_SUCCESS) goto cleanup;	\
 	} while (0)
 
+#define CHECKED_MEM_ALLOCATE(m, target_ptr, s)			\
+	do {							\
+		(target_ptr) = isc_mem_allocate((m), (s));	\
+		if ((target_ptr) == NULL) {			\
+			result = ISC_R_NOMEMORY;		\
+			goto cleanup;				\
+		}						\
+	} while (0)
+
 #define CHECKED_MEM_GET(m, target_ptr, s)			\
 	do {							\
 		(target_ptr) = isc_mem_get((m), (s));		\
