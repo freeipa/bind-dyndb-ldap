@@ -324,20 +324,17 @@ str_cat_char_len(ld_string_t *dest, const char *src, size_t len)
 	isc_result_t result;
 	char *from;
 	size_t dest_size;
-	size_t src_size;
 
 	REQUIRE(dest != NULL);
-	IGNORE_R(src != NULL);
+	IGNORE_R(src == NULL);
+	IGNORE_R(len == 0);
 
 	dest_size = str_len_internal(dest);
-	src_size = ISC_MAX(strlen(src), len);
 
-	IGNORE_R(src_size == 0);
-
-	CHECK(str_alloc(dest, dest_size + src_size));
+	CHECK(str_alloc(dest, dest_size + len));
 	from = dest->data + dest_size;
-	strncpy(from, src, src_size);
-	from[src_size - 1] = '\0';
+	strncpy(from, src, len);
+	from[len] = '\0';
 
 	return ISC_R_SUCCESS;
 

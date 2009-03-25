@@ -19,11 +19,11 @@
 
 #include <isc/buffer.h>
 #include <isc/mem.h>
-#include <isc/result.h>
 #include <isc/util.h>
 
 #include <dns/name.h>
 #include <dns/rdatatype.h>
+#include <dns/result.h>
 #include <dns/types.h>
 
 #define LDAP_DEPRECATED 1
@@ -34,6 +34,7 @@
 
 #include "str.h"
 #include "ldap_convert.h"
+#include "ldap_helper.h"
 #include "log.h"
 #include "util.h"
 
@@ -107,13 +108,11 @@ cleanup:
 }
 
 /*
- * Convert LDAP dn to DNS name. If root_dn is not NULL then count how much RNDs
- * it contains and ignore that much trailing RNDs from dn.
+ * Convert LDAP dn to DNS name.
  *
  * Example:
  * dn = "idnsName=foo, idnsName=bar, idnsName=example.org, cn=dns,"
  *      "dc=example, dc=org"
- * root_dn = "cn=dns, dc=example, dc=org"
  *
  * The resulting string will be "foo.bar.example.org."
  */
@@ -203,55 +202,58 @@ explode_rdn(const char *rdn, char ***explodedp, int notypes)
 	return ISC_R_SUCCESS;
 }
 
-/*
- * FIXME: Don't assume that the last RDN consists of the last two labels.
- */
 isc_result_t
-dnsname_to_dn(isc_mem_t *mctx, dns_name_t *name, const char *root_dn,
-	      ld_string_t *target)
+dnsname_to_dn(ldap_db_t *ldap_db, dns_name_t *name, ld_string_t *target)
 {
 	isc_result_t result;
-	isc_buffer_t target_buffer;
-	char target_base[DNS_NAME_MAXTEXT + 1];
-	ld_string_t *str;
-	ld_split_t *split;
-	unsigned int split_count;
 
-	REQUIRE(mctx != NULL);
+	DECLARE_BUFFERED_NAME(zone);
+
+	dns_name_t labels;
+
+	dns_namereln_t reln;
+	int order;
+	unsigned int common_labels;
+	int label_count;
+	const char *zone_dn = NULL;
+
+	REQUIRE(ldap_db != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(target != NULL);
 
-	str = NULL;
-	split = NULL;
-	CHECK(str_new(mctx, &str));
-	CHECK(str_new_split(mctx, &split));
-	isc_buffer_init(&target_buffer, target_base, sizeof(target_base));
-	CHECK(dns_name_totext(name, isc_boolean_true, &target_buffer));
 
-	target_base[isc_buffer_usedlength(&target_buffer)] = '\0';
-	CHECK(str_init_char(str, target_base));
-	CHECK(str_split(str, '.', split));
-	split_count = str_split_count(split);
+	INIT_BUFFERED_NAME(zone);
 
-	for (unsigned int i = 0; i < split_count - 1; i++) {
+	dns_name_init(&labels, NULL);
+
+	/* Find the DN of the zone we belong to. */
+	CHECK(get_zone_dn(ldap_db, name, &zone_dn, &zone));
+
+	reln = dns_name_fullcompare(name, &zone, &order, &common_labels);
+	INSIST(reln == dns_namereln_subdomain || reln == dns_namereln_equal);
+	label_count = dns_name_countlabels(name);
+	label_count -= common_labels;
+
+	str_clear(target);
+	if (label_count > 0) {
+		isc_buffer_t buffer;
+		char target_base[DNS_NAME_MAXTEXT];
+		isc_region_t region;
+
+		isc_buffer_init(&buffer, target_base, sizeof(target_base));
+
+		dns_name_getlabelsequence(name, 0, label_count, &labels);
+		CHECK(dns_name_totext(&labels, ISC_TRUE, &buffer));
+		isc_buffer_usedregion(&buffer, &region);
+
 		CHECK(str_cat_char(target, "idnsName="));
-		CHECK(str_cat_char(target, str_split_get(split, i)));
-		if (split_count - i > 2)
-			CHECK(str_cat_char(target, ", "));
-	}
-
-	CHECK(str_cat_char(target, "."));
-	CHECK(str_cat_char(target, str_split_get(split, split_count - 1)));
-
-	if (root_dn != NULL) {
+		CHECK(str_cat_char_len(target, (char *)region.base,
+				       region.length));
 		CHECK(str_cat_char(target, ", "));
-		CHECK(str_cat_char(target, root_dn));
 	}
+	CHECK(str_cat_char(target, zone_dn));
 
 cleanup:
-	str_destroy_split(&split);
-	str_destroy(&str);
-
 	return result;
 }
 

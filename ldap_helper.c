@@ -18,6 +18,7 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
+#include <dns/rbt.h>
 #include <dns/rdata.h>
 #include <dns/rdataclass.h>
 #include <dns/rdatalist.h>
@@ -32,6 +33,7 @@
 #include <isc/mem.h>
 #include <isc/mutex.h>
 #include <isc/region.h>
+#include <isc/rwlock.h>
 #include <isc/util.h>
 
 #define LDAP_DEPRECATED 1
@@ -97,6 +99,10 @@ struct ldap_db {
 	semaphore_t		conn_semaphore;
 	LIST(ldap_instance_t)	conn_list;
 
+	/* Our own list of zones. */
+	isc_rwlock_t		zone_rwlock;
+	dns_rbt_t		*zone_names;
+
 	/* Settings. */
 	ld_string_t		*host;
 	ld_string_t		*base;
@@ -156,7 +162,6 @@ struct ldap_value {
 	LINK(ldap_value_t)	link;
 };
 
-
 /*
  * Constants.
  */
@@ -176,6 +181,7 @@ const ldap_auth_pair_t supported_ldap_auth[] = {
  */
 
 /* TODO: reorganize this stuff & clean it up. */
+void string_deleter(void *arg1, void *arg2);
 static isc_result_t new_ldap_instance(ldap_db_t *ldap_db,
 		ldap_instance_t **ldap_instp);
 static void destroy_ldap_instance(ldap_instance_t **ldap_instp);
@@ -275,14 +281,17 @@ new_ldap_db(isc_mem_t *mctx, dns_view_t *view, ldap_db_t **ldap_dbp,
 
 	INIT_LIST(ldap_db->conn_list);
 
-	CHECK(str_new(ldap_db->mctx, &auth_method_str));
-	CHECK(str_new(ldap_db->mctx, &ldap_db->host));
-	CHECK(str_new(ldap_db->mctx, &ldap_db->base));
-	CHECK(str_new(ldap_db->mctx, &ldap_db->bind_dn));
-	CHECK(str_new(ldap_db->mctx, &ldap_db->password));
-	CHECK(str_new(ldap_db->mctx, &ldap_db->sasl_mech));
-	CHECK(str_new(ldap_db->mctx, &ldap_db->sasl_user));
-	CHECK(str_new(ldap_db->mctx, &ldap_db->sasl_realm));
+	CHECK(isc_rwlock_init(&ldap_db->zone_rwlock, 0, 0));
+	CHECK(dns_rbt_create(mctx, string_deleter, mctx, &ldap_db->zone_names));
+
+	CHECK(str_new(mctx, &auth_method_str));
+	CHECK(str_new(mctx, &ldap_db->host));
+	CHECK(str_new(mctx, &ldap_db->base));
+	CHECK(str_new(mctx, &ldap_db->bind_dn));
+	CHECK(str_new(mctx, &ldap_db->password));
+	CHECK(str_new(mctx, &ldap_db->sasl_mech));
+	CHECK(str_new(mctx, &ldap_db->sasl_user));
+	CHECK(str_new(mctx, &ldap_db->sasl_realm));
 
 	ldap_settings[0].target = ldap_db->host;
 	ldap_settings[1].target = &ldap_db->connections;
@@ -369,6 +378,9 @@ destroy_ldap_db(ldap_db_t **ldap_dbp)
 	semaphore_destroy(&ldap_db->conn_semaphore);
 	/* commented out for now, causes named to hang */
 	//dns_view_detach(&ldap_db->view);
+
+	dns_rbt_destroy(&ldap_db->zone_names);
+	isc_rwlock_destroy(&ldap_db->zone_rwlock);
 
 	isc_mem_putanddetach(&ldap_db->mctx, ldap_db, sizeof(ldap_db_t));
 
@@ -487,6 +499,89 @@ get_dn(ldap_instance_t *inst)
 
 }
 
+
+void
+string_deleter(void *arg1, void *arg2)
+{
+	char *string = (char *)arg1;
+	isc_mem_t *mctx = (isc_mem_t *)arg2;
+
+	REQUIRE(string != NULL);
+	REQUIRE(mctx != NULL);
+
+	isc_mem_free(mctx, string);
+}
+
+isc_result_t
+get_zone_dn(ldap_db_t *ldap_db, dns_name_t *name, const char **dn,
+	    dns_name_t *matched_name)
+{
+	isc_result_t result;
+	dns_rbt_t *rbt;
+	void *data = NULL;
+
+	REQUIRE(ldap_db != NULL);
+	REQUIRE(name != NULL);
+	REQUIRE(dn != NULL && *dn == NULL);
+	REQUIRE(matched_name != NULL);
+
+	RWLOCK(&ldap_db->zone_rwlock, isc_rwlocktype_read);
+	rbt = ldap_db->zone_names;
+
+	result = dns_rbt_findname(rbt, name, 0, matched_name, &data);
+	if (result == DNS_R_PARTIALMATCH)
+		result = ISC_R_SUCCESS;
+	if (result == ISC_R_SUCCESS) {
+		INSIST(data != NULL);
+		*dn = data;
+	}
+
+	RWUNLOCK(&ldap_db->zone_rwlock, isc_rwlocktype_read);
+
+	return result;
+}
+
+static isc_result_t
+add_zone_dn(ldap_db_t *ldap_db, dns_name_t *name, const char *dn)
+{
+	isc_result_t result;
+	dns_rbt_t *rbt;
+	void *data = NULL;
+	char *new_dn = NULL;
+
+	REQUIRE(ldap_db != NULL);
+	REQUIRE(name != NULL);
+	REQUIRE(dn != NULL);
+
+	RWLOCK(&ldap_db->zone_rwlock, isc_rwlocktype_write);
+	rbt = ldap_db->zone_names;
+
+	CHECKED_MEM_STRDUP(ldap_db->mctx, dn, new_dn);
+
+	/* First make sure the node doesn't exist. */
+	result = dns_rbt_findname(rbt, name, 0, NULL, &data);
+	if (result == ISC_R_SUCCESS)
+		CHECK(dns_rbt_deletename(rbt, name, ISC_FALSE));
+	else if (result != ISC_R_NOTFOUND && result != DNS_R_PARTIALMATCH)
+		goto cleanup;
+
+	/* Now add it. */
+	CHECK(dns_rbt_addname(rbt, name, (void *)new_dn));
+
+	RWUNLOCK(&ldap_db->zone_rwlock, isc_rwlocktype_write);
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	RWUNLOCK(&ldap_db->zone_rwlock, isc_rwlocktype_write);
+
+	if (new_dn)
+		isc_mem_free(ldap_db->mctx, new_dn);
+
+	return result;
+}
+
+/* FIXME: Better error handling. */
 static isc_result_t
 add_or_modify_zone(ldap_db_t *ldap_db, const char *dn, const char *db_name,
 		   dns_zonemgr_t *zmgr)
@@ -526,6 +621,7 @@ add_or_modify_zone(ldap_db_t *ldap_db, const char *dn, const char *db_name,
 
 		CHECK(dns_zonemgr_managezone(zmgr, zone));
 		CHECK(dns_view_addzone(ldap_db->view, zone));
+		CHECK(add_zone_dn(ldap_db, &name, dn));
 	} else if (result != ISC_R_SUCCESS) {
 		goto cleanup;
 	}
@@ -678,7 +774,7 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_db_t *ldap_db, dns_name_t *name,
 
 	INIT_LIST(*rdatalist);
 	CHECK(str_new(mctx, &string));
-	CHECK(dnsname_to_dn(mctx, name, str_buf(ldap_db->base), string));
+	CHECK(dnsname_to_dn(ldap_db, name, string));
 
 	CHECK(ldap_query(ldap_inst, str_buf(string), LDAP_SCOPE_BASE, NULL, 0,
 				"(objectClass=idnsRecord)"));
@@ -1595,7 +1691,7 @@ modify_ldap_common(dns_name_t *owner, ldap_db_t *ldap_db,
 	ldap_inst = get_connection(ldap_db);
 
 	CHECK(str_new(mctx, &owner_dn));
-	CHECK(dnsname_to_dn(mctx, owner, str_buf(ldap_db->base), owner_dn));
+	CHECK(dnsname_to_dn(ldap_db, owner, owner_dn));
 	CHECK(ldap_rdatalist_to_ldapmod(mctx, rdlist, &change[0], mod_op));
 	CHECK(ldap_modify_do(ldap_inst, str_buf(owner_dn), change));
 

@@ -90,6 +90,10 @@ void destroy_ldap_db(ldap_db_t **ldap_db);
 isc_result_t refresh_zones_from_ldap(ldap_db_t *ldap_db, const char *name,
 				     dns_zonemgr_t *zmgr);
 
+isc_result_t
+get_zone_dn(ldap_db_t *ldap_db, dns_name_t *name, const char **dn,
+	    dns_name_t *matched_name);
+
 /* Functions for writing to LDAP. */
 isc_result_t ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
 		char ***valsp);

@@ -62,4 +62,17 @@
 	isc_mem_putanddetach(&(target_ptr)->mctx, target_ptr,	\
 			     sizeof(*(target_ptr)))
 
+#define DECLARE_BUFFERED_NAME(name)				\
+	dns_name_t name;					\
+	isc_buffer_t name##__buffer;				\
+	unsigned char name##__base[DNS_NAME_MAXWIRE]
+
+#define INIT_BUFFERED_NAME(name)					\
+	do {								\
+		isc_buffer_init(&name##__buffer, name##__base,		\
+				sizeof(name##__base));			\
+		dns_name_init(&name, NULL);				\
+		dns_name_setbuffer(&name, &name##__buffer);		\
+	} while (0)
+
 #endif /* !_LD_UTIL_H_ */
