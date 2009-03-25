@@ -52,10 +52,14 @@ void str_clear(ld_string_t *dest);
 isc_result_t str_init_char(ld_string_t *dest, const char *src);
 isc_result_t str_cat_char(ld_string_t *dest, const char *src);
 isc_result_t str_cat_char_len(ld_string_t *dest, const char *src, size_t len);
+isc_result_t str_cat_isc_region(ld_string_t *dest, const isc_region_t *region);
+isc_result_t str_cat_isc_buffer(ld_string_t *dest, const isc_buffer_t *buffer);
 isc_result_t str_cat(ld_string_t *dest, const ld_string_t *src);
 isc_result_t str_sprintf(ld_string_t *dest, const char *format, ...);
 isc_result_t str_vsprintf(ld_string_t *dest, const char *format, va_list ap);
 void str_toupper(ld_string_t *str);
+
+void str_to_isc_buffer(const ld_string_t *src, isc_buffer_t *dest);
 
 int str_casecmp_char(const ld_string_t *s1, const char *s2);
 

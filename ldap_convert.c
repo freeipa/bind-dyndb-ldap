@@ -70,37 +70,23 @@ isc_result_t
 dn_to_dnsname(isc_mem_t *mctx, const char *dn, dns_name_t *target)
 {
 	isc_result_t result;
-	ld_string_t *str;
-	isc_buffer_t source_buffer;
-	isc_buffer_t target_buffer;
-	dns_name_t tmp_name;
-	unsigned char target_base[DNS_NAME_MAXWIRE];
+	DECLARE_BUFFERED_NAME(name);
+	ld_string_t *str = NULL;
+	isc_buffer_t buffer;
 
 	REQUIRE(mctx != NULL);
 	REQUIRE(dn != NULL);
 
-	str = NULL;
-	result = ISC_R_SUCCESS;
-
-	/* Convert the DN into a DNS name. */
+	INIT_BUFFERED_NAME(name);
 	CHECK(str_new(mctx, &str));
+
 	CHECK(dn_to_text(dn, str));
-
-	/* TODO: fix this */
-	isc_buffer_init(&source_buffer, str_buf(str), str_len(str) - 1);
-	isc_buffer_add(&source_buffer, str_len(str) - 1);
-	isc_buffer_init(&target_buffer, target_base, sizeof(target_base));
-
-	/* Now create a dns_name_t struct. */
-	dns_name_init(&tmp_name, NULL);
-	dns_name_setbuffer(&tmp_name, &target_buffer);
-
-	CHECK(dns_name_fromtext(&tmp_name, &source_buffer, dns_rootname, 0,
-				NULL));
+	str_to_isc_buffer(str, &buffer);
+	CHECK(dns_name_fromtext(&name, &buffer, dns_rootname, 0, NULL));
 
 cleanup:
 	if (result != ISC_R_FAILURE)
-		result = dns_name_dupwithoffsets(&tmp_name, mctx, target);
+		result = dns_name_dupwithoffsets(&name, mctx, target);
 
 	str_destroy(&str);
 
@@ -206,14 +192,6 @@ isc_result_t
 dnsname_to_dn(ldap_db_t *ldap_db, dns_name_t *name, ld_string_t *target)
 {
 	isc_result_t result;
-
-	DECLARE_BUFFERED_NAME(zone);
-
-	dns_name_t labels;
-
-	dns_namereln_t reln;
-	int order;
-	unsigned int common_labels;
 	int label_count;
 	const char *zone_dn = NULL;
 
@@ -221,34 +199,33 @@ dnsname_to_dn(ldap_db_t *ldap_db, dns_name_t *name, ld_string_t *target)
 	REQUIRE(name != NULL);
 	REQUIRE(target != NULL);
 
-
-	INIT_BUFFERED_NAME(zone);
-
-	dns_name_init(&labels, NULL);
-
 	/* Find the DN of the zone we belong to. */
-	CHECK(get_zone_dn(ldap_db, name, &zone_dn, &zone));
+	{
+		DECLARE_BUFFERED_NAME(zone);
+		int dummy;
+		unsigned int common_labels;
 
-	reln = dns_name_fullcompare(name, &zone, &order, &common_labels);
-	INSIST(reln == dns_namereln_subdomain || reln == dns_namereln_equal);
-	label_count = dns_name_countlabels(name);
-	label_count -= common_labels;
+		INIT_BUFFERED_NAME(zone);
+
+		CHECK(get_zone_dn(ldap_db, name, &zone_dn, &zone));
+
+		dns_name_fullcompare(name, &zone, &dummy, &common_labels);
+		label_count = dns_name_countlabels(name) - common_labels;
+	}
 
 	str_clear(target);
 	if (label_count > 0) {
-		isc_buffer_t buffer;
-		char target_base[DNS_NAME_MAXTEXT];
-		isc_region_t region;
+		DECLARE_BUFFER(buffer, DNS_NAME_MAXTEXT);
+		dns_name_t labels;
 
-		isc_buffer_init(&buffer, target_base, sizeof(target_base));
+		INIT_BUFFER(buffer);
+		dns_name_init(&labels, NULL);
 
 		dns_name_getlabelsequence(name, 0, label_count, &labels);
 		CHECK(dns_name_totext(&labels, ISC_TRUE, &buffer));
-		isc_buffer_usedregion(&buffer, &region);
 
 		CHECK(str_cat_char(target, "idnsName="));
-		CHECK(str_cat_char_len(target, (char *)region.base,
-				       region.length));
+		CHECK(str_cat_isc_buffer(target, &buffer));
 		CHECK(str_cat_char(target, ", "));
 	}
 	CHECK(str_cat_char(target, zone_dn));

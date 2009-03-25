@@ -1622,12 +1622,11 @@ ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
 
 	rdata = rdata_head;
 	for (i = 0; i < rdata_count && rdata != NULL; i++) {
-		isc_buffer_t buffer;
+		DECLARE_BUFFER(buffer, MINTSIZ);
 		isc_region_t region;
-		char data[MINTSIZ];
 
 		/* Convert rdata to text. */
-		isc_buffer_init(&buffer, data, MINTSIZ);
+		INIT_BUFFER(buffer);
 		CHECK(dns_rdata_totext(rdata, NULL, &buffer));
 		isc_buffer_usedregion(&buffer, &region);
 

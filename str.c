@@ -24,8 +24,10 @@
  * Review all the REQUIRE() macros.
  */
 
+#include <isc/buffer.h>
 #include <isc/mem.h>
 #include <isc/mutex.h>
+#include <isc/region.h>
 #include <isc/util.h>
 
 #include <dns/result.h>
@@ -342,6 +344,30 @@ cleanup:
 	return result;
 }
 
+isc_result_t
+str_cat_isc_region(ld_string_t *dest, const isc_region_t *region)
+{
+	REQUIRE(dest != NULL);
+	REQUIRE(region != NULL);
+
+	return str_cat_char_len(dest, (char *)region->base, region->length);
+}
+
+isc_result_t
+str_cat_isc_buffer(ld_string_t *dest, const isc_buffer_t *buffer)
+{
+	isc_region_t region;
+	isc_buffer_t *deconst_buffer;
+
+	REQUIRE(dest != NULL);
+	REQUIRE(ISC_BUFFER_VALID(buffer));
+
+	DE_CONST(buffer, deconst_buffer);
+	isc_buffer_usedregion(deconst_buffer, &region);
+
+	return str_cat_isc_region(dest, &region);
+}
+
 /*
  * Concatenate string src to string dest.
  */
@@ -410,6 +436,20 @@ str_toupper(ld_string_t *str)
 
 	for (ptr = str->data; *ptr != '\0'; ptr++)
 		*ptr = toupper((unsigned char)*ptr);
+}
+
+void
+str_to_isc_buffer(const ld_string_t *src, isc_buffer_t *dest)
+{
+	size_t len;
+
+	REQUIRE(src != NULL);
+	REQUIRE(dest != NULL);
+
+	len = str_len_internal(src) - 1;
+
+	isc_buffer_init(dest, src->data, len);
+	isc_buffer_add(dest, len);
 }
 
 int
