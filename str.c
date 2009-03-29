@@ -102,7 +102,7 @@ str_alloc(ld_string_t *str, size_t len)
 		return ISC_R_NOMEMORY;
 
 	if (str->data != NULL) {
-		strncpy(new_buffer, str->data, len);
+		memcpy(new_buffer, str->data, len);
 		new_buffer[len] = '\0';
 		isc_mem_put(str->mctx, str->data, str->allocated);
 	} else {
@@ -227,13 +227,15 @@ isc_result_t
 str_copy(ld_string_t *dest, const ld_string_t *src)
 {
 	isc_result_t result;
+	size_t len;
 
 	REQUIRE(dest != NULL);
 	REQUIRE(src != NULL);
 	IGNORE_R(src->data == NULL);
 
-	CHECK(str_alloc(dest, str_len_internal(src)));
-	strncpy(dest->data, src->data, dest->allocated);
+	len = str_len_internal(src);
+	CHECK(str_alloc(dest, len));
+	memcpy(dest->data, src->data, len + 1);
 
 	return ISC_R_SUCCESS;
 
@@ -277,12 +279,15 @@ isc_result_t
 str_init_char(ld_string_t *dest, const char *src)
 {
 	isc_result_t result;
+	size_t len;
 
 	REQUIRE(dest != NULL);
 	IGNORE_R(src == NULL);
 
-	CHECK(str_alloc(dest, strlen(src)));
-	strncpy(dest->data, src, dest->allocated);
+	len = strlen(src);
+	CHECK(str_alloc(dest, len));
+	memcpy(dest->data, src, len);
+	dest->data[len] = '\0';
 
 	return ISC_R_SUCCESS;
 
@@ -312,7 +317,7 @@ str_cat_char(ld_string_t *dest, const char *src)
 
 	CHECK(str_alloc(dest, dest_size + src_size));
 	from = dest->data + dest_size;
-	strncpy(from, src, src_size + 1);
+	memcpy(from, src, src_size + 1);
 
 	return ISC_R_SUCCESS;
 
@@ -335,7 +340,7 @@ str_cat_char_len(ld_string_t *dest, const char *src, size_t len)
 
 	CHECK(str_alloc(dest, dest_size + len));
 	from = dest->data + dest_size;
-	strncpy(from, src, len);
+	memcpy(from, src, len);
 	from[len] = '\0';
 
 	return ISC_R_SUCCESS;
