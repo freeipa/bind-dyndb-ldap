@@ -12,4 +12,4 @@ libdnsldap_la_SOURCES = $(HDRS) cache.c ldap_convert.c ldap_driver.c \
 
 libdnsldap_la_CFLAGS = -Wall -Wextra -pedantic -std=c99
 
-libdnsldap_la_LDFLAGS = -version-info $(LIBMAJOR):$(LIBMINOR):0
+libdnsldap_la_LDFLAGS = -version-number $(LIBMAJOR):$(LIBMINOR):0
