@@ -18,6 +18,12 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#else
+#error "Can't compile without config.h"
+#endif
+
 #include <isc/buffer.h>
 #include <isc/mem.h>
 #include <isc/refcount.h>
@@ -226,14 +232,19 @@ endload(dns_db_t *db, dns_dbload_t **dbloadp)
 }
 
 static isc_result_t
-dump(dns_db_t *db, dns_dbversion_t *version, const char *filename,
-     dns_masterformat_t masterformat)
+dump(dns_db_t *db, dns_dbversion_t *version, const char *filename
+#if LIBDNS_VERSION_MAJOR >= 31
+     , dns_masterformat_t masterformat
+#endif
+     )
 {
 
 	UNUSED(db);
 	UNUSED(version);
 	UNUSED(filename);
+#if LIBDNS_VERSION_MAJOR >= 31
 	UNUSED(masterformat);
+#endif
 
 	fatal_error("ldapdb: method dump() should never be called");
 
@@ -482,11 +493,20 @@ printnode(dns_db_t *db, dns_dbnode_t *node, FILE *out)
 }
 
 static isc_result_t
-createiterator(dns_db_t *db, unsigned int options,
+createiterator(dns_db_t *db,
+#if LIBDNS_VERSION_MAJOR >= 50
+	       unsigned int options,
+#else
+	       isc_boolean_t relative_names,
+#endif
 	       dns_dbiterator_t **iteratorp)
 {
 	UNUSED(db);
+#if LIBDNS_VERSION_MAJOR >= 50
 	UNUSED(options);
+#else
+	UNUSED(relative_names);
+#endif
 	UNUSED(iteratorp);
 
 	return ISC_R_NOTIMPLEMENTED;
@@ -795,6 +815,7 @@ settask(dns_db_t *db, isc_task_t *task)
 	UNUSED(task);
 }
 
+#if LIBDNS_VERSION_MAJOR >= 31
 static isc_result_t
 getoriginnode(dns_db_t *db, dns_dbnode_t **nodep)
 {
@@ -802,7 +823,9 @@ getoriginnode(dns_db_t *db, dns_dbnode_t **nodep)
 
 	return findnode(db, &ldapdb->common.origin, ISC_FALSE, nodep);
 }
+#endif
 
+#if LIBDNS_VERSION_MAJOR >= 45
 static void
 transfernode(dns_db_t *db, dns_dbnode_t **sourcep, dns_dbnode_t **targetp)
 {
@@ -811,6 +834,7 @@ transfernode(dns_db_t *db, dns_dbnode_t **sourcep, dns_dbnode_t **targetp)
 	UNUSED(targetp);
 }
 
+#if LIBDNS_VERSION_MAJOR >= 50
 static isc_result_t
 getnsec3parameters(dns_db_t *db, dns_dbversion_t *version, dns_hash_t *hash,
 		   isc_uint8_t *flags, isc_uint16_t *iterations,
@@ -874,6 +898,7 @@ isdnssec(dns_db_t *db)
 
 	return ISC_R_NOTIMPLEMENTED;
 }
+#endif /* LIBDNS_VERSION_MAJOR >= 50 */
 
 static dns_stats_t *
 getrrsetstats(dns_db_t *db)
@@ -882,6 +907,7 @@ getrrsetstats(dns_db_t *db)
 
 	return NULL;
 }
+#endif /* LIBDNS_VERSION_MAJOR >= 45 */
 
 static dns_dbmethods_t ldapdb_methods = {
 	attach,
@@ -911,15 +937,21 @@ static dns_dbmethods_t ldapdb_methods = {
 	ispersistent,
 	overmem,
 	settask,
+#if LIBDNS_VERSION_MAJOR >= 31
 	getoriginnode,
+#endif
+#if LIBDNS_VERSION_MAJOR >= 45
 	transfernode,
+#if LIBDNS_VERSION_MAJOR >= 50
 	getnsec3parameters,
 	findnsec3node,
 	setsigningtime,
 	getsigningtime,
 	resigned,
 	isdnssec,
+#endif /* LIBDNS_VERSION_MAJOR >= 50 */
 	getrrsetstats
+#endif /* LIBDNS_VERSION_MAJOR >= 45 */
 };
 
 static isc_result_t
