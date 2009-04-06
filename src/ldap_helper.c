@@ -43,6 +43,7 @@
 #include <string.h>
 #include <strings.h>
 
+#include "acl.h"
 #include "ldap_convert.h"
 #include "ldap_helper.h"
 #include "log.h"
@@ -144,6 +145,7 @@ struct ldap_instance {
 
 struct ldap_entry {
 	LDAPMessage		*entry;
+	char			*dn;
 	ldap_attribute_t	*last_attr;
 	ldap_attribute_list_t	attributes;
 	LINK(ldap_entry_t)	link;
@@ -186,7 +188,8 @@ static isc_result_t new_ldap_instance(ldap_db_t *ldap_db,
 		ldap_instance_t **ldap_instp);
 static void destroy_ldap_instance(ldap_instance_t **ldap_instp);
 static isc_result_t add_or_modify_zone(ldap_db_t *ldap_db, const char *dn,
-		const char *db_name, dns_zonemgr_t *zmgr);
+		const char *db_name, const char *update_str,
+		dns_zonemgr_t *zmgr);
 
 static isc_result_t findrdatatype_or_create(isc_mem_t *mctx,
 		ldapdb_rdatalist_t *rdatalist, ldap_entry_t *entry,
@@ -222,9 +225,12 @@ static void free_query_cache(ldap_instance_t *inst);
 static void free_ldap_attributes(isc_mem_t *mctx, ldap_entry_t *entry);
 static void free_ldap_values(isc_mem_t *mctx, ldap_attribute_t *attr);
 
+static const char * get_dn(ldap_instance_t *ldap_inst, ldap_entry_t *entry);
 
+#if 0
 static const LDAPMessage *next_entry(ldap_instance_t *inst);
 static const char *get_dn(ldap_instance_t *inst);
+#endif
 
 static ldap_instance_t * get_connection(ldap_db_t *ldap_db);
 static void put_connection(ldap_instance_t *ldap_inst);
@@ -459,8 +465,9 @@ refresh_zones_from_ldap(ldap_db_t *ldap_db, const char *name,
 {
 	isc_result_t result = ISC_R_SUCCESS;
 	ldap_instance_t *ldap_inst;
+	ldap_entry_t *entry;
 	char *attrs[] = {
-		"idnsName", NULL
+		"idnsName", "idnsUpdatePolicy", NULL
 	};
 
 	REQUIRE(ldap_db != NULL);
@@ -471,10 +478,30 @@ refresh_zones_from_ldap(ldap_db_t *ldap_db, const char *name,
 	ldap_inst = get_connection(ldap_db);
 
 	ldap_query(ldap_inst, str_buf(ldap_db->base), LDAP_SCOPE_SUBTREE,
-		   attrs, 0, "(objectClass=idnsZone)");
+		   attrs, 0, "(&(objectClass=idnsZone)(idnsZoneActive=True))");
+	CHECK(cache_query_results(ldap_inst));
 
-	while (next_entry(ldap_inst))
-		CHECK(add_or_modify_zone(ldap_db, get_dn(ldap_inst), name, zmgr));
+	for (entry = HEAD(ldap_inst->ldap_entries);
+	     entry != NULL;
+	     entry = NEXT(entry, link)) {
+		const char *dn;
+		const char *update_str = NULL;
+		ldap_value_list_t values;
+
+		dn = get_dn(ldap_inst, entry);
+
+		/* Look if there's an update policy. */
+		result = get_values(entry, "idnsUpdatePolicy", &values);
+		if (result == ISC_R_SUCCESS)
+			update_str = HEAD(values)->value;
+
+		result = add_or_modify_zone(ldap_db, dn, name, update_str,
+					    zmgr);
+
+		/* TODO: move this to the add_or_modify_zone() */
+		if (result != ISC_R_SUCCESS)
+			log_error("failed to add/modify zone %s", dn);
+	}
 
 cleanup:
 	put_connection(ldap_inst);
@@ -484,6 +511,20 @@ cleanup:
 	return result;
 }
 
+static const char *
+get_dn(ldap_instance_t *ldap_inst, ldap_entry_t *entry)
+{
+	if (entry->dn) {
+		ldap_memfree(entry->dn);
+		entry->dn = NULL;
+	}
+	if (ldap_inst->handle)
+		entry->dn = ldap_get_dn(ldap_inst->handle, entry->entry);
+
+	return entry->dn;
+}
+
+#if 0
 static const char *
 get_dn(ldap_instance_t *inst)
 {
@@ -498,7 +539,7 @@ get_dn(ldap_instance_t *inst)
 	return inst->dn;
 
 }
-
+#endif
 
 void
 string_deleter(void *arg1, void *arg2)
@@ -568,14 +609,10 @@ add_zone_dn(ldap_db_t *ldap_db, dns_name_t *name, const char *dn)
 	/* Now add it. */
 	CHECK(dns_rbt_addname(rbt, name, (void *)new_dn));
 
-	RWUNLOCK(&ldap_db->zone_rwlock, isc_rwlocktype_write);
-
-	return ISC_R_SUCCESS;
-
 cleanup:
 	RWUNLOCK(&ldap_db->zone_rwlock, isc_rwlocktype_write);
 
-	if (new_dn)
+	if (result != ISC_R_SUCCESS && new_dn != NULL)
 		isc_mem_free(ldap_db->mctx, new_dn);
 
 	return result;
@@ -584,12 +621,11 @@ cleanup:
 /* FIXME: Better error handling. */
 static isc_result_t
 add_or_modify_zone(ldap_db_t *ldap_db, const char *dn, const char *db_name,
-		   dns_zonemgr_t *zmgr)
+		   const char *update_str, dns_zonemgr_t *zmgr)
 {
 	isc_result_t result;
 	dns_zone_t *zone;
 	dns_name_t name;
-	dns_acl_t *updateacl = NULL;
 	const char *argv[2];
 
 	REQUIRE(ldap_db != NULL);
@@ -613,18 +649,15 @@ add_or_modify_zone(ldap_db_t *ldap_db, const char *dn, const char *db_name,
 		dns_zone_setclass(zone, dns_rdataclass_in);
 		dns_zone_settype(zone, dns_zone_master);
 		CHECK(dns_zone_setdbtype(zone, 2, argv));
-
-		/* XXX Temporary set update ACLs to any */
-		CHECK(dns_acl_any(ldap_db->mctx, &updateacl));
-		dns_zone_setupdateacl(zone, updateacl);
-		dns_acl_detach(&updateacl);
-
 		CHECK(dns_zonemgr_managezone(zmgr, zone));
 		CHECK(dns_view_addzone(ldap_db->view, zone));
 		CHECK(add_zone_dn(ldap_db, &name, dn));
 	} else if (result != ISC_R_SUCCESS) {
 		goto cleanup;
 	}
+
+	/* Set simple update table. */
+	CHECK(acl_configure_zone_ssutable(update_str, zone));
 
 	/*
 	 * ACLs:
@@ -1322,6 +1355,8 @@ free_query_cache(ldap_instance_t *inst)
 		next = NEXT(entry, link);
 		UNLINK(inst->ldap_entries, entry, link);
 		free_ldap_attributes(inst->database->mctx, entry);
+		if (entry->dn != NULL)
+			ldap_memfree(entry->dn);
 		isc_mem_put(inst->database->mctx, entry, sizeof(*entry));
 		entry = next;
 	}
@@ -1360,6 +1395,7 @@ free_ldap_values(isc_mem_t *mctx, ldap_attribute_t *attr)
 	}
 }
 
+#if 0
 /* FIXME: this function is obsolete, remove. */
 static const LDAPMessage *
 next_entry(ldap_instance_t *inst)
@@ -1378,6 +1414,7 @@ next_entry(ldap_instance_t *inst)
 
 	return inst->entry;
 }
+#endif
 
 #if 0
 /* FIXME: Not tested. */
@@ -1536,11 +1573,16 @@ ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn, LDAPMod **mods)
 	REQUIRE(dn != NULL);
 	REQUIRE(mods != NULL);
 
-	log_debug(2, "writing to to '%s'", dn);
+	log_debug(2, "writing to '%s'", dn);
 
 	ret = ldap_modify_ext_s(ldap_inst->handle, dn, mods, NULL, NULL);
 	if (ret != LDAP_SUCCESS) {
-		log_error("error writing to ldap: %s", ldap_err2string(ret));
+		int err_code;
+
+		ldap_get_option(ldap_inst->handle, LDAP_OPT_RESULT_CODE,
+				&err_code);
+		log_error("error writing to ldap: %s",
+			  ldap_err2string(err_code));
 		return ISC_R_FAILURE;
 	}
 
@@ -1678,11 +1720,14 @@ modify_ldap_common(dns_name_t *owner, ldap_db_t *ldap_db,
 {
 	isc_result_t result;
 	isc_mem_t *mctx;
-	ldap_instance_t *ldap_inst;
+	ldap_instance_t *ldap_inst = NULL;
 	ld_string_t *owner_dn = NULL;
-	LDAPMod *change[2];
+	LDAPMod *change[2] = { NULL, NULL };
 
-	change[0] = change[1] = NULL;
+	if (rdlist->type == dns_rdatatype_soa) {
+		result = ISC_R_SUCCESS;
+		goto cleanup;
+	}
 
 	mctx = ldap_db->mctx;
 	ldap_inst = get_connection(ldap_db);
