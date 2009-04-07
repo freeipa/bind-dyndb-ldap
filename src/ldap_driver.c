@@ -315,7 +315,8 @@ findnode(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 
 	result = cached_ldap_rdatalist_get(ldapdb->common.mctx,
 					   ldapdb->ldap_cache, ldapdb->ldap_db,
-					   name, &rdatalist);
+					   name, &ldapdb->common.origin,
+					   &rdatalist);
 
 	if (result == ISC_R_NOMEMORY)
 		return ISC_R_NOMEMORY;
@@ -372,7 +373,8 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 
 	result = cached_ldap_rdatalist_get(ldapdb->common.mctx,
 					   ldapdb->ldap_cache, ldapdb->ldap_db,
-					   name, &rdatalist);
+					   name, &ldapdb->common.origin,
+					   &rdatalist);
 	INSIST(result != DNS_R_PARTIALMATCH); /* XXX Not yet implemented */
 
 	if (result != ISC_R_SUCCESS && result != DNS_R_PARTIALMATCH)

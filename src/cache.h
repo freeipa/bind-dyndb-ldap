@@ -46,7 +46,7 @@ destroy_ldap_cache(ldap_cache_t **cachep);
 isc_result_t
 cached_ldap_rdatalist_get(isc_mem_t *mctx, ldap_cache_t *cache,
 			  ldap_db_t *ldap_db, dns_name_t *name,
-			  ldapdb_rdatalist_t *rdatalist);
+			  dns_name_t *origin, ldapdb_rdatalist_t *rdatalist);
 
 /*
  * Discard 'name' from the cache. If caching is not really turned on or 'name'

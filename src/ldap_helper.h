@@ -67,7 +67,7 @@ void free_rdatalist(isc_mem_t *mctx, dns_rdatalist_t *rdlist);
  */
 
 isc_result_t ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_db_t *ldap_db,
-				  dns_name_t *name,
+				  dns_name_t *name, dns_name_t *origin,
 				  ldapdb_rdatalist_t *rdatalist);
 /*
  * ldapdb_rdatalist_get

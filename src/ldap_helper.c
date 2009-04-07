@@ -192,7 +192,7 @@ static isc_result_t findrdatatype_or_create(isc_mem_t *mctx,
 		ldapdb_rdatalist_t *rdatalist, ldap_entry_t *entry,
 		dns_rdatatype_t rdtype, dns_rdatalist_t **rdlistp);
 static isc_result_t add_soa_record(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
-		dns_name_t *name, ldap_entry_t *entry,
+		dns_name_t *origin, ldap_entry_t *entry,
 		ldapdb_rdatalist_t *rdatalist);
 static dns_rdataclass_t get_rdataclass(ldap_entry_t *ldap_entry);
 static dns_ttl_t get_ttl(ldap_entry_t *ldap_entry);
@@ -751,7 +751,7 @@ free_rdatalist(isc_mem_t *mctx, dns_rdatalist_t *rdlist)
 
 isc_result_t
 ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_db_t *ldap_db, dns_name_t *name,
-		     ldapdb_rdatalist_t *rdatalist)
+		     dns_name_t *origin, ldapdb_rdatalist_t *rdatalist)
 {
 	isc_result_t result;
 	ldap_instance_t *ldap_inst;
@@ -789,7 +789,7 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_db_t *ldap_db, dns_name_t *name,
 	     entry != NULL;
 	     entry = NEXT(entry, link)) {
 
-		result = add_soa_record(mctx, ldap_inst, name, entry,
+		result = add_soa_record(mctx, ldap_inst, origin, entry,
 					rdatalist);
 		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
 			goto cleanup;
@@ -807,8 +807,8 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_db_t *ldap_db, dns_name_t *name,
 			     result == ISC_R_SUCCESS;
 			     result = get_next_rdatatext(attr, string)) {
 				CHECK(parse_rdata(mctx, ldap_inst, rdclass,
-						  rdtype, name, str_buf(string),
-						  &rdata));
+						  rdtype, origin,
+						  str_buf(string), &rdata));
 				APPEND(rdlist->rdata, rdata, link);
 				rdata = NULL;
 			}
@@ -867,7 +867,7 @@ get_ttl(ldap_entry_t *ldap_entry)
 static isc_result_t
 get_soa_record(ldap_entry_t *entry, ld_string_t *target)
 {
-	isc_result_t result;
+	isc_result_t result = ISC_R_NOTFOUND;
 	ldap_value_list_t values;
 
 	const char *soa_attrs[] = {
@@ -891,7 +891,7 @@ cleanup:
 }
 
 static isc_result_t
-add_soa_record(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *name,
+add_soa_record(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *origin,
 	       ldap_entry_t *entry, ldapdb_rdatalist_t *rdatalist)
 {
 	isc_result_t result;
@@ -906,7 +906,7 @@ add_soa_record(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *name,
 	rdclass = get_rdataclass(entry);
 
 	CHECK(get_soa_record(entry, string));
-	CHECK(parse_rdata(mctx, ldap_inst, rdclass, dns_rdatatype_soa, name,
+	CHECK(parse_rdata(mctx, ldap_inst, rdclass, dns_rdatatype_soa, origin,
 			  str_buf(string), &rdata));
 
 	CHECK(findrdatatype_or_create(mctx, rdatalist, entry, dns_rdatatype_soa,
