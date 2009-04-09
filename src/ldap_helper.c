@@ -244,6 +244,8 @@ static isc_result_t ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn,
 static isc_result_t ldap_rdatalist_to_ldapmod(isc_mem_t *mctx,
 		dns_rdatalist_t *rdlist, LDAPMod **changep, int mod_op);
 static void free_ldapmod(isc_mem_t *mctx, LDAPMod **changep);
+static isc_result_t ldap_rdata_to_char_array(isc_mem_t *mctx,
+		dns_rdata_t *rdata_head, char ***valsp);
 static void free_char_array(isc_mem_t *mctx, char ***valsp);
 static isc_result_t modify_ldap_common(dns_name_t *owner, ldap_db_t *ldap_db,
 		dns_rdatalist_t *rdlist, int mod_op);
@@ -1643,7 +1645,7 @@ free_ldapmod(isc_mem_t *mctx, LDAPMod **changep)
 	*changep = NULL;
 }
 
-isc_result_t
+static isc_result_t
 ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
 			 char ***valsp)
 {

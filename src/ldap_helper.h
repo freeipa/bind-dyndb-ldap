@@ -95,8 +95,6 @@ get_zone_dn(ldap_db_t *ldap_db, dns_name_t *name, const char **dn,
 	    dns_name_t *matched_name);
 
 /* Functions for writing to LDAP. */
-isc_result_t ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
-		char ***valsp);
 isc_result_t write_to_ldap(dns_name_t *owner, ldap_db_t *ldap_db,
 		dns_rdatalist_t *rdlist);
 isc_result_t remove_from_ldap(dns_name_t *owner, ldap_db_t *ldap_db,
