@@ -30,6 +30,7 @@
 #include <isc/util.h>
 
 #include <dns/db.h>
+#include <dns/dynamic_db.h>
 #include <dns/rdata.h>
 #include <dns/rdataclass.h>
 #include <dns/rdatalist.h>
@@ -1020,18 +1021,23 @@ const char *ldapdb_impname = "dynamic-ldap";
 
 isc_result_t
 dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
-		    dns_view_t *view, dns_zonemgr_t *zmgr)
+		    dns_dyndb_arguments_t *dyndb_args)
 {
 	isc_result_t result;
 	ldap_db_t *ldap_db = NULL;
 	ldap_cache_t *ldap_cache = NULL;
+	dns_view_t *view;
+	dns_zonemgr_t *zmgr;
 
 	REQUIRE(mctx != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(argv != NULL);
-	REQUIRE(view != NULL);
+	REQUIRE(dyndb_args != NULL);
 
-	log_debug(2, "Registering dynamic ldap driver for %s.", name);
+	log_debug(2, "registering dynamic ldap driver for %s.", name);
+
+	view = dns_dyndb_get_view(dyndb_args);
+	zmgr = dns_dyndb_get_zonemgr(dyndb_args);
 
 	/* Test argv. */
 	int i = 0;
