@@ -1,5 +1,5 @@
 AC_PREREQ([2.59])
-AC_INIT([libdnsldap], [0.1.0a1], [put_bugreport_address_here])
+AC_INIT([libdnsldap], [0.1.0a1], [mnagy@redhat.com])
 
 AM_INIT_AUTOMAKE([-Wall foreign dist-bzip2])
 
