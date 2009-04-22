@@ -1064,6 +1064,7 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 	}
 
 	/* Register new DNS DB implementation. */
+	ldapdb_imp = NULL;
 	result = dns_db_register(ldapdb_impname, &ldapdb_create, NULL, mctx,
 				 &ldapdb_imp);
 	if (result != ISC_R_SUCCESS && result != ISC_R_EXISTS)
@@ -1109,6 +1110,8 @@ cleanup:
 void
 dynamic_driver_destroy(void)
 {
-	dns_db_unregister(&ldapdb_imp);
+	/* Only unregister the implementation if it was registered by us. */
+	if (ldapdb_imp != NULL)
+		dns_db_unregister(&ldapdb_imp);
 	destroy_manager();
 }
