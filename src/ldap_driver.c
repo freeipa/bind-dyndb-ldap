@@ -632,7 +632,7 @@ addrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 			 * TODO: support it. When supported handle
 			 * DNS_DBADD_EXACTTTL option well.
 			 */
-			log_error("Multiple TTLs for one name are not "
+			log_error("multiple TTLs for one name are not "
 				  "supported");
 			result = ISC_R_NOTIMPLEMENTED;
 			goto cleanup;
@@ -1039,13 +1039,6 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 	view = dns_dyndb_get_view(dyndb_args);
 	zmgr = dns_dyndb_get_zonemgr(dyndb_args);
 
-	/* Test argv. */
-	int i = 0;
-	while (argv[i] != NULL) {
-		log_debug(2, "Arg: %s", argv[i]);
-		i++;
-	}
-
 	/*
 	 * We need to discover what rdataset methods does
 	 * dns_rdatalist_tordataset use. We then make a copy for ourselves
@@ -1075,21 +1068,9 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 	CHECK(manager_add_db_instance(mctx, name, ldap_db, ldap_cache, zmgr));
 
 	/*
-	 * XXX now fetch all zones and initialize ldap zone manager
+	 * TODO: now fetch all zones and initialize ldap zone manager
 	 * (periodically check for new zones)
 	 * - manager has to share server zonemgr (ns_g_server->zonemgr)
-	 *
-	 * XXX manager has to this this for each zone:
-	 * - dns_zone_create
-	 * - dns_zone_setorigin
-	 * - dns_zone_setview
-	 * - dns_zone_setacache (probably not needed)
-	 * - dns_zone_setclass
-	 * - dns_zone_settype
-	 * - dns_zone_setdbtype (note: pass all connection arguments etc here -
-	 *   will be used by ldapdb_create)
-	 * - continue as in bin/server.c - ns_zone_configure()
-	 * - dns_zonemgr_managezone
 	 *
 	 * zone has to be bind-ed to specified view:
 	 * - dns_view_findzone (check if zone already exists)
@@ -1113,5 +1094,11 @@ dynamic_driver_destroy(void)
 	/* Only unregister the implementation if it was registered by us. */
 	if (ldapdb_imp != NULL)
 		dns_db_unregister(&ldapdb_imp);
+	/*
+	 * XXX: This is a work-around a bug in dns_db_unregister().
+	 *      Remove this line after it has been fixed.
+	 */
+	ldapdb_imp = NULL;
+
 	destroy_manager();
 }

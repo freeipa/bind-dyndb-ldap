@@ -136,7 +136,6 @@ cleanup:
 	if (exploded_rdn != NULL)
 		ldap_value_free(exploded_rdn);
 
-	log_error("converted: %s", str_buf(target));
 	return result;
 }
 
@@ -251,9 +250,8 @@ ldap_record_to_rdatatype(const char *ldap_record, dns_rdatatype_t *rdtype)
 	region.base = dns_records[i];
 	region.length = strlen(region.base);
 	result = dns_rdatatype_fromtext(rdtype, (isc_textregion_t *)&region);
-	if (result != ISC_R_SUCCESS) {
+	if (result != ISC_R_SUCCESS)
 		log_error("dns_rdatatype_fromtext() failed");
-	}
 
 	return result;
 }
