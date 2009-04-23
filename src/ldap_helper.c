@@ -1379,6 +1379,7 @@ next_entry(ldap_instance_t *inst)
 	return inst->entry;
 }
 
+#if 0
 /* FIXME: Not tested. */
 static int
 ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
@@ -1429,6 +1430,7 @@ ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
 
 	return LDAP_SUCCESS;
 }
+#endif
 
 /*
  * Initialize the LDAP handle and bind to the server. Needed authentication
@@ -1442,7 +1444,9 @@ ldap_connect(ldap_instance_t *ldap_inst)
 	int version;
 	const char *bind_dn;
 	const char *password;
+#if 0
 	struct berval *servercred = NULL;
+#endif
 	ldap_db_t *ldap_db;
 
 	REQUIRE(ldap_inst != NULL);
@@ -1486,6 +1490,8 @@ ldap_connect(ldap_instance_t *ldap_inst)
 		ret = ldap_simple_bind_s(ld, bind_dn, password);
 		break;
 	case AUTH_SASL:
+		log_error("SASL authentication is not supported yet");
+#if 0
 		log_error("%s", str_buf(ldap_db->sasl_mech));
 		ret = ldap_sasl_interactive_bind_s(ld, NULL,
 						   str_buf(ldap_db->sasl_mech),
@@ -1494,6 +1500,7 @@ ldap_connect(ldap_instance_t *ldap_inst)
 						   ldap_db);
 		ber_bvfree(servercred);
 		break;
+#endif
 	default:
 		fatal_error("bug in ldap_connect(): unsupported "
 			    "authentication mechanism");
