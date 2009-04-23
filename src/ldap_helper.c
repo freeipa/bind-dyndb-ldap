@@ -104,7 +104,7 @@ struct ldap_db {
 	dns_rbt_t		*zone_names;
 
 	/* Settings. */
-	ld_string_t		*host;
+	ld_string_t		*uri;
 	ld_string_t		*base;
 	unsigned int		connections;
 	ldap_auth_t		auth_method;
@@ -252,8 +252,8 @@ new_ldap_db(isc_mem_t *mctx, dns_view_t *view, ldap_db_t **ldap_dbp,
 	ldap_instance_t *ldap_inst;
 	ld_string_t *auth_method_str = NULL;
 	setting_t ldap_settings[] = {
-		{ "host",	 no_default_string		},
-		{ "connections", default_uint(1)		},
+		{ "uri",	 no_default_string		},
+		{ "connections", default_uint(2)		},
 		{ "base",	 no_default_string		},
 		{ "auth_method", default_string("none")		},
 		{ "bind_dn",	 default_string("")		},
@@ -285,7 +285,7 @@ new_ldap_db(isc_mem_t *mctx, dns_view_t *view, ldap_db_t **ldap_dbp,
 	CHECK(dns_rbt_create(mctx, string_deleter, mctx, &ldap_db->zone_names));
 
 	CHECK(str_new(mctx, &auth_method_str));
-	CHECK(str_new(mctx, &ldap_db->host));
+	CHECK(str_new(mctx, &ldap_db->uri));
 	CHECK(str_new(mctx, &ldap_db->base));
 	CHECK(str_new(mctx, &ldap_db->bind_dn));
 	CHECK(str_new(mctx, &ldap_db->password));
@@ -293,7 +293,7 @@ new_ldap_db(isc_mem_t *mctx, dns_view_t *view, ldap_db_t **ldap_dbp,
 	CHECK(str_new(mctx, &ldap_db->sasl_user));
 	CHECK(str_new(mctx, &ldap_db->sasl_realm));
 
-	ldap_settings[0].target = ldap_db->host;
+	ldap_settings[0].target = ldap_db->uri;
 	ldap_settings[1].target = &ldap_db->connections;
 	ldap_settings[2].target = ldap_db->base;
 	ldap_settings[3].target = auth_method_str;
@@ -367,7 +367,7 @@ destroy_ldap_db(ldap_db_t **ldap_dbp)
 		elem = next;
 	}
 
-	str_destroy(&ldap_db->host);
+	str_destroy(&ldap_db->uri);
 	str_destroy(&ldap_db->base);
 	str_destroy(&ldap_db->bind_dn);
 	str_destroy(&ldap_db->password);
@@ -1462,7 +1462,7 @@ ldap_connect(ldap_instance_t *ldap_inst)
 		password = str_buf(ldap_db->password);
 	}
 
-	ret = ldap_initialize(&ld, str_buf(ldap_db->host));
+	ret = ldap_initialize(&ld, str_buf(ldap_db->uri));
 	if (ret != LDAP_SUCCESS) {
 		log_error("LDAP initialization failed: %s",
 			  ldap_err2string(ret));
@@ -1479,7 +1479,7 @@ ldap_connect(ldap_instance_t *ldap_inst)
 	*/
 
 	log_debug(2, "trying to establish LDAP connection to %s",
-		  str_buf(ldap_db->host));
+		  str_buf(ldap_db->uri));
 
 
 	switch (ldap_db->auth_method) {
