@@ -201,7 +201,8 @@ cached_ldap_rdatalist_get(isc_mem_t *mctx, ldap_cache_t *cache,
 	if (!in_cache) {
 		INIT_LIST(rdlist);
 		result = ldapdb_rdatalist_get(mctx, ldap_db, name, &rdlist);
-		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
+		/* TODO: Cache entries that are not found. */
+		if (result != ISC_R_SUCCESS)
 			goto cleanup;
 		CONTROLED_LOCK(&cache->mutex);
 		/* Check again to make sure. */
