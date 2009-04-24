@@ -410,18 +410,23 @@ str_vsprintf(ld_string_t *dest, const char *format, va_list ap)
 {
 	int len;
 	isc_result_t result;
+	va_list backup;
 
 	REQUIRE(dest != NULL);
 	REQUIRE(format != NULL);
 
+	va_copy(backup, ap);
 	len = vsnprintf(dest->data, dest->allocated, format, ap);
 	if (len > 0) {
 		CHECK(str_alloc(dest, len));
-		len = vsnprintf(dest->data, dest->allocated, format, ap);
+		len = vsnprintf(dest->data, dest->allocated, format, backup);
 	}
+	va_end(backup);
 
-	if (len < 0)
+	if (len < 0) {
 		result = ISC_R_FAILURE;
+		goto cleanup;
+	}
 
 	return ISC_R_SUCCESS;
 
