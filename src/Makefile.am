@@ -1,7 +1,5 @@
-lib_LTLIBRARIES = libdnsldap.la
-
-LIBMAJOR = 1
-LIBMINOR = 0
+bindplugin_LTLIBRARIES = libdnsldap.la
+bindplugindir=$(libdir)/bind
 
 HDRS =				\
 	acl.h			\
@@ -32,4 +30,4 @@ libdnsldap_la_SOURCES =		\
 
 libdnsldap_la_CFLAGS = -Wall -Wextra -pedantic -std=c99
 
-libdnsldap_la_LDFLAGS = -version-number $(LIBMAJOR):$(LIBMINOR):0
+libdnsldap_la_LDFLAGS = -avoid-version
