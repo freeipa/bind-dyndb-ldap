@@ -43,10 +43,9 @@ log_debug(int level, const char *format, ...)
 	va_list args;
 
 	va_start(args, format);
-	/*
 	isc_log_vwrite(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
 		      ISC_LOG_DEBUG(level), format, args);
-	*/
+#if 0
 	/*
 	 * For now, behave same as log_error(), so we can see every debugging
 	 * logs without the need to specify -d.
@@ -54,6 +53,7 @@ log_debug(int level, const char *format, ...)
 	isc_log_vwrite(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
 		      ISC_LOG_ERROR, format, args);
 	(void)level;
+#endif
 
 	va_end(args);
 }

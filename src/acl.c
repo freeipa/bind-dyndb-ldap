@@ -317,8 +317,6 @@ acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone)
 
 	REQUIRE(zone != NULL);
 
-	log_func_enter();
-
 	mctx = dns_zone_getmctx(zone);
 
 	if (policy_str == NULL)
@@ -379,8 +377,6 @@ acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone)
 		cfg_parser_destroy(&parser);
 	if (table != NULL)
 		dns_ssutable_detach(&table);
-
-	log_func_exit_result(result);
 
 	return result;
 }
