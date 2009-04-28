@@ -1537,7 +1537,7 @@ cleanup:
 static isc_result_t
 ldap_reconnect(ldap_instance_t *ldap_inst)
 {
-	int ret;
+	int ret = 0;
 	ldap_db_t *ldap_db;
 	const char *bind_dn = NULL;
 	const char *password = NULL;
@@ -1814,12 +1814,13 @@ modify_ldap_common(dns_name_t *owner, ldap_db_t *ldap_db,
 	ld_string_t *owner_dn = NULL;
 	LDAPMod *change[2] = { NULL, NULL };
 
+	mctx = ldap_db->mctx;
+
 	if (rdlist->type == dns_rdatatype_soa) {
 		result = ISC_R_SUCCESS;
 		goto cleanup;
 	}
 
-	mctx = ldap_db->mctx;
 	ldap_inst = get_connection(ldap_db);
 
 	CHECK(str_new(mctx, &owner_dn));
