@@ -1,4 +1,4 @@
-bindplugin_LTLIBRARIES = libdnsldap.la
+bindplugin_LTLIBRARIES = ldap.la
 bindplugindir=$(libdir)/bind
 
 HDRS =				\
@@ -14,7 +14,7 @@ HDRS =				\
 	util.h			\
 	zone_manager.h
 
-libdnsldap_la_SOURCES =		\
+ldap_la_SOURCES =		\
 	$(HDRS)			\
 	acl.c			\
 	cache.c			\
@@ -28,6 +28,6 @@ libdnsldap_la_SOURCES =		\
 	str.c			\
 	zone_manager.c
 
-libdnsldap_la_CFLAGS = -Wall -Wextra -pedantic -std=c99
+ldap_la_CFLAGS = -Wall -Wextra -pedantic -std=c99
 
-libdnsldap_la_LDFLAGS = -avoid-version
+ldap_la_LDFLAGS = -module -avoid-version
