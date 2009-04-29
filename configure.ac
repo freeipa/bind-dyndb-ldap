@@ -38,8 +38,8 @@ int main(void) {
     AC_DEFINE_UNQUOTED([LIBDNS_VERSION_MAJOR], [$LIBDNS_VERSION_MAJOR],
     [Define libdns version])],
 [AC_MSG_ERROR([Can't obtain libdns version.])],
-[AC_MSG_ERROR([Cross compilling is not supported.])]
+[AC_MSG_ERROR([Cross compiling is not supported.])]
 )
 
-AC_CONFIG_FILES([Makefile src/Makefile])
+AC_CONFIG_FILES([Makefile doc/Makefile src/Makefile])
 AC_OUTPUT
