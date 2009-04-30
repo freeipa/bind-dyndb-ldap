@@ -28,6 +28,6 @@ ldap_la_SOURCES =		\
 	str.c			\
 	zone_manager.c
 
-ldap_la_CFLAGS = -Wall -Wextra -Werror -pedantic -std=c99 -O2
+ldap_la_CFLAGS = -Wall -Wextra -pedantic -std=c99 -O2
 
 ldap_la_LDFLAGS = -module -avoid-version
