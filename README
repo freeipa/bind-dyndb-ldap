@@ -1,0 +1,143 @@
+1. Introduction
+===============
+
+The dynamic LDAP back-end is a plug-in for BIND that provides an LDAP
+database back-end capabilities. For now, it requires that BIND is patched
+to support dynamic loading of database back-ends. You can get a patch
+for your version here:
+
+  http://github.com/mnagy/bind-dynamic_db/downloads
+
+Hopefully, the patch will once be included in the official BIND release.
+
+
+2. Features
+===========
+* short-term caching, to take the load off the LDAP server
+* support for dynamic updates (still a bit buggy)
+
+
+2.1 Planned features
+--------------------
+* SASL authentication
+* adding zones without reloading
+* using persistent search
+
+
+3. Installation
+===============
+
+To install the LDAP back-end, extract the tarball and go to the unpacked
+directory. Then follow these steps:
+
+$ ./configure --libdir=<libdir>
+$ make
+
+Where <libdir> is a directory where your libdns is installed. This is
+typically going to be /usr/lib or /usr/lib64 on 64 bit machines.
+
+Then, to install, run this as root:
+# make install
+
+This will then install the file ldap.so into the <libdir>/bind/ directory.
+
+
+4. LDAP schema
+==============
+
+You can find the complete LDAP schema in the documentation directory.
+
+
+5. Configuration
+================
+
+To configure dynamic loading of back-end, you must put a "dynamic-db"
+clause into your named.conf. The clause must then be followed by a
+string denoting the name. The name is not that much important, it is
+passed to the plug-in and might be used for example, for logging
+purposes. Following after that is a set of options enclosed between
+curly brackets.
+
+The most important option here is "library". It names a shared object
+file that will be opened and loaded. The "arg" option specifies a string
+that is passed directly to the plugin. You can specify multiple "arg"
+options. The LDAP back-end follows the convention that the first word of
+this string is the name of the setting and the rest is the value.
+
+
+5.1 Configuration options
+-------------------------
+List of configuration options follows:
+
+uri
+	The Uniform Resource Identifier pointing to the LDAP server we
+	wish to connect to. This string is directly passed to the
+	ldap_initialize(3) function. This option is mandatory.
+	Example: ldap://ldap.example.com
+
+connections (default 2)
+	Number of connections the LDAP driver should try to establish to
+	the LDAP server. It's best if this matches the number of threads
+	BIND creates, for performance reasons. However, your LDAP server
+	configuration might only allow certain number of connections per
+	client.
+
+base
+	This is the search base that will be used by the LDAP back-end
+	to search for DNS zones. It is mandatory.
+
+auth_method (default "none")
+	The method used to authenticate to the LDAP server. Currently
+	supported methods are "none" and "simple". The none method is
+	effectively a simple authentication without password.
+
+bind_dn (default "")
+	Distinguished Name used to bind to the LDAP server. If this is
+	empty and the auth_method is set to "simple", the LDAP back-end
+	will fall-back and use the "none" authentication method.
+
+password (default "")
+	Password for simple authentication. If left empty, the LDAP
+	back-end will fall-back and use the "none" authentication
+	method.
+
+cache_ttl (default 120)
+	This is the number of seconds to keep DNS records that we get
+	from the LDAP server in an internal cache. To disable the
+	caching completely, set this to 0. If your LDAP server is under
+	a heavy load and/or you don't update your records very often, you
+	probably want to set this option on a higher value.
+
+
+5.2 Sample configuration
+------------------------
+Let's take a look at a sample configuration:
+
+dynamic-db "my_db_name" {
+	library "ldap.so";
+	arg "uri ldap://ldap.example.com";
+	arg "base cn=dns, dc=example, dc=com";
+	arg "auth_method none";
+	arg "cache_ttl 300";
+};
+
+With this configuration, the LDAP back-end will try to connect to server
+ldap.example.com with simple authentication, without any password. It
+will then do an LDAP subtree search in the "cn=dns,dc=example,dc=com"
+base for entries with object class idnsZone, for which the
+idnsZoneActive attribute is set to True. For each entry it will find, it
+will register a new zone with BIND. The LDAP back-end will keep each
+record it gets from LDAP in its cache for 5 minutes.
+
+
+6. Examples
+===========
+
+An example zone ldif is available in the doc directory.
+
+
+7. License
+==========
+
+This package is licensed under the GNU General Public License, version 2
+only. See file COPYING for more information.
