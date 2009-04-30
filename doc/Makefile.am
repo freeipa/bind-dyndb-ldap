@@ -1,1 +1,1 @@
-dist_doc_DATA = schema
+dist_doc_DATA = example.ldif schema

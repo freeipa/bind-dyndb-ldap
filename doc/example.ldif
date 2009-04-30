@@ -1,0 +1,61 @@
+# Top container
+dn: cn=dns, dc=example, dc=com
+objectClass: nsContainer
+objectClass: top
+cn: dns
+
+# Zone example.com
+dn: idnsName=example.com, cn=dns, dc=example, dc=com
+objectClass: top
+objectClass: idnsZone
+objectClass: idnsRecord
+idnsName: ipatest.com
+idnsUpdatePolicy: grant EXAMPLE.COM krb5-self * A;
+idnsZoneActive: True
+idnsSOAmName: server.example.com
+idnsSOArName: root.server.example.com
+idnsSOAserial: 1
+idnsSOArefresh: 10800
+idnsSOAretry: 900
+idnsSOAexpire: 604800
+idnsSOAminimum: 86400
+ARecord: 192.168.1.1
+
+# DNS records for zone example.com
+dn: idnsName=server, idnsName=example.com, cn=dns, dc=example, dc=com
+objectClass: idnsRecord
+objectClass: top
+idnsName: server
+CNAMERecord: example.com.
+
+dn: idnsName=foo, idnsName=example.com, cn=dns, dc=example, dc=com
+objectClass: idnsRecord
+objectClass: top
+idnsName: foo
+ARecord: 192.168.1.50
+ARecord: 192.168.1.51
+ARecord: 192.168.1.52
+
+dn: idnsName=bar, idnsName=example.com, cn=dns, dc=example, dc=com
+objectClass: idnsRecord
+objectClass: top
+idnsName: bar
+ARecord: 192.168.1.100
+
+dn: idnsName=baz, idnsName=example.com, cn=dns, dc=example, dc=com
+objectClass: idnsRecord
+objectClass: top
+idnsName: baz
+CNAMERecord: bar
+
+dn: idnsName=_ldap._tcp, idnsName=example.com, cn=dns, dc=example, dc=com
+objectClass: idnsRecord
+objectClass: top
+idnsName: _ldap._tcp
+SRVRecord: 0 100 389 server
+
+dn: idnsName=_ntp._udp, idnsName=example.com, cn=dns, dc=example, dc=com
+objectClass: idnsRecord
+objectClass: top
+idnsName: _ntp._udp
+SRVRecord: 0 100 123 server
