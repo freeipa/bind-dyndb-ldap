@@ -17,11 +17,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
-/*
- * Some general comments about the driver go here. ABRAKA
- */
-
-/* Includes, group nicely and keep files ordered! ABRAKA */
 #include <stdio.h>
 
 #include <dns/log.h>
