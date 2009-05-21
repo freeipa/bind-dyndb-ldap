@@ -1436,13 +1436,13 @@ next_entry(ldap_instance_t *inst)
 }
 #endif
 
-#if 0
-/* FIXME: Not tested. */
+/* FIXME: Tested with SASL/GSSAPI/KRB5 only */
 static int
 ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
 {
 	sasl_interact_t *in = (sasl_interact_t *)sin;
 	ldap_db_t *ldap_db = (ldap_db_t *)defaults;
+	int ret = LDAP_OTHER;
 
 	REQUIRE(ldap_db != NULL);
 	UNUSED(flags);
@@ -1456,38 +1456,49 @@ ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
 			log_error("SASL_CB_USER");
 			in->result = str_buf(ldap_db->sasl_user);
 			in->len = str_len(ldap_db->sasl_user);
+			ret = LDAP_SUCCESS;
 			break;
 		case SASL_CB_NOECHOPROMPT:
 			log_error("SASL_CB_NOECHOPROMPT");
+			in->result = NULL;
+			in->len = 0;
+			ret = LDAP_OTHER;
 			break;
 		case SASL_CB_ECHOPROMPT:
 			log_error("SASL_CB_ECHOPROMPT");
+			in->result = NULL;
+			in->len = 0;
+			ret = LDAP_OTHER;
 			break;
 		case SASL_CB_GETREALM:
 			log_error("SASL_CB_GETREALM");
+			in->result = NULL;
+			in->len = 0;
+			ret = LDAP_OTHER;
 			break;
 		case SASL_CB_AUTHNAME:
 			log_error("SASL_CB_AUTHNAME");
 			in->result = str_buf(ldap_db->sasl_user);
 			in->len = str_len(ldap_db->sasl_user);
+			ret = LDAP_SUCCESS;
 			break;
 		case SASL_CB_PASS:
 			log_error("SASL_CB_PASS");
 			in->result = str_buf(ldap_db->password);
 			in->len = str_len(ldap_db->password);
+			ret = LDAP_SUCCESS;
 			break;
 		default:
 			log_error("SASL_UNKNOWN");
-			in->result = "";
+			in->result = NULL;
 			in->len = 0;
-			break;
+			ret = LDAP_OTHER;
 		}
-		log_error("result: %s", in->result);
+		log_error("result: %s", in->result?in->result:"");
 	}
 
-	return LDAP_SUCCESS;
+	return ret;
 }
-#endif
 
 /*
  * Initialize the LDAP handle and bind to the server. Needed authentication
@@ -1589,16 +1600,12 @@ ldap_reconnect(ldap_instance_t *ldap_inst)
 		ret = ldap_simple_bind_s(ldap_inst->handle, bind_dn, password);
 		break;
 	case AUTH_SASL:
-		log_error("SASL authentication is not supported yet");
-#if 0
 		log_error("%s", str_buf(ldap_db->sasl_mech));
 		ret = ldap_sasl_interactive_bind_s(ldap_inst->handle, NULL,
 						   str_buf(ldap_db->sasl_mech),
 						   NULL, NULL, LDAP_SASL_QUIET,
 						   ldap_sasl_interact,
 						   ldap_db);
-		ber_bvfree(servercred);
-#endif
 		break;
 	default:
 		log_error("bug in ldap_connect(): unsupported "
