@@ -46,6 +46,7 @@
 #include <strings.h>
 
 #include "acl.h"
+#include "krb5_helper.h"
 #include "ldap_convert.h"
 #include "ldap_helper.h"
 #include "log.h"
@@ -108,6 +109,9 @@ struct ldap_db {
 	isc_rwlock_t		zone_rwlock;
 	dns_rbt_t		*zone_names;
 
+	/* krb5 kinit mutex */
+	isc_mutex_t		kinit_lock;
+
 	/* Settings. */
 	ld_string_t		*uri;
 	ld_string_t		*base;
@@ -119,6 +123,7 @@ struct ldap_db {
 	ld_string_t		*sasl_mech;
 	ld_string_t		*sasl_user;
 	ld_string_t		*sasl_realm;
+	ld_string_t		*krb5_keytab;
 };
 
 struct ldap_instance {
@@ -284,6 +289,7 @@ new_ldap_db(isc_mem_t *mctx, dns_view_t *view, ldap_db_t **ldap_dbp,
 		{ "sasl_mech",	 default_string("ANONYMOUS")	},
 		{ "sasl_user",	 default_string("")		},
 		{ "sasl_realm",	 default_string("")		},
+		{ "krb5_keytab", default_string("")		},
 		end_of_settings
 	};
 
@@ -307,6 +313,8 @@ new_ldap_db(isc_mem_t *mctx, dns_view_t *view, ldap_db_t **ldap_dbp,
 	CHECK(isc_rwlock_init(&ldap_db->zone_rwlock, 0, 0));
 	CHECK(dns_rbt_create(mctx, string_deleter, mctx, &ldap_db->zone_names));
 
+	CHECK(isc_mutex_init(&ldap_db->kinit_lock));
+
 	CHECK(str_new(mctx, &auth_method_str));
 	CHECK(str_new(mctx, &ldap_db->uri));
 	CHECK(str_new(mctx, &ldap_db->base));
@@ -315,6 +323,7 @@ new_ldap_db(isc_mem_t *mctx, dns_view_t *view, ldap_db_t **ldap_dbp,
 	CHECK(str_new(mctx, &ldap_db->sasl_mech));
 	CHECK(str_new(mctx, &ldap_db->sasl_user));
 	CHECK(str_new(mctx, &ldap_db->sasl_realm));
+	CHECK(str_new(mctx, &ldap_db->krb5_keytab));
 
 	i = 0;
 	ldap_settings[i++].target = ldap_db->uri;
@@ -327,6 +336,7 @@ new_ldap_db(isc_mem_t *mctx, dns_view_t *view, ldap_db_t **ldap_dbp,
 	ldap_settings[i++].target = ldap_db->sasl_mech;
 	ldap_settings[i++].target = ldap_db->sasl_user;
 	ldap_settings[i++].target = ldap_db->sasl_realm;
+	ldap_settings[i++].target = ldap_db->krb5_keytab;
 
 	CHECK(set_settings(ldap_settings, argv));
 
@@ -351,6 +361,17 @@ new_ldap_db(isc_mem_t *mctx, dns_view_t *view, ldap_db_t **ldap_dbp,
 			  str_buf(auth_method_str));
 		result = ISC_R_FAILURE;
 		goto cleanup;
+	}
+
+	/* check we have the right data when SASL/GSSAPI is selected */
+	if ((ldap_db->auth_method == AUTH_SASL) &&
+	     (str_casecmp_char(ldap_db->sasl_mech, "GSSAPI") == 0)) {
+		if ((ldap_db->sasl_user == NULL) ||
+		    (str_len(ldap_db->sasl_user) == 0)) {
+			log_error("Sasl mech GSSAPI defined but sasl_user is empty");
+			result = ISC_R_FAILURE;
+			goto cleanup;
+		}
 	}
 
 	CHECK(semaphore_init(&ldap_db->conn_semaphore, ldap_db->connections));
@@ -399,10 +420,13 @@ destroy_ldap_db(ldap_db_t **ldap_dbp)
 	str_destroy(&ldap_db->sasl_mech);
 	str_destroy(&ldap_db->sasl_user);
 	str_destroy(&ldap_db->sasl_realm);
+	str_destroy(&ldap_db->krb5_keytab);
 
 	semaphore_destroy(&ldap_db->conn_semaphore);
 	/* commented out for now, causes named to hang */
 	//dns_view_detach(&ldap_db->view);
+
+	DESTROYLOCK(&ldap_db->kinit_lock);
 
 	dns_rbt_destroy(&ldap_db->zone_names);
 	isc_rwlock_destroy(&ldap_db->zone_rwlock);
@@ -1605,6 +1629,18 @@ ldap_reconnect(ldap_instance_t *ldap_inst)
 		ret = ldap_simple_bind_s(ldap_inst->handle, bind_dn, password);
 		break;
 	case AUTH_SASL:
+
+		if (strcmp(str_buf(ldap_db->sasl_mech), "GSSAPI") == 0) {
+			isc_result_t result;
+			LOCK(&ldap_db->kinit_lock);
+			result = get_krb5_tgt(ldap_db->mctx,
+					      str_buf(ldap_db->sasl_user),
+					      str_buf(ldap_db->krb5_keytab));
+			UNLOCK(&ldap_db->kinit_lock);
+			if (result != ISC_R_SUCCESS)
+				return result;
+		}
+
 		log_error("%s", str_buf(ldap_db->sasl_mech));
 		ret = ldap_sasl_interactive_bind_s(ldap_inst->handle, NULL,
 						   str_buf(ldap_db->sasl_mech),

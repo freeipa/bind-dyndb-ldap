@@ -4,6 +4,7 @@ bindplugindir=$(libdir)/bind
 HDRS =				\
 	acl.h			\
 	cache.h			\
+	krb5_helper.h		\
 	ldap_convert.h		\
 	ldap_helper.h		\
 	log.h			\
@@ -18,6 +19,7 @@ ldap_la_SOURCES =		\
 	$(HDRS)			\
 	acl.c			\
 	cache.c			\
+	krb5_helper.c		\
 	ldap_convert.c		\
 	ldap_driver.c		\
 	ldap_helper.c		\
