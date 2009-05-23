@@ -253,6 +253,8 @@ static isc_result_t ldap_query(ldap_instance_t *ldap_inst, const char *base,
 /* Functions for writing to LDAP. */
 static isc_result_t ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn,
 		LDAPMod **mods);
+static isc_result_t ldap_rdttl_to_ldapmod(isc_mem_t *mctx,
+		dns_rdatalist_t *rdlist, LDAPMod **changep);
 static isc_result_t ldap_rdatalist_to_ldapmod(isc_mem_t *mctx,
 		dns_rdatalist_t *rdlist, LDAPMod **changep, int mod_op);
 static void free_ldapmod(isc_mem_t *mctx, LDAPMod **changep);
@@ -1681,9 +1683,17 @@ ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn, LDAPMod **mods)
 
 		ldap_get_option(ldap_inst->handle, LDAP_OPT_RESULT_CODE,
 				&err_code);
-		log_error("error writing to ldap: %s",
-			  ldap_err2string(err_code));
-		return ISC_R_FAILURE;
+		log_debug(2, "error(%s) modifying(%s) entry %s",
+				ldap_err2string(err_code),
+				mods[0]->mod_op?"del":"add", dn);
+
+		/* do not error out if we are trying to delete an
+		 * unexisting attribute */
+		if (mods[0]->mod_op != LDAP_MOD_DELETE ||
+		    err_code != LDAP_NO_SUCH_ATTRIBUTE) {
+
+			return ISC_R_FAILURE;
+		}
 	}
 
 	return ISC_R_SUCCESS;
@@ -1810,6 +1820,45 @@ free_char_array(isc_mem_t *mctx, char ***valsp)
 	*valsp = NULL;
 }
 
+static isc_result_t
+ldap_rdttl_to_ldapmod(isc_mem_t *mctx,
+		      dns_rdatalist_t *rdlist, LDAPMod **changep)
+{
+	LDAPMod *change = NULL;
+	ld_string_t *ttlval = NULL;
+	char **vals = NULL;
+	size_t vals_size;
+	isc_result_t result;
+
+	REQUIRE(changep != NULL && *changep == NULL);
+
+	CHECK(str_new(mctx, &ttlval));
+	CHECK(str_sprintf(ttlval, "%d", rdlist->ttl));
+
+	CHECKED_MEM_GET_PTR(mctx, change);
+	ZERO_PTR(change);
+
+	change->mod_op = LDAP_MOD_REPLACE;
+	change->mod_type = "dnsTTL";
+
+	vals_size = 2 * sizeof(char *);
+	CHECKED_MEM_ALLOCATE(mctx, vals, vals_size);
+	memset(vals, 0, vals_size);
+	change->mod_values = vals;
+
+	CHECKED_MEM_ALLOCATE(mctx, vals[0], str_len(ttlval) + 1);
+	memcpy(vals[0], str_buf(ttlval), str_len(ttlval) + 1);
+
+	*changep = change;
+	return ISC_R_SUCCESS;
+
+cleanup:
+	if (ttlval) str_destroy(&ttlval);
+	if (change) free_ldapmod(mctx, &change);
+
+	return result;
+}
+
 /*
  * TODO: Handle updating of the SOA record, use the settings to determine if
  * this is allowed.
@@ -1822,7 +1871,7 @@ modify_ldap_common(dns_name_t *owner, ldap_db_t *ldap_db,
 	isc_mem_t *mctx;
 	ldap_instance_t *ldap_inst = NULL;
 	ld_string_t *owner_dn = NULL;
-	LDAPMod *change[2] = { NULL, NULL };
+	LDAPMod *change[3] = { NULL, NULL, NULL };
 
 	mctx = ldap_db->mctx;
 
@@ -1836,12 +1885,19 @@ modify_ldap_common(dns_name_t *owner, ldap_db_t *ldap_db,
 	CHECK(str_new(mctx, &owner_dn));
 	CHECK(dnsname_to_dn(ldap_db, owner, owner_dn));
 	CHECK(ldap_rdatalist_to_ldapmod(mctx, rdlist, &change[0], mod_op));
+
+	if (mod_op == LDAP_MOD_ADD) {
+		/* for now always replace the ttl on add */
+		CHECK(ldap_rdttl_to_ldapmod(mctx, rdlist, &change[1]));
+	}
+
 	CHECK(ldap_modify_do(ldap_inst, str_buf(owner_dn), change));
 
 cleanup:
 	put_connection(ldap_inst);
 	str_destroy(&owner_dn);
 	free_ldapmod(mctx, &change[0]);
+	free_ldapmod(mctx, &change[1]);
 
 	return result;
 }
