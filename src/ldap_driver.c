@@ -747,6 +747,7 @@ subtractrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	}
 
 	CHECK(remove_from_ldap(&ldapdbnode->owner, ldapdb->ldap_db, &diff));
+	CHECK(discard_from_cache(ldapdb->ldap_cache, &ldapdbnode->owner));
 
 	if (newrdataset != NULL) {
 		result = dns_rdatalist_tordataset(found_rdlist, newrdataset);
