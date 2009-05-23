@@ -55,6 +55,8 @@
 #include "util.h"
 
 
+#define DEFAULT_TTL 86400
+
 /* Max type length definitions, from lib/dns/master.c */
 #define MINTSIZ (65535 - 12 - 1 - 2 - 2 - 4 - 2)
 #define TOKENSIZ (8*1024)
@@ -891,26 +893,27 @@ get_rdataclass(ldap_entry_t *ldap_entry)
 }
 
 static dns_ttl_t
-get_ttl(ldap_entry_t *ldap_entry)
+get_ttl(ldap_entry_t *entry)
 {
-	UNUSED(ldap_entry);
-
-	/*
-	 * TODO: Not implemented yet.
-	 */
-#if 0
+	const char *ttl_attr = "dnsTTL";
 	isc_textregion_t ttl_text;
+	ldap_value_list_t values;
+	isc_result_t result;
+	isc_uint32_t ttl;
 
-	ttl_text.base = "86400";
+	REQUIRE(entry != NULL);
+
+	result = get_values(entry, ttl_attr, &values);
+	if (result == ISC_R_NOTFOUND)
+		return DEFAULT_TTL;
+
+	ttl_text.base = HEAD(values)->value;
 	ttl_text.length = strlen(ttl_text.base);
 	result = dns_ttl_fromtext(&ttl_text, &ttl);
-	if (result != ISC_R_SUCCESS) {
-		seen_error = ISC_TRUE;
-		break;
-	}
-#endif
+	if (result != ISC_R_SUCCESS)
+		return DEFAULT_TTL;
 
-	return 86400;
+	return ttl;
 }
 
 static isc_result_t
