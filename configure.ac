@@ -41,5 +41,9 @@ int main(void) {
 [AC_MSG_ERROR([Cross compiling is not supported.])]
 )
 
+# Older autoconf (2.59, for example) doesn't define docdir
+[[ -n "$docdir" ]] && docdir='${datarootdir}/doc/${PACKAGE_TARNAME}'
+AC_SUBST([docdir])
+
 AC_CONFIG_FILES([Makefile doc/Makefile src/Makefile])
 AC_OUTPUT
