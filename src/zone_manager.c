@@ -25,6 +25,8 @@
 #include <dns/view.h>
 #include <dns/zone.h>
 
+#include <string.h>
+
 #include "ldap_convert.h"
 #include "ldap_helper.h"
 #include "log.h"
