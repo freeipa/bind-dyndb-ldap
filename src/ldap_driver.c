@@ -42,6 +42,7 @@
 #include <string.h> /* For memcpy */
 
 #include "cache.h"
+#include "compat.h"
 #include "ldap_helper.h"
 #include "log.h"
 #include "rdlist.h"
