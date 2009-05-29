@@ -42,7 +42,7 @@ int main(void) {
 )
 
 # Older autoconf (2.59, for example) doesn't define docdir
-[[ -n "$docdir" ]] && docdir='${datarootdir}/doc/${PACKAGE_TARNAME}'
+[[ ! -n "$docdir" ]] && docdir='${datadir}/doc/${PACKAGE_TARNAME}'
 AC_SUBST([docdir])
 
 AC_CONFIG_FILES([Makefile doc/Makefile src/Makefile])
