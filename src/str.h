@@ -20,6 +20,7 @@
 #ifndef _LD_STR_H_
 #define _LD_STR_H_
 
+#include <isc/formatcheck.h>
 #include <isc/mem.h>
 
 #define LD_MAX_SPLITS	256
@@ -55,7 +56,7 @@ isc_result_t str_cat_char_len(ld_string_t *dest, const char *src, size_t len);
 isc_result_t str_cat_isc_region(ld_string_t *dest, const isc_region_t *region);
 isc_result_t str_cat_isc_buffer(ld_string_t *dest, const isc_buffer_t *buffer);
 isc_result_t str_cat(ld_string_t *dest, const ld_string_t *src);
-isc_result_t str_sprintf(ld_string_t *dest, const char *format, ...);
+isc_result_t str_sprintf(ld_string_t *dest, const char *format, ...) ISC_FORMAT_PRINTF(2, 3);
 isc_result_t str_vsprintf(ld_string_t *dest, const char *format, va_list ap);
 void str_toupper(ld_string_t *str);
 

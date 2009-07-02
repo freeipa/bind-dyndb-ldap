@@ -19,6 +19,8 @@
 
 #include <stdio.h>
 
+#include <isc/formatcheck.h>
+
 #include <dns/log.h>
 
 #include "log.h"

@@ -1524,7 +1524,7 @@ ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
 			in->len = 0;
 			ret = LDAP_OTHER;
 		}
-		log_error("result: %s", in->result?in->result:"");
+		log_error("result: %s", (char *)(in->result?in->result:""));
 	}
 
 	return ret;

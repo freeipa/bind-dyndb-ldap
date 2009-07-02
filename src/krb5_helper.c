@@ -137,7 +137,7 @@ get_krb5_tgt(isc_mem_t *mctx, const char *principal, const char *keyfile)
 
 	krberr = krb5_cc_resolve(context, str_buf(ccname), &ccache);
 	CHECK_KRB5(context, krberr,
-		   "Failed to resolve ccache name %s", ccname);
+		   "Failed to resolve ccache name %s", str_buf(ccname));
 
 	/* get krb5_principal from string */
 	krberr = krb5_parse_name(context, principal, &kprincpw);

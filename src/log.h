@@ -42,7 +42,7 @@
 	log_func_va("exiting with %s", isc_result_totext(res))
 
 /* Basic logging functions */
-void log_debug(int level, const char *format, ...);
-void log_error(const char *format, ...);
+void log_debug(int level, const char *format, ...) ISC_FORMAT_PRINTF(2, 3);
+void log_error(const char *format, ...) ISC_FORMAT_PRINTF(1, 2);
 
 #endif /* !_LD_LOG_H_ */
