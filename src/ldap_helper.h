@@ -24,7 +24,6 @@
 #include <isc/util.h>
 
 typedef struct ldap_db		ldap_db_t;
-typedef struct ldap_instance	ldap_instance_t;
 
 /*
  * some nice words about ldapdb_rdatalist_t:

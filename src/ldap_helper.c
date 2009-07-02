@@ -74,6 +74,7 @@
  * LDAP related typedefs and structs.
  */
 
+typedef struct ldap_connection  ldap_connection_t;
 typedef struct ldap_auth_pair	ldap_auth_pair_t;
 typedef struct settings		settings_t;
 typedef struct ldap_value	ldap_value_t;
@@ -103,7 +104,7 @@ struct ldap_db {
 
 	/* List of LDAP connections. */
 	semaphore_t		conn_semaphore;
-	LIST(ldap_instance_t)	conn_list;
+	LIST(ldap_connection_t)	conn_list;
 
 	/* Our own list of zones. */
 	isc_rwlock_t		zone_rwlock;
@@ -126,10 +127,10 @@ struct ldap_db {
 	ld_string_t		*krb5_keytab;
 };
 
-struct ldap_instance {
+struct ldap_connection {
 	ldap_db_t		*database;
 	isc_mutex_t		lock;
-	LINK(ldap_instance_t)	link;
+	LINK(ldap_connection_t)	link;
 	ld_string_t		*query_string;
 	ld_string_t		*base;
 
@@ -198,9 +199,9 @@ const ldap_auth_pair_t supported_ldap_auth[] = {
 
 /* TODO: reorganize this stuff & clean it up. */
 void string_deleter(void *arg1, void *arg2);
-static isc_result_t new_ldap_instance(ldap_db_t *ldap_db,
-		ldap_instance_t **ldap_instp);
-static void destroy_ldap_instance(ldap_instance_t **ldap_instp);
+static isc_result_t new_ldap_connection(ldap_db_t *ldap_db,
+		ldap_connection_t **ldap_connp);
+static void destroy_ldap_connection(ldap_connection_t **ldap_connp);
 static isc_result_t add_or_modify_zone(ldap_db_t *ldap_db, const char *dn,
 		const char *db_name, const char *update_str,
 		dns_zonemgr_t *zmgr);
@@ -208,7 +209,7 @@ static isc_result_t add_or_modify_zone(ldap_db_t *ldap_db, const char *dn,
 static isc_result_t findrdatatype_or_create(isc_mem_t *mctx,
 		ldapdb_rdatalist_t *rdatalist, ldap_entry_t *entry,
 		dns_rdatatype_t rdtype, dns_rdatalist_t **rdlistp);
-static isc_result_t add_soa_record(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
+static isc_result_t add_soa_record(isc_mem_t *mctx, ldap_connection_t *ldap_conn,
 		dns_name_t *origin, ldap_entry_t *entry,
 		ldapdb_rdatalist_t *rdatalist);
 static dns_rdataclass_t get_rdataclass(ldap_entry_t *ldap_entry);
@@ -225,38 +226,38 @@ static isc_result_t get_next_rdatatype(ldap_entry_t *entry,
 		ldap_attribute_t **attr, dns_rdatatype_t *rdtype);
 static isc_result_t get_next_rdatatext(ldap_attribute_t *attr,
 		ld_string_t *rdata_text);
-static isc_result_t parse_rdata(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
+static isc_result_t parse_rdata(isc_mem_t *mctx, ldap_connection_t *ldap_conn,
 		dns_rdataclass_t rdclass, dns_rdatatype_t rdtype,
 		dns_name_t *origin, const char *rdata_text,
 		dns_rdata_t **rdatap);
 
-static isc_result_t cache_query_results(ldap_instance_t *inst);
-static isc_result_t fill_ldap_entry(ldap_instance_t *inst,
+static isc_result_t cache_query_results(ldap_connection_t *inst);
+static isc_result_t fill_ldap_entry(ldap_connection_t *inst,
 		ldap_entry_t *ldap_entry);
-static isc_result_t fill_ldap_attribute(ldap_instance_t *inst,
+static isc_result_t fill_ldap_attribute(ldap_connection_t *inst,
 		ldap_attribute_t *ldap_attr);
-static void free_query_cache(ldap_instance_t *inst);
+static void free_query_cache(ldap_connection_t *inst);
 static void free_ldap_attributes(isc_mem_t *mctx, ldap_entry_t *entry);
 static void free_ldap_values(isc_mem_t *mctx, ldap_attribute_t *attr);
 
-static const char * get_dn(ldap_instance_t *ldap_inst, ldap_entry_t *entry);
+static const char * get_dn(ldap_connection_t *ldap_conn, ldap_entry_t *entry);
 
 #if 0
-static const LDAPMessage *next_entry(ldap_instance_t *inst);
-static const char *get_dn(ldap_instance_t *inst);
+static const LDAPMessage *next_entry(ldap_connection_t *inst);
+static const char *get_dn(ldap_connection_t *inst);
 #endif
 
-static ldap_instance_t * get_connection(ldap_db_t *ldap_db);
-static void put_connection(ldap_instance_t *ldap_inst);
-static isc_result_t ldap_connect(ldap_instance_t *ldap_inst);
-static isc_result_t ldap_reconnect(ldap_instance_t *ldap_inst);
-static int handle_connection_error(ldap_instance_t *ldap_inst,
+static ldap_connection_t * get_connection(ldap_db_t *ldap_db);
+static void put_connection(ldap_connection_t *ldap_conn);
+static isc_result_t ldap_connect(ldap_connection_t *ldap_conn);
+static isc_result_t ldap_reconnect(ldap_connection_t *ldap_conn);
+static int handle_connection_error(ldap_connection_t *ldap_conn,
 		isc_result_t *result);
-static isc_result_t ldap_query(ldap_instance_t *ldap_inst, const char *base,
+static isc_result_t ldap_query(ldap_connection_t *ldap_conn, const char *base,
 		int scope, char **attrs, int attrsonly, const char *filter, ...);
 
 /* Functions for writing to LDAP. */
-static isc_result_t ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn,
+static isc_result_t ldap_modify_do(ldap_connection_t *ldap_conn, const char *dn,
 		LDAPMod **mods);
 static isc_result_t ldap_rdttl_to_ldapmod(isc_mem_t *mctx,
 		dns_rdatalist_t *rdlist, LDAPMod **changep);
@@ -276,7 +277,7 @@ new_ldap_db(isc_mem_t *mctx, dns_view_t *view, ldap_db_t **ldap_dbp,
 	unsigned int i;
 	isc_result_t result;
 	ldap_db_t *ldap_db;
-	ldap_instance_t *ldap_inst;
+	ldap_connection_t *ldap_conn;
 	ld_string_t *auth_method_str = NULL;
 	setting_t ldap_settings[] = {
 		{ "uri",	 no_default_string		},
@@ -377,10 +378,10 @@ new_ldap_db(isc_mem_t *mctx, dns_view_t *view, ldap_db_t **ldap_dbp,
 	CHECK(semaphore_init(&ldap_db->conn_semaphore, ldap_db->connections));
 
 	for (i = 0; i < ldap_db->connections; i++) {
-		ldap_inst = NULL;
-		CHECK(new_ldap_instance(ldap_db, &ldap_inst));
-		ldap_connect(ldap_inst);
-		APPEND(ldap_db->conn_list, ldap_inst, link);
+		ldap_conn = NULL;
+		CHECK(new_ldap_connection(ldap_db, &ldap_conn));
+		ldap_connect(ldap_conn);
+		APPEND(ldap_db->conn_list, ldap_conn, link);
 	}
 
 cleanup:
@@ -398,8 +399,8 @@ void
 destroy_ldap_db(ldap_db_t **ldap_dbp)
 {
 	ldap_db_t *ldap_db;
-	ldap_instance_t *elem;
-	ldap_instance_t *next;
+	ldap_connection_t *elem;
+	ldap_connection_t *next;
 
 	REQUIRE(ldap_dbp != NULL && *ldap_dbp != NULL);
 
@@ -409,7 +410,7 @@ destroy_ldap_db(ldap_db_t **ldap_dbp)
 	while (elem != NULL) {
 		next = NEXT(elem, link);
 		UNLINK(ldap_db->conn_list, elem, link);
-		destroy_ldap_instance(&elem);
+		destroy_ldap_connection(&elem);
 		elem = next;
 	}
 
@@ -437,68 +438,68 @@ destroy_ldap_db(ldap_db_t **ldap_dbp)
 }
 
 static isc_result_t
-new_ldap_instance(ldap_db_t *ldap_db, ldap_instance_t **ldap_instp)
+new_ldap_connection(ldap_db_t *ldap_db, ldap_connection_t **ldap_connp)
 {
 	isc_result_t result;
-	ldap_instance_t *ldap_inst;
+	ldap_connection_t *ldap_conn;
 
 	REQUIRE(ldap_db != NULL);
-	REQUIRE(ldap_instp != NULL && *ldap_instp == NULL);
+	REQUIRE(ldap_connp != NULL && *ldap_connp == NULL);
 
-	ldap_inst = isc_mem_get(ldap_db->mctx, sizeof(ldap_instance_t));
-	if (ldap_inst == NULL)
+	ldap_conn = isc_mem_get(ldap_db->mctx, sizeof(ldap_connection_t));
+	if (ldap_conn == NULL)
 		return ISC_R_NOMEMORY;
 
-	ZERO_PTR(ldap_inst);
+	ZERO_PTR(ldap_conn);
 
-	ldap_inst->database = ldap_db;
-	INIT_LINK(ldap_inst, link);
-	result = isc_mutex_init(&ldap_inst->lock);
+	ldap_conn->database = ldap_db;
+	INIT_LINK(ldap_conn, link);
+	result = isc_mutex_init(&ldap_conn->lock);
 	if (result != ISC_R_SUCCESS) {
-		isc_mem_put(ldap_db->mctx, ldap_db, sizeof(ldap_instance_t));
+		isc_mem_put(ldap_db->mctx, ldap_db, sizeof(ldap_connection_t));
 		return result;
 	}
 
-	CHECK(str_new(ldap_db->mctx, &ldap_inst->query_string));
-	CHECK(str_new(ldap_db->mctx, &ldap_inst->base));
+	CHECK(str_new(ldap_db->mctx, &ldap_conn->query_string));
+	CHECK(str_new(ldap_db->mctx, &ldap_conn->base));
 
-	CHECK(isc_lex_create(ldap_db->mctx, TOKENSIZ, &ldap_inst->lex));
-	CHECKED_MEM_GET(ldap_db->mctx, ldap_inst->rdata_target_mem, MINTSIZ);
+	CHECK(isc_lex_create(ldap_db->mctx, TOKENSIZ, &ldap_conn->lex));
+	CHECKED_MEM_GET(ldap_db->mctx, ldap_conn->rdata_target_mem, MINTSIZ);
 
-	*ldap_instp = ldap_inst;
+	*ldap_connp = ldap_conn;
 
 	return ISC_R_SUCCESS;
 
 cleanup:
-	destroy_ldap_instance(&ldap_inst);
+	destroy_ldap_connection(&ldap_conn);
 
 	return result;
 }
 
 static void
-destroy_ldap_instance(ldap_instance_t **ldap_instp)
+destroy_ldap_connection(ldap_connection_t **ldap_connp)
 {
-	ldap_instance_t *ldap_inst;
+	ldap_connection_t *ldap_conn;
 
-	REQUIRE(ldap_instp != NULL && *ldap_instp != NULL);
+	REQUIRE(ldap_connp != NULL && *ldap_connp != NULL);
 
-	ldap_inst = *ldap_instp;
-	DESTROYLOCK(&ldap_inst->lock);
-	if (ldap_inst->handle != NULL)
-		ldap_unbind_ext_s(ldap_inst->handle, NULL, NULL);
+	ldap_conn = *ldap_connp;
+	DESTROYLOCK(&ldap_conn->lock);
+	if (ldap_conn->handle != NULL)
+		ldap_unbind_ext_s(ldap_conn->handle, NULL, NULL);
 
-	str_destroy(&ldap_inst->query_string);
-	str_destroy(&ldap_inst->base);
+	str_destroy(&ldap_conn->query_string);
+	str_destroy(&ldap_conn->base);
 
-	if (ldap_inst->lex != NULL)
-		isc_lex_destroy(&ldap_inst->lex);
-	if (ldap_inst->rdata_target_mem != NULL) {
-		isc_mem_put(ldap_inst->database->mctx,
-			    ldap_inst->rdata_target_mem, MINTSIZ);
+	if (ldap_conn->lex != NULL)
+		isc_lex_destroy(&ldap_conn->lex);
+	if (ldap_conn->rdata_target_mem != NULL) {
+		isc_mem_put(ldap_conn->database->mctx,
+			    ldap_conn->rdata_target_mem, MINTSIZ);
 	}
 
-	isc_mem_put(ldap_inst->database->mctx, *ldap_instp, sizeof(ldap_instance_t));
-	*ldap_instp = NULL;
+	isc_mem_put(ldap_conn->database->mctx, *ldap_connp, sizeof(ldap_connection_t));
+	*ldap_connp = NULL;
 }
 
 /* TODO: Delete old zones. */
@@ -507,7 +508,7 @@ refresh_zones_from_ldap(ldap_db_t *ldap_db, const char *name,
 			dns_zonemgr_t *zmgr)
 {
 	isc_result_t result = ISC_R_SUCCESS;
-	ldap_instance_t *ldap_inst;
+	ldap_connection_t *ldap_conn;
 	ldap_entry_t *entry;
 	char *attrs[] = {
 		"idnsName", "idnsUpdatePolicy", NULL
@@ -518,21 +519,21 @@ refresh_zones_from_ldap(ldap_db_t *ldap_db, const char *name,
 
 	log_debug(2, "refreshing list of zones");
 
-	ldap_inst = get_connection(ldap_db);
+	ldap_conn = get_connection(ldap_db);
 
-	CHECK(ldap_query(ldap_inst, str_buf(ldap_db->base), LDAP_SCOPE_SUBTREE,
+	CHECK(ldap_query(ldap_conn, str_buf(ldap_db->base), LDAP_SCOPE_SUBTREE,
 			 attrs, 0,
 			 "(&(objectClass=idnsZone)(idnsZoneActive=True))"));
-	CHECK(cache_query_results(ldap_inst));
+	CHECK(cache_query_results(ldap_conn));
 
-	for (entry = HEAD(ldap_inst->ldap_entries);
+	for (entry = HEAD(ldap_conn->ldap_entries);
 	     entry != NULL;
 	     entry = NEXT(entry, link)) {
 		const char *dn;
 		const char *update_str = NULL;
 		ldap_value_list_t values;
 
-		dn = get_dn(ldap_inst, entry);
+		dn = get_dn(ldap_conn, entry);
 
 		/* Look if there's an update policy. */
 		result = get_values(entry, "idnsUpdatePolicy", &values);
@@ -548,7 +549,7 @@ refresh_zones_from_ldap(ldap_db_t *ldap_db, const char *name,
 	}
 
 cleanup:
-	put_connection(ldap_inst);
+	put_connection(ldap_conn);
 
 	log_debug(2, "finished refreshing list of zones");
 
@@ -556,21 +557,21 @@ cleanup:
 }
 
 static const char *
-get_dn(ldap_instance_t *ldap_inst, ldap_entry_t *entry)
+get_dn(ldap_connection_t *ldap_conn, ldap_entry_t *entry)
 {
 	if (entry->dn) {
 		ldap_memfree(entry->dn);
 		entry->dn = NULL;
 	}
-	if (ldap_inst->handle)
-		entry->dn = ldap_get_dn(ldap_inst->handle, entry->entry);
+	if (ldap_conn->handle)
+		entry->dn = ldap_get_dn(ldap_conn->handle, entry->entry);
 
 	return entry->dn;
 }
 
 #if 0
 static const char *
-get_dn(ldap_instance_t *inst)
+get_dn(ldap_connection_t *inst)
 {
 	if (inst->dn) {
 		ldap_memfree(inst->dn);
@@ -831,7 +832,7 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_db_t *ldap_db, dns_name_t *name,
 		     dns_name_t *origin, ldapdb_rdatalist_t *rdatalist)
 {
 	isc_result_t result;
-	ldap_instance_t *ldap_inst;
+	ldap_connection_t *ldap_conn;
 	ldap_entry_t *entry;
 	ldap_attribute_t *attr;
 	ld_string_t *string = NULL;
@@ -847,26 +848,26 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_db_t *ldap_db, dns_name_t *name,
 	REQUIRE(name != NULL);
 	REQUIRE(rdatalist != NULL);
 
-	ldap_inst = get_connection(ldap_db);
+	ldap_conn = get_connection(ldap_db);
 
 	INIT_LIST(*rdatalist);
 	CHECK(str_new(mctx, &string));
 	CHECK(dnsname_to_dn(ldap_db, name, string));
 
-	CHECK(ldap_query(ldap_inst, str_buf(string), LDAP_SCOPE_BASE, NULL, 0,
+	CHECK(ldap_query(ldap_conn, str_buf(string), LDAP_SCOPE_BASE, NULL, 0,
 				"(objectClass=idnsRecord)"));
-	CHECK(cache_query_results(ldap_inst));
+	CHECK(cache_query_results(ldap_conn));
 
-	if (EMPTY(ldap_inst->ldap_entries)) {
+	if (EMPTY(ldap_conn->ldap_entries)) {
 		result = ISC_R_NOTFOUND;
 		goto cleanup;
 	}
 
-	for (entry = HEAD(ldap_inst->ldap_entries);
+	for (entry = HEAD(ldap_conn->ldap_entries);
 	     entry != NULL;
 	     entry = NEXT(entry, link)) {
 
-		result = add_soa_record(mctx, ldap_inst, origin, entry,
+		result = add_soa_record(mctx, ldap_conn, origin, entry,
 					rdatalist);
 		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
 			goto cleanup;
@@ -883,7 +884,7 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_db_t *ldap_db, dns_name_t *name,
 			for (result = get_next_rdatatext(attr, string);
 			     result == ISC_R_SUCCESS;
 			     result = get_next_rdatatext(attr, string)) {
-				CHECK(parse_rdata(mctx, ldap_inst, rdclass,
+				CHECK(parse_rdata(mctx, ldap_conn, rdclass,
 						  rdtype, origin,
 						  str_buf(string), &rdata));
 				APPEND(rdlist->rdata, rdata, link);
@@ -896,7 +897,7 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_db_t *ldap_db, dns_name_t *name,
 	result = ISC_R_SUCCESS;
 
 cleanup:
-	put_connection(ldap_inst);
+	put_connection(ldap_conn);
 	str_destroy(&string);
 
 	if (result != ISC_R_SUCCESS)
@@ -969,7 +970,7 @@ cleanup:
 }
 
 static isc_result_t
-add_soa_record(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *origin,
+add_soa_record(isc_mem_t *mctx, ldap_connection_t *ldap_conn, dns_name_t *origin,
 	       ldap_entry_t *entry, ldapdb_rdatalist_t *rdatalist)
 {
 	isc_result_t result;
@@ -984,7 +985,7 @@ add_soa_record(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *origin,
 	rdclass = get_rdataclass(entry);
 
 	CHECK(get_soa_record(entry, string));
-	CHECK(parse_rdata(mctx, ldap_inst, rdclass, dns_rdatatype_soa, origin,
+	CHECK(parse_rdata(mctx, ldap_conn, rdclass, dns_rdatatype_soa, origin,
 			  str_buf(string), &rdata));
 
 	CHECK(findrdatatype_or_create(mctx, rdatalist, entry, dns_rdatatype_soa,
@@ -1045,7 +1046,7 @@ get_next_rdatatext(ldap_attribute_t *attr, ld_string_t *rdata_text)
 }
 
 static isc_result_t
-parse_rdata(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
+parse_rdata(isc_mem_t *mctx, ldap_connection_t *ldap_conn,
 	    dns_rdataclass_t rdclass, dns_rdatatype_t rdtype,
 	    dns_name_t *origin, const char *rdata_text, dns_rdata_t **rdatap)
 {
@@ -1056,7 +1057,7 @@ parse_rdata(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
 	dns_rdata_t *rdata;
 
 	REQUIRE(mctx != NULL);
-	REQUIRE(ldap_inst != NULL);
+	REQUIRE(ldap_conn != NULL);
 	REQUIRE(rdata_text != NULL);
 	REQUIRE(rdatap != NULL);
 
@@ -1070,30 +1071,30 @@ parse_rdata(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
 	isc_buffer_add(&lex_buffer, text.length);
 	isc_buffer_setactive(&lex_buffer, text.length);
 
-	CHECK(isc_lex_openbuffer(ldap_inst->lex, &lex_buffer));
+	CHECK(isc_lex_openbuffer(ldap_conn->lex, &lex_buffer));
 
-	isc_buffer_init(&ldap_inst->rdata_target, ldap_inst->rdata_target_mem,
+	isc_buffer_init(&ldap_conn->rdata_target, ldap_conn->rdata_target_mem,
 			MINTSIZ);
-	CHECK(dns_rdata_fromtext(NULL, rdclass, rdtype, ldap_inst->lex, origin,
-				 0, mctx, &ldap_inst->rdata_target, NULL));
+	CHECK(dns_rdata_fromtext(NULL, rdclass, rdtype, ldap_conn->lex, origin,
+				 0, mctx, &ldap_conn->rdata_target, NULL));
 
 	CHECKED_MEM_GET_PTR(mctx, rdata);
 	dns_rdata_init(rdata);
 
-	rdatamem.length = isc_buffer_usedlength(&ldap_inst->rdata_target);
+	rdatamem.length = isc_buffer_usedlength(&ldap_conn->rdata_target);
 	CHECKED_MEM_GET(mctx, rdatamem.base, rdatamem.length);
 
-	memcpy(rdatamem.base, isc_buffer_base(&ldap_inst->rdata_target),
+	memcpy(rdatamem.base, isc_buffer_base(&ldap_conn->rdata_target),
 	       rdatamem.length);
 	dns_rdata_fromregion(rdata, rdclass, rdtype, &rdatamem);
 
-	isc_lex_close(ldap_inst->lex);
+	isc_lex_close(ldap_conn->lex);
 
 	*rdatap = rdata;
 	return ISC_R_SUCCESS;
 
 cleanup:
-	isc_lex_close(ldap_inst->lex);
+	isc_lex_close(ldap_conn->lex);
 	if (rdata != NULL)
 		isc_mem_put(mctx, rdata, sizeof(*rdata));
 	if (rdatamem.base != NULL)
@@ -1176,109 +1177,109 @@ array_contains_nocase(const char **haystack, const char *needle)
 	return isc_boolean_false;
 }
 
-static ldap_instance_t *
+static ldap_connection_t *
 get_connection(ldap_db_t *ldap_db)
 {
-	ldap_instance_t *ldap_inst;
+	ldap_connection_t *ldap_conn;
 
 	REQUIRE(ldap_db != NULL);
 
 	semaphore_wait(&ldap_db->conn_semaphore);
-	ldap_inst = HEAD(ldap_db->conn_list);
-	while (ldap_inst != NULL) {
-		if (isc_mutex_trylock(&ldap_inst->lock) == ISC_R_SUCCESS)
+	ldap_conn = HEAD(ldap_db->conn_list);
+	while (ldap_conn != NULL) {
+		if (isc_mutex_trylock(&ldap_conn->lock) == ISC_R_SUCCESS)
 			break;
-		ldap_inst = NEXT(ldap_inst, link);
+		ldap_conn = NEXT(ldap_conn, link);
 	}
 
-	RUNTIME_CHECK(ldap_inst != NULL);
+	RUNTIME_CHECK(ldap_conn != NULL);
 
-	INIT_LIST(ldap_inst->ldap_entries);
+	INIT_LIST(ldap_conn->ldap_entries);
 	/* TODO: find a clever way to not really require this */
-	str_copy(ldap_inst->base, ldap_db->base);
+	str_copy(ldap_conn->base, ldap_db->base);
 
-	return ldap_inst;
+	return ldap_conn;
 }
 
 static void
-put_connection(ldap_instance_t *ldap_inst)
+put_connection(ldap_connection_t *ldap_conn)
 {
-	if (ldap_inst == NULL)
+	if (ldap_conn == NULL)
 		return;
 
-	if (ldap_inst->dn) {
-		ldap_memfree(ldap_inst->dn);
-		ldap_inst->dn = NULL;
+	if (ldap_conn->dn) {
+		ldap_memfree(ldap_conn->dn);
+		ldap_conn->dn = NULL;
 	}
-	if (ldap_inst->values) {
-		ldap_value_free(ldap_inst->values);
-		ldap_inst->values = NULL;
+	if (ldap_conn->values) {
+		ldap_value_free(ldap_conn->values);
+		ldap_conn->values = NULL;
 	}
-	if (ldap_inst->attribute) {
-		ldap_memfree(ldap_inst->attribute);
-		ldap_inst->attribute = NULL;
+	if (ldap_conn->attribute) {
+		ldap_memfree(ldap_conn->attribute);
+		ldap_conn->attribute = NULL;
 	}
-	if (ldap_inst->ber) {
-		ber_free(ldap_inst->ber, 0);
-		ldap_inst->ber = NULL;
+	if (ldap_conn->ber) {
+		ber_free(ldap_conn->ber, 0);
+		ldap_conn->ber = NULL;
 	}
-	if (ldap_inst->result) {
-		ldap_msgfree(ldap_inst->result);
-		ldap_inst->result = NULL;
+	if (ldap_conn->result) {
+		ldap_msgfree(ldap_conn->result);
+		ldap_conn->result = NULL;
 	}
 
-	free_query_cache(ldap_inst);
+	free_query_cache(ldap_conn);
 
-	UNLOCK(&ldap_inst->lock);
-	semaphore_signal(&ldap_inst->database->conn_semaphore);
+	UNLOCK(&ldap_conn->lock);
+	semaphore_signal(&ldap_conn->database->conn_semaphore);
 }
 
 
 static isc_result_t
-ldap_query(ldap_instance_t *ldap_inst, const char *base, int scope, char **attrs,
+ldap_query(ldap_connection_t *ldap_conn, const char *base, int scope, char **attrs,
 	   int attrsonly, const char *filter, ...)
 {
 	va_list ap;
 	isc_result_t result;
 
-	REQUIRE(ldap_inst != NULL);
+	REQUIRE(ldap_conn != NULL);
 
 	va_start(ap, filter);
-	str_vsprintf(ldap_inst->query_string, filter, ap);
+	str_vsprintf(ldap_conn->query_string, filter, ap);
 	va_end(ap);
 
 	log_debug(2, "querying '%s' with '%s'", base,
-		  str_buf(ldap_inst->query_string));
+		  str_buf(ldap_conn->query_string));
 
-	if (ldap_inst->handle == NULL) {
-		log_error("bug in ldap_query(): ldap_inst->handle is NULL");
+	if (ldap_conn->handle == NULL) {
+		log_error("bug in ldap_query(): ldap_conn->handle is NULL");
 		return ISC_R_FAILURE;
 	}
 
 	do {
 		int ret;
 
-		ret = ldap_search_ext_s(ldap_inst->handle, base, scope,
-					str_buf(ldap_inst->query_string),
+		ret = ldap_search_ext_s(ldap_conn->handle, base, scope,
+					str_buf(ldap_conn->query_string),
 					attrs, attrsonly, NULL, NULL, NULL,
-					LDAP_NO_LIMIT, &ldap_inst->result);
+					LDAP_NO_LIMIT, &ldap_conn->result);
 
 		if (ret == 0) {
 			int cnt;
 
-			ldap_inst->tries = 0;
-			cnt = ldap_count_entries(ldap_inst->handle, ldap_inst->result);
+			ldap_conn->tries = 0;
+			cnt = ldap_count_entries(ldap_conn->handle, ldap_conn->result);
 			log_debug(2, "entry count: %d", cnt);
 
 			return ISC_R_SUCCESS;
 		}
-	} while (handle_connection_error(ldap_inst, &result));
+	} while (handle_connection_error(ldap_conn, &result));
 
 	return result;
 }
 
 static isc_result_t
-cache_query_results(ldap_instance_t *inst)
+cache_query_results(ldap_connection_t *inst)
 {
 	isc_result_t result;
 	LDAP *ld;
@@ -1321,7 +1322,7 @@ cleanup:
 }
 
 static isc_result_t
-fill_ldap_entry(ldap_instance_t *inst, ldap_entry_t *ldap_entry)
+fill_ldap_entry(ldap_connection_t *inst, ldap_entry_t *ldap_entry)
 {
 	isc_result_t result;
 	ldap_attribute_t *ldap_attr;
@@ -1361,7 +1362,7 @@ cleanup:
 }
 
 static isc_result_t
-fill_ldap_attribute(ldap_instance_t *inst, ldap_attribute_t *ldap_attr)
+fill_ldap_attribute(ldap_connection_t *inst, ldap_attribute_t *ldap_attr)
 {
 	isc_result_t result;
 	char **values;
@@ -1395,7 +1396,7 @@ cleanup:
 }
 
 static void
-free_query_cache(ldap_instance_t *inst)
+free_query_cache(ldap_connection_t *inst)
 {
 	ldap_entry_t *entry, *next;
 
@@ -1447,7 +1448,7 @@ free_ldap_values(isc_mem_t *mctx, ldap_attribute_t *attr)
 #if 0
 /* FIXME: this function is obsolete, remove. */
 static const LDAPMessage *
-next_entry(ldap_instance_t *inst)
+next_entry(ldap_connection_t *inst)
 {
 	if (inst->ber) {
 		ber_free(inst->ber, 0);
@@ -1531,19 +1532,19 @@ ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
 
 /*
  * Initialize the LDAP handle and bind to the server. Needed authentication
- * credentials and settings are available from the ldap_inst->database.
+ * credentials and settings are available from the ldap_conn->database.
  */
 static isc_result_t
-ldap_connect(ldap_instance_t *ldap_inst)
+ldap_connect(ldap_connection_t *ldap_conn)
 {
 	LDAP *ld;
 	int ret;
 	int version;
 	ldap_db_t *ldap_db;
 
-	REQUIRE(ldap_inst != NULL);
+	REQUIRE(ldap_conn != NULL);
 
-	ldap_db = ldap_inst->database;
+	ldap_db = ldap_conn->database;
 
 	ret = ldap_initialize(&ld, str_buf(ldap_db->uri));
 	if (ret != LDAP_SUCCESS) {
@@ -1561,8 +1562,8 @@ ldap_connect(ldap_instance_t *ldap_inst)
 	LDAP_OPT_CHECK(ret, "failed to set timeout: %s", ldap_err2string(ret));
 	*/
 
-	ldap_inst->handle = ld;
-	ldap_reconnect(ldap_inst);
+	ldap_conn->handle = ld;
+	ldap_reconnect(ldap_conn);
 
 	return ISC_R_SUCCESS;
 
@@ -1575,7 +1576,7 @@ cleanup:
 }
 
 static isc_result_t
-ldap_reconnect(ldap_instance_t *ldap_inst)
+ldap_reconnect(ldap_connection_t *ldap_conn)
 {
 	int ret = 0;
 	ldap_db_t *ldap_db;
@@ -1585,15 +1586,15 @@ ldap_reconnect(ldap_instance_t *ldap_inst)
 	struct berval *servercred = NULL;
 #endif
 
-	ldap_db = ldap_inst->database;
+	ldap_db = ldap_conn->database;
 
-	if (ldap_inst->tries > 0) {
+	if (ldap_conn->tries > 0) {
 		isc_time_t now;
 		int time_cmp;
 		isc_result_t result;
 
 		result = isc_time_now(&now);
-		time_cmp = isc_time_compare(&now, &ldap_inst->next_reconnect);
+		time_cmp = isc_time_compare(&now, &ldap_conn->next_reconnect);
 		if (result == ISC_R_SUCCESS && time_cmp < 0)
 			return ISC_R_FAILURE;
 	}
@@ -1611,22 +1612,22 @@ ldap_reconnect(ldap_instance_t *ldap_inst)
 		const unsigned int intervals[] = { 2, 5, 20, UINT_MAX };
 		const size_t ntimes = sizeof(intervals) / sizeof(intervals[0]);
 
-		i = ISC_MIN(ntimes - 1, ldap_inst->tries);
+		i = ISC_MIN(ntimes - 1, ldap_conn->tries);
 		seconds = ISC_MIN(intervals[i], ldap_db->reconnect_interval);
 		isc_interval_set(&delay, seconds, 0);
-		isc_time_nowplusinterval(&ldap_inst->next_reconnect, &delay);
+		isc_time_nowplusinterval(&ldap_conn->next_reconnect, &delay);
 	}
 
-	ldap_inst->tries++;
+	ldap_conn->tries++;
 	log_debug(2, "trying to establish LDAP connection to %s",
 		  str_buf(ldap_db->uri));
 
 	switch (ldap_db->auth_method) {
 	case AUTH_NONE:
-		ret = ldap_simple_bind_s(ldap_inst->handle, NULL, NULL);
+		ret = ldap_simple_bind_s(ldap_conn->handle, NULL, NULL);
 		break;
 	case AUTH_SIMPLE:
-		ret = ldap_simple_bind_s(ldap_inst->handle, bind_dn, password);
+		ret = ldap_simple_bind_s(ldap_conn->handle, bind_dn, password);
 		break;
 	case AUTH_SASL:
 
@@ -1642,7 +1643,7 @@ ldap_reconnect(ldap_instance_t *ldap_inst)
 		}
 
 		log_error("%s", str_buf(ldap_db->sasl_mech));
-		ret = ldap_sasl_interactive_bind_s(ldap_inst->handle, NULL,
+		ret = ldap_sasl_interactive_bind_s(ldap_conn->handle, NULL,
 						   str_buf(ldap_db->sasl_mech),
 						   NULL, NULL, LDAP_SASL_QUIET,
 						   ldap_sasl_interact,
@@ -1661,13 +1662,13 @@ ldap_reconnect(ldap_instance_t *ldap_inst)
 		return ISC_R_FAILURE;
 	}
 
-	ldap_inst->tries = 0;
+	ldap_conn->tries = 0;
 
 	return ISC_R_SUCCESS;
 }
 
 static int
-handle_connection_error(ldap_instance_t *ldap_inst, isc_result_t *result)
+handle_connection_error(ldap_connection_t *ldap_conn, isc_result_t *result)
 {
 	int ret;
 	int err_code;
@@ -1675,19 +1676,19 @@ handle_connection_error(ldap_instance_t *ldap_inst, isc_result_t *result)
 
 	*result = ISC_R_FAILURE;
 
-	ret = ldap_get_option(ldap_inst->handle, LDAP_OPT_RESULT_CODE,
+	ret = ldap_get_option(ldap_conn->handle, LDAP_OPT_RESULT_CODE,
 			      (void *)&err_code);
 
 	if (ret != LDAP_OPT_SUCCESS) {
 		err_string = "failed to get error code";
 	} else if (err_code == LDAP_NO_SUCH_OBJECT) {
 		*result = ISC_R_SUCCESS;
-		ldap_inst->tries = 0;
+		ldap_conn->tries = 0;
 		return 0;
 	} else if (err_code == LDAP_SERVER_DOWN) {
-		if (ldap_inst->tries == 0)
+		if (ldap_conn->tries == 0)
 			log_error("connection to the LDAP server was lost");
-		*result = ldap_reconnect(ldap_inst);
+		*result = ldap_reconnect(ldap_conn);
 		if (*result == ISC_R_SUCCESS)
 			return 1;
 	} else {
@@ -1703,21 +1704,21 @@ handle_connection_error(ldap_instance_t *ldap_inst, isc_result_t *result)
 /* FIXME: Handle the case where the LDAP handle is NULL -> try to reconnect. */
 /* FIXME: Handle cases where the entry actually doesn't exist. */
 static isc_result_t
-ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn, LDAPMod **mods)
+ldap_modify_do(ldap_connection_t *ldap_conn, const char *dn, LDAPMod **mods)
 {
 	int ret;
 
-	REQUIRE(ldap_inst != NULL);
+	REQUIRE(ldap_conn != NULL);
 	REQUIRE(dn != NULL);
 	REQUIRE(mods != NULL);
 
 	log_debug(2, "writing to '%s'", dn);
 
-	ret = ldap_modify_ext_s(ldap_inst->handle, dn, mods, NULL, NULL);
+	ret = ldap_modify_ext_s(ldap_conn->handle, dn, mods, NULL, NULL);
 	if (ret != LDAP_SUCCESS) {
 		int err_code;
 
-		ldap_get_option(ldap_inst->handle, LDAP_OPT_RESULT_CODE,
+		ldap_get_option(ldap_conn->handle, LDAP_OPT_RESULT_CODE,
 				&err_code);
 		log_debug(2, "error(%s) modifying(%s) entry %s",
 				ldap_err2string(err_code),
@@ -1905,7 +1906,7 @@ modify_ldap_common(dns_name_t *owner, ldap_db_t *ldap_db,
 {
 	isc_result_t result;
 	isc_mem_t *mctx;
-	ldap_instance_t *ldap_inst = NULL;
+	ldap_connection_t *ldap_conn = NULL;
 	ld_string_t *owner_dn = NULL;
 	LDAPMod *change[3] = { NULL, NULL, NULL };
 
@@ -1916,7 +1917,7 @@ modify_ldap_common(dns_name_t *owner, ldap_db_t *ldap_db,
 		goto cleanup;
 	}
 
-	ldap_inst = get_connection(ldap_db);
+	ldap_conn = get_connection(ldap_db);
 
 	CHECK(str_new(mctx, &owner_dn));
 	CHECK(dnsname_to_dn(ldap_db, owner, owner_dn));
@@ -1927,10 +1928,10 @@ modify_ldap_common(dns_name_t *owner, ldap_db_t *ldap_db,
 		CHECK(ldap_rdttl_to_ldapmod(mctx, rdlist, &change[1]));
 	}
 
-	CHECK(ldap_modify_do(ldap_inst, str_buf(owner_dn), change));
+	CHECK(ldap_modify_do(ldap_conn, str_buf(owner_dn), change));
 
 cleanup:
-	put_connection(ldap_inst);
+	put_connection(ldap_conn);
 	str_destroy(&owner_dn);
 	free_ldapmod(mctx, &change[0]);
 	free_ldapmod(mctx, &change[1]);
