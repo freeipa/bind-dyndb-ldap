@@ -1013,7 +1013,7 @@ get_next_rdatatype(ldap_entry_t *entry, ldap_attribute_t **attrp,
 	for (attr = get_next_attr(entry, NULL);
 	     attr != NULL;
 	     attr = get_next_attr(entry, NULL)) {
-		result = ldap_record_to_rdatatype(attr->name, rdtype);
+		result = ldap_attribute_to_rdatatype(attr->name, rdtype);
 		if (result == ISC_R_SUCCESS)
 			break;
 	}

@@ -234,14 +234,14 @@ cleanup:
 }
 
 isc_result_t
-ldap_record_to_rdatatype(const char *ldap_record, dns_rdatatype_t *rdtype)
+ldap_attribute_to_rdatatype(const char *ldap_attribute, dns_rdatatype_t *rdtype)
 {
 	isc_result_t result;
 	unsigned i;
 	isc_consttextregion_t region;
 
 	for (i = 0; ldap_dns_records[i] != NULL; i++) {
-		if (!strcasecmp(ldap_record, ldap_dns_records[i]))
+		if (!strcasecmp(ldap_attribute, ldap_dns_records[i]))
 			break;
 	}
 	if (dns_records[i] == NULL)
