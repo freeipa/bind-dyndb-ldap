@@ -33,7 +33,7 @@
 isc_result_t dn_to_dnsname(isc_mem_t *mctx, const char *dn,
 			   dns_name_t *target);
 
-isc_result_t dnsname_to_dn(ldap_db_t *ldap_db, dns_name_t *name,
+isc_result_t dnsname_to_dn(ldap_instance_t *ldap_inst, dns_name_t *name,
 			   ld_string_t *target);
 
 isc_result_t ldap_record_to_rdatatype(const char *ldap_record,

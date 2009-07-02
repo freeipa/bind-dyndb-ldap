@@ -164,7 +164,7 @@ destroy_ldap_cache(ldap_cache_t **cachep)
 
 isc_result_t
 cached_ldap_rdatalist_get(isc_mem_t *mctx, ldap_cache_t *cache,
-			  ldap_db_t *ldap_db, dns_name_t *name,
+			  ldap_instance_t *ldap_inst, dns_name_t *name,
 			  dns_name_t *origin, ldapdb_rdatalist_t *rdatalist)
 {
 	isc_result_t result;
@@ -176,7 +176,7 @@ cached_ldap_rdatalist_get(isc_mem_t *mctx, ldap_cache_t *cache,
 	REQUIRE(cache != NULL);
 
 	if (cache->rbt == NULL)
-		return ldapdb_rdatalist_get(mctx, ldap_db, name, origin,
+		return ldapdb_rdatalist_get(mctx, ldap_inst, name, origin,
 					    rdatalist);
 
 	CONTROLED_LOCK(&cache->mutex);
@@ -201,7 +201,7 @@ cached_ldap_rdatalist_get(isc_mem_t *mctx, ldap_cache_t *cache,
 
 	if (!in_cache) {
 		INIT_LIST(rdlist);
-		result = ldapdb_rdatalist_get(mctx, ldap_db, name, origin,
+		result = ldapdb_rdatalist_get(mctx, ldap_inst, name, origin,
 					      &rdlist);
 		/* TODO: Cache entries that are not found. */
 		if (result != ISC_R_SUCCESS)

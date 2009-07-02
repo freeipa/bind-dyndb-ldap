@@ -23,7 +23,7 @@
 
 #include <isc/util.h>
 
-typedef struct ldap_db		ldap_db_t;
+typedef struct ldap_instance	ldap_instance_t;
 
 /*
  * some nice words about ldapdb_rdatalist_t:
@@ -65,7 +65,7 @@ void free_rdatalist(isc_mem_t *mctx, dns_rdatalist_t *rdlist);
  * Free all dynamically allocated memory inside rdlist.
  */
 
-isc_result_t ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_db_t *ldap_db,
+isc_result_t ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
 				  dns_name_t *name, dns_name_t *origin,
 				  ldapdb_rdatalist_t *rdatalist);
 /*
@@ -83,20 +83,20 @@ isc_result_t ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_db_t *ldap_db,
  * DNS_R_PARTIALMATCH
  */
 
-isc_result_t new_ldap_db(isc_mem_t *mctx, dns_view_t *view, ldap_db_t **ldap_dbp,
+isc_result_t new_ldap_instance(isc_mem_t *mctx, dns_view_t *view, ldap_instance_t **ldap_instp,
 			 const char * const *argv);
-void destroy_ldap_db(ldap_db_t **ldap_db);
-isc_result_t refresh_zones_from_ldap(ldap_db_t *ldap_db, const char *name,
+void destroy_ldap_instance(ldap_instance_t **ldap_inst);
+isc_result_t refresh_zones_from_ldap(ldap_instance_t *ldap_inst, const char *name,
 				     dns_zonemgr_t *zmgr);
 
 isc_result_t
-get_zone_dn(ldap_db_t *ldap_db, dns_name_t *name, const char **dn,
+get_zone_dn(ldap_instance_t *ldap_inst, dns_name_t *name, const char **dn,
 	    dns_name_t *matched_name);
 
 /* Functions for writing to LDAP. */
-isc_result_t write_to_ldap(dns_name_t *owner, ldap_db_t *ldap_db,
+isc_result_t write_to_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		dns_rdatalist_t *rdlist);
-isc_result_t remove_from_ldap(dns_name_t *owner, ldap_db_t *ldap_db,
+isc_result_t remove_from_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		dns_rdatalist_t *rdlist);
 
 #endif /* !_LD_LDAP_HELPER_H_ */

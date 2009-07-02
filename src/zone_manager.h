@@ -30,11 +30,11 @@ typedef struct db_instance db_instance_t;
 void destroy_manager(void);
 
 isc_result_t
-manager_add_db_instance(isc_mem_t *mctx, const char *name, ldap_db_t *ldap_db,
+manager_add_db_instance(isc_mem_t *mctx, const char *name, ldap_instance_t *ldap_inst,
 			ldap_cache_t *ldap_cache, dns_zonemgr_t *zmgr);
 
 isc_result_t
-manager_get_ldap_db_and_cache(const char *name, ldap_db_t **ldap_db,
+manager_get_ldap_instance_and_cache(const char *name, ldap_instance_t **ldap_inst,
 			      ldap_cache_t **ldap_cache);
 
 #endif /* !_LD_ZONE_MANAGER_H_ */

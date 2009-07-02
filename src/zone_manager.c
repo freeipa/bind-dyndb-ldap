@@ -36,7 +36,7 @@
 struct db_instance {
 	isc_mem_t		*mctx;
 	char			*name;
-	ldap_db_t		*ldap_db;
+	ldap_instance_t		*ldap_inst;
 	ldap_cache_t		*ldap_cache;
 	dns_zonemgr_t		*dns_zone_manager;
 	LINK(db_instance_t)	link;
@@ -86,7 +86,7 @@ destroy_db_instance(db_instance_t **db_instp)
 
 	db_inst = *db_instp;
 
-	destroy_ldap_db(&db_inst->ldap_db);
+	destroy_ldap_instance(&db_inst->ldap_inst);
 	destroy_ldap_cache(&db_inst->ldap_cache);
 	if (db_inst->name != NULL)
 		isc_mem_free(db_inst->mctx, db_inst->name);
@@ -97,7 +97,7 @@ destroy_db_instance(db_instance_t **db_instp)
 }
 
 isc_result_t
-manager_add_db_instance(isc_mem_t *mctx, const char *name, ldap_db_t *ldap_db,
+manager_add_db_instance(isc_mem_t *mctx, const char *name, ldap_instance_t *ldap_inst,
 			ldap_cache_t *ldap_cache, dns_zonemgr_t *zmgr)
 {
 	isc_result_t result;
@@ -105,7 +105,7 @@ manager_add_db_instance(isc_mem_t *mctx, const char *name, ldap_db_t *ldap_db,
 
 	REQUIRE(mctx != NULL);
 	REQUIRE(name != NULL);
-	REQUIRE(ldap_db != NULL);
+	REQUIRE(ldap_inst != NULL);
 	REQUIRE(ldap_cache != NULL);
 	REQUIRE(zmgr != NULL);
 
@@ -127,7 +127,7 @@ manager_add_db_instance(isc_mem_t *mctx, const char *name, ldap_db_t *ldap_db,
 	CHECKED_MEM_STRDUP(mctx, name, db_inst->name);
 	db_inst->mctx = NULL;
 	isc_mem_attach(mctx, &db_inst->mctx);
-	db_inst->ldap_db = ldap_db;
+	db_inst->ldap_inst = ldap_inst;
 	db_inst->ldap_cache = ldap_cache;
 	db_inst->dns_zone_manager = zmgr;
 
@@ -135,7 +135,7 @@ manager_add_db_instance(isc_mem_t *mctx, const char *name, ldap_db_t *ldap_db,
 	APPEND(instance_list, db_inst, link);
 	UNLOCK(&instance_list_lock);
 
-	refresh_zones_from_ldap(ldap_db, name, zmgr);
+	refresh_zones_from_ldap(ldap_inst, name, zmgr);
 
 	return ISC_R_SUCCESS;
 
@@ -154,7 +154,7 @@ manager_refresh_zones(void)
 	LOCK(&instance_list_lock);
 	db_inst = HEAD(instance_list);
 	while (db_inst != NULL) {
-		refresh_zones_from_ldap(db_inst->ldap_db, db_inst->name,
+		refresh_zones_from_ldap(db_inst->ldap_inst, db_inst->name,
 					db_inst->dns_zone_manager);
 		db_inst = NEXT(db_inst, link);
 	}
@@ -163,14 +163,14 @@ manager_refresh_zones(void)
 }
 
 isc_result_t
-manager_get_ldap_db_and_cache(const char *name, ldap_db_t **ldap_db,
+manager_get_ldap_instance_and_cache(const char *name, ldap_instance_t **ldap_inst,
 			      ldap_cache_t **ldap_cache)
 {
 	isc_result_t result;
 	db_instance_t *db_inst;
 
 	REQUIRE(name != NULL);
-	REQUIRE(ldap_db != NULL);
+	REQUIRE(ldap_inst != NULL);
 	REQUIRE(ldap_cache != NULL);
 
 	isc_once_do(&initialize_once, initialize_manager);
@@ -178,7 +178,7 @@ manager_get_ldap_db_and_cache(const char *name, ldap_db_t **ldap_db,
 	db_inst = NULL;
 	CHECK(find_db_instance(name, &db_inst));
 
-	*ldap_db = db_inst->ldap_db;
+	*ldap_inst = db_inst->ldap_inst;
 	*ldap_cache = db_inst->ldap_cache;
 
 cleanup:

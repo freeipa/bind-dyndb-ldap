@@ -63,7 +63,7 @@ typedef struct {
 	dns_db_t			common;
 	isc_refcount_t			refs;
 	isc_mutex_t			lock; /* convert to isc_rwlock_t ? */
-	ldap_db_t			*ldap_db;
+	ldap_instance_t			*ldap_inst;
 	ldap_cache_t			*ldap_cache;
 } ldapdb_t;
 
@@ -315,7 +315,7 @@ findnode(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 	REQUIRE(VALID_LDAPDB(ldapdb));
 
 	result = cached_ldap_rdatalist_get(ldapdb->common.mctx,
-					   ldapdb->ldap_cache, ldapdb->ldap_db,
+					   ldapdb->ldap_cache, ldapdb->ldap_inst,
 					   name, &ldapdb->common.origin,
 					   &rdatalist);
 
@@ -373,7 +373,7 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	}
 
 	result = cached_ldap_rdatalist_get(ldapdb->common.mctx,
-					   ldapdb->ldap_cache, ldapdb->ldap_db,
+					   ldapdb->ldap_cache, ldapdb->ldap_inst,
 					   name, &ldapdb->common.origin,
 					   &rdatalist);
 	INSIST(result != DNS_R_PARTIALMATCH); /* XXX Not yet implemented */
@@ -659,7 +659,7 @@ addrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 		}
 	}
 
-	CHECK(write_to_ldap(&ldapdbnode->owner, ldapdb->ldap_db, new_rdlist));
+	CHECK(write_to_ldap(&ldapdbnode->owner, ldapdb->ldap_inst, new_rdlist));
 	CHECK(discard_from_cache(ldapdb->ldap_cache, &ldapdbnode->owner));
 
 	if (addedrdataset != NULL) {
@@ -747,7 +747,7 @@ subtractrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 		goto cleanup;
 	}
 
-	CHECK(remove_from_ldap(&ldapdbnode->owner, ldapdb->ldap_db, &diff));
+	CHECK(remove_from_ldap(&ldapdbnode->owner, ldapdb->ldap_inst, &diff));
 	CHECK(discard_from_cache(ldapdb->ldap_cache, &ldapdbnode->owner));
 
 	if (newrdataset != NULL) {
@@ -998,7 +998,7 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 	CHECK(dns_name_dupwithoffsets(name, mctx, &ldapdb->common.origin));
 
 	CHECK(isc_refcount_init(&ldapdb->refs, 1));
-	CHECK(manager_get_ldap_db_and_cache(argv[0], &ldapdb->ldap_db,
+	CHECK(manager_get_ldap_instance_and_cache(argv[0], &ldapdb->ldap_inst,
 					    &ldapdb->ldap_cache));
 
 	*dbp = (dns_db_t *)ldapdb;
@@ -1028,7 +1028,7 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 		    dns_dyndb_arguments_t *dyndb_args)
 {
 	isc_result_t result;
-	ldap_db_t *ldap_db = NULL;
+	ldap_instance_t *ldap_inst = NULL;
 	ldap_cache_t *ldap_cache = NULL;
 	dns_view_t *view;
 	dns_zonemgr_t *zmgr;
@@ -1067,9 +1067,9 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 	if (result != ISC_R_SUCCESS && result != ISC_R_EXISTS)
 		return result;
 
-	CHECK(new_ldap_db(mctx, view, &ldap_db, argv));
+	CHECK(new_ldap_instance(mctx, view, &ldap_inst, argv));
 	CHECK(new_ldap_cache(mctx, &ldap_cache, argv));
-	CHECK(manager_add_db_instance(mctx, name, ldap_db, ldap_cache, zmgr));
+	CHECK(manager_add_db_instance(mctx, name, ldap_inst, ldap_cache, zmgr));
 
 	/*
 	 * TODO: now fetch all zones and initialize ldap zone manager
@@ -1084,8 +1084,8 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 	return ISC_R_SUCCESS;
 
 cleanup:
-	if (ldap_db != NULL)
-		destroy_ldap_db(&ldap_db);
+	if (ldap_inst != NULL)
+		destroy_ldap_instance(&ldap_inst);
 	if (ldap_cache != NULL)
 		destroy_ldap_cache(&ldap_cache);
 
