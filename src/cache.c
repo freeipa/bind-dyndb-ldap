@@ -66,7 +66,7 @@ typedef struct {
 static void
 cache_node_deleter(void *data, void *deleter_arg)
 {
-	cache_node_t *node = (cache_node_t *)data;
+	cache_node_t *node = data;
 
 	UNUSED(deleter_arg);
 	REQUIRE(data != NULL);

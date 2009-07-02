@@ -589,8 +589,8 @@ get_dn(ldap_connection_t *inst)
 void
 string_deleter(void *arg1, void *arg2)
 {
-	char *string = (char *)arg1;
-	isc_mem_t *mctx = (isc_mem_t *)arg2;
+	char *string = arg1;
+	isc_mem_t *mctx = arg2;
 
 	REQUIRE(string != NULL);
 	REQUIRE(mctx != NULL);
@@ -1470,8 +1470,8 @@ next_entry(ldap_connection_t *inst)
 static int
 ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
 {
-	sasl_interact_t *in = (sasl_interact_t *)sin;
-	ldap_instance_t *ldap_inst = (ldap_instance_t *)defaults;
+	sasl_interact_t *in;
+	ldap_instance_t *ldap_inst = defaults;
 	int ret = LDAP_OTHER;
 
 	REQUIRE(ldap_inst != NULL);
