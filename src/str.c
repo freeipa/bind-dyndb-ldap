@@ -43,9 +43,6 @@
 #include "util.h"
 
 
-#define IGNORE(expr)	if (expr) return
-#define IGNORE_R(expr)	if (expr) return ISC_R_SUCCESS
-
 #define ALLOC_BASE_SIZE	16
 
 /* Custom string, these shouldn't use these directly */
@@ -84,7 +81,9 @@ str_alloc(ld_string_t *str, size_t len)
 
 	REQUIRE(str != NULL);
 	REQUIRE(str->mctx != NULL);
-	IGNORE_R(str->allocated > len);
+
+	if (str->allocated > len)
+            return ISC_R_SUCCESS;
 
 	len++;	/* Account for the last '\0'. */
 	new_size = ISC_MAX(str->allocated, ALLOC_BASE_SIZE);
@@ -178,7 +177,8 @@ str__new(isc_mem_t *mctx, ld_string_t **new_str _STR_MEM_FLARG)
 void
 str__destroy(ld_string_t **str _STR_MEM_FLARG)
 {
-	IGNORE(str == NULL || *str == NULL);
+	if (str == NULL || *str == NULL)
+            return;
 
 	if ((*str)->allocated) {
 #if ISC_MEM_TRACKLINES
@@ -231,7 +231,9 @@ str_copy(ld_string_t *dest, const ld_string_t *src)
 
 	REQUIRE(dest != NULL);
 	REQUIRE(src != NULL);
-	IGNORE_R(src->data == NULL);
+
+	if (src->data == NULL)
+            return ISC_R_SUCCESS;
 
 	len = str_len_internal(src);
 	CHECK(str_alloc(dest, len));
@@ -282,7 +284,9 @@ str_init_char(ld_string_t *dest, const char *src)
 	size_t len;
 
 	REQUIRE(dest != NULL);
-	IGNORE_R(src == NULL);
+
+	if (src == NULL)
+            return ISC_R_SUCCESS;
 
 	len = strlen(src);
 	CHECK(str_alloc(dest, len));
@@ -308,12 +312,15 @@ str_cat_char(ld_string_t *dest, const char *src)
 	size_t src_size;
 
 	REQUIRE(dest != NULL);
-	IGNORE_R(src == NULL);
+
+	if (src == NULL)
+            return ISC_R_SUCCESS;
 
 	dest_size = str_len_internal(dest);
 	src_size = strlen(src);
 
-	IGNORE_R(src_size == 0);
+	if (src_size == 0)
+            return ISC_R_SUCCESS;
 
 	CHECK(str_alloc(dest, dest_size + src_size));
 	from = dest->data + dest_size;
@@ -333,8 +340,9 @@ str_cat_char_len(ld_string_t *dest, const char *src, size_t len)
 	size_t dest_size;
 
 	REQUIRE(dest != NULL);
-	IGNORE_R(src == NULL);
-	IGNORE_R(len == 0);
+
+        if (src == NULL || len == 0)
+            return ISC_R_SUCCESS;
 
 	dest_size = str_len_internal(dest);
 
@@ -380,8 +388,9 @@ isc_result_t
 str_cat(ld_string_t *dest, const ld_string_t *src)
 {
 	REQUIRE(dest != NULL);
-	IGNORE_R(src == NULL);
-	IGNORE_R(src->data == NULL);
+
+	if (src == NULL || src->data == NULL)
+            return ISC_R_SUCCESS;
 
 	return str_cat_char(dest, src->data);
 }
@@ -498,7 +507,8 @@ str_destroy_split(ld_split_t **splitp)
 {
 	ld_split_t *split;
 
-	IGNORE(splitp == NULL || *splitp == NULL);
+	if (splitp == NULL || *splitp == NULL)
+            return;
 
 	split = *splitp;
 
