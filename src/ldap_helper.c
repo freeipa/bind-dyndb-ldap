@@ -37,6 +37,7 @@
 #include <isc/time.h>
 #include <isc/util.h>
 
+#include <alloca.h>
 #define LDAP_DEPRECATED 1
 #include <ldap.h>
 #include <limits.h>
@@ -1702,11 +1703,12 @@ handle_connection_error(ldap_connection_t *ldap_conn, isc_result_t *result)
 }
 
 /* FIXME: Handle the case where the LDAP handle is NULL -> try to reconnect. */
-/* FIXME: Handle cases where the entry actually doesn't exist. */
 static isc_result_t
 ldap_modify_do(ldap_connection_t *ldap_conn, const char *dn, LDAPMod **mods)
 {
 	int ret;
+	int err_code;
+	const char *operation_str;
 
 	REQUIRE(ldap_conn != NULL);
 	REQUIRE(dn != NULL);
@@ -1715,22 +1717,54 @@ ldap_modify_do(ldap_connection_t *ldap_conn, const char *dn, LDAPMod **mods)
 	log_debug(2, "writing to '%s'", dn);
 
 	ret = ldap_modify_ext_s(ldap_conn->handle, dn, mods, NULL, NULL);
-	if (ret != LDAP_SUCCESS) {
-		int err_code;
+	if (ret == LDAP_SUCCESS)
+		return ISC_R_SUCCESS;
 
+	ldap_get_option(ldap_conn->handle, LDAP_OPT_RESULT_CODE, &err_code);
+	if (mods[0]->mod_op == LDAP_MOD_ADD)
+		operation_str = "modifying(add)";
+	else
+		operation_str = "modifying(del)";
+
+	/* If there is no object yet, create it with an ldap add operation. */
+	if (mods[0]->mod_op == LDAP_MOD_ADD && err_code == LDAP_NO_SUCH_OBJECT) {
+		int i;
+		LDAPMod **new_mods;
+		char *obj_str[] = { "idnsRecord", NULL };
+		LDAPMod obj_class = {
+			0, "objectClass", { .modv_strvals = obj_str },
+		};
+
+		/*
+		 * Create a new array of LDAPMod structures. We will change
+		 * the mod_op member of each one to 0 (but preserve
+		 * LDAP_MOD_BVALUES. Additionally, we also need to specify
+		 * the objectClass attribute.
+		 */
+		for (i = 0; mods[i]; i++)
+			mods[i]->mod_op &= LDAP_MOD_BVALUES;
+		new_mods = alloca((i + 2) * sizeof(LDAPMod *));
+		memcpy(new_mods, mods, i * sizeof(LDAPMod *));
+		new_mods[i] = &obj_class;
+		new_mods[i + 1] = NULL;
+
+		ret = ldap_add_ext_s(ldap_conn->handle, dn, new_mods, NULL, NULL);
+		if (ret == LDAP_SUCCESS)
+			return ISC_R_SUCCESS;
 		ldap_get_option(ldap_conn->handle, LDAP_OPT_RESULT_CODE,
 				&err_code);
-		log_debug(2, "error(%s) modifying(%s) entry %s",
-				ldap_err2string(err_code),
-				mods[0]->mod_op?"del":"add", dn);
+		operation_str = "adding";
+	}
 
-		/* do not error out if we are trying to delete an
-		 * unexisting attribute */
-		if (mods[0]->mod_op != LDAP_MOD_DELETE ||
-		    err_code != LDAP_NO_SUCH_ATTRIBUTE) {
+	log_debug(2, "error(%s) %s entry %s", ldap_err2string(err_code),
+		  operation_str, dn);
 
-			return ISC_R_FAILURE;
-		}
+	/* do not error out if we are trying to delete an
+	 * unexisting attribute */
+	if (mods[0]->mod_op != LDAP_MOD_DELETE ||
+	    err_code != LDAP_NO_SUCH_ATTRIBUTE) {
+
+		return ISC_R_FAILURE;
 	}
 
 	return ISC_R_SUCCESS;
