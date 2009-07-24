@@ -175,6 +175,8 @@ cached_ldap_rdatalist_get(isc_mem_t *mctx, ldap_cache_t *cache,
 
 	REQUIRE(cache != NULL);
 
+	INIT_LIST(*rdatalist);
+
 	if (cache->rbt == NULL)
 		return ldapdb_rdatalist_get(mctx, ldap_inst, name, origin,
 					    rdatalist);

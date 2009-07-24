@@ -98,7 +98,7 @@ ldapdbnode_create(isc_mem_t *mctx, dns_name_t *owner, ldapdbnode_t **nodep)
 
 	node->magic = LDAPDBNODE_MAGIC;
 
-	ISC_LIST_INIT(node->rdatalist);
+	INIT_LIST(node->rdatalist);
 
 	*nodep = node;
 
@@ -318,22 +318,15 @@ findnode(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 					   ldapdb->ldap_cache, ldapdb->ldap_inst,
 					   name, &ldapdb->common.origin,
 					   &rdatalist);
-
-	if (result == ISC_R_NOMEMORY)
-		return ISC_R_NOMEMORY;
-
 	if (create == ISC_FALSE) {
-		/* No partial matches are allowed in this function */
-		if (result == DNS_R_PARTIALMATCH) {
-			result = ISC_R_NOTFOUND;
+		if (result != ISC_R_SUCCESS)
 			goto cleanup;
-		} else if (result != ISC_R_SUCCESS) {
-			return result;
-		}
+	} else {
+		if (result != ISC_R_NOTFOUND && result != ISC_R_SUCCESS)
+			goto cleanup;
 	}
 
 	CHECK(ldapdbnode_create(ldapdb->common.mctx, name, &node));
-
 	memcpy(&node->rdatalist, &rdatalist, sizeof(rdatalist));
 
 	*nodep = node;
