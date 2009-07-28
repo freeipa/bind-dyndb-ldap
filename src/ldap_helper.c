@@ -1892,13 +1892,12 @@ free_char_array(isc_mem_t *mctx, char ***valsp)
 }
 
 static isc_result_t
-ldap_rdttl_to_ldapmod(isc_mem_t *mctx,
-		      dns_rdatalist_t *rdlist, LDAPMod **changep)
+ldap_rdttl_to_ldapmod(isc_mem_t *mctx, dns_rdatalist_t *rdlist,
+		      LDAPMod **changep)
 {
 	LDAPMod *change = NULL;
 	ld_string_t *ttlval = NULL;
 	char **vals = NULL;
-	size_t vals_size;
 	isc_result_t result;
 
 	REQUIRE(changep != NULL && *changep == NULL);
@@ -1912,9 +1911,8 @@ ldap_rdttl_to_ldapmod(isc_mem_t *mctx,
 	change->mod_op = LDAP_MOD_REPLACE;
 	change->mod_type = "dnsTTL";
 
-	vals_size = 2 * sizeof(char *);
-	CHECKED_MEM_ALLOCATE(mctx, vals, vals_size);
-	memset(vals, 0, vals_size);
+	CHECKED_MEM_ALLOCATE(mctx, vals, 2 * sizeof(char *));
+	memset(vals, 0, 2 * sizeof(char *));
 	change->mod_values = vals;
 
 	CHECKED_MEM_ALLOCATE(mctx, vals[0], str_len(ttlval) + 1);
