@@ -288,4 +288,5 @@ objectclass ( 2.16.840.1.113730.3.8.6.1
 		idnsSOAserial $ idnsSOArefresh $ idnsSOAretry $ idnsSOAexpire $
 		idnsSOAminimum
 	)
+	MAY idnsUpdatePolicy
 )
