@@ -1921,11 +1921,10 @@ ldap_rdttl_to_ldapmod(isc_mem_t *mctx,
 	memcpy(vals[0], str_buf(ttlval), str_len(ttlval) + 1);
 
 	*changep = change;
-	return ISC_R_SUCCESS;
 
 cleanup:
 	if (ttlval) str_destroy(&ttlval);
-	if (change) free_ldapmod(mctx, &change);
+	if (change && result != ISC_R_SUCCESS) free_ldapmod(mctx, &change);
 
 	return result;
 }
