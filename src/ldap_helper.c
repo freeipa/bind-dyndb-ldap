@@ -1928,32 +1928,70 @@ cleanup:
 }
 
 /*
- * TODO: Handle updating of the SOA record, use the settings to determine if
- * this is allowed.
+ * Modify the SOA record of a zone, where DN of the zone is 'zone_dn'.
+ * The SOA record is a special case because we need to update serial,
+ * refresh, retry, expire and minimum attributes for each SOA record.
  */
+static isc_result_t
+modify_soa_record(ldap_connection_t *ldap_conn, const char *zone_dn,
+		  dns_rdata_t *rdata)
+{
+	isc_mem_t *mctx = ldap_conn->database->mctx;
+	dns_rdata_soa_t soa;
+	LDAPMod change[5];
+	LDAPMod *changep[6] = {
+		&change[0], &change[1], &change[2], &change[3], &change[4],
+		NULL
+	};
+
+#define SET_LDAP_MOD(index, name) \
+	change[index].mod_op = LDAP_MOD_REPLACE; \
+	change[index].mod_type = "idnsSOA" #name; \
+	change[index].mod_values = alloca(2 * sizeof(char *)); \
+	change[index].mod_values[0] = alloca(sizeof(soa.name) + 1); \
+	change[index].mod_values[1] = NULL; \
+	snprintf(change[index].mod_values[0], sizeof(soa.name) + 1, "%d", soa.name)
+
+	dns_rdata_tostruct(rdata, (void *)&soa, mctx);
+
+	SET_LDAP_MOD(0, serial);
+	SET_LDAP_MOD(1, refresh);
+	SET_LDAP_MOD(2, retry);
+	SET_LDAP_MOD(3, expire);
+	SET_LDAP_MOD(4, minimum);
+
+	dns_rdata_freestruct((void *)&soa);
+
+	return ldap_modify_do(ldap_conn, zone_dn, changep);
+
+#undef SET_LDAP_MOD
+}
+
 static isc_result_t
 modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		   dns_rdatalist_t *rdlist, int mod_op)
 {
 	isc_result_t result;
-	isc_mem_t *mctx;
+	isc_mem_t *mctx = ldap_inst->mctx;
 	ldap_connection_t *ldap_conn = NULL;
 	ld_string_t *owner_dn = NULL;
-	LDAPMod *change[3] = { NULL, NULL, NULL };
+	LDAPMod *change[3] = { NULL };
 
-	mctx = ldap_inst->mctx;
-
-	if (rdlist->type == dns_rdatatype_soa) {
-		result = ISC_R_SUCCESS;
-		goto cleanup;
-	}
+	if (rdlist->type == dns_rdatatype_soa && mod_op == LDAP_MOD_DELETE)
+		return ISC_R_SUCCESS;
 
 	ldap_conn = get_connection(ldap_inst);
 
 	CHECK(str_new(mctx, &owner_dn));
 	CHECK(dnsname_to_dn(ldap_inst, owner, owner_dn));
-	CHECK(ldap_rdatalist_to_ldapmod(mctx, rdlist, &change[0], mod_op));
 
+	if (rdlist->type == dns_rdatatype_soa) {
+		result = modify_soa_record(ldap_conn, str_buf(owner_dn),
+					   HEAD(rdlist->rdata));
+		goto cleanup;
+	}
+
+	CHECK(ldap_rdatalist_to_ldapmod(mctx, rdlist, &change[0], mod_op));
 	if (mod_op == LDAP_MOD_ADD) {
 		/* for now always replace the ttl on add */
 		CHECK(ldap_rdttl_to_ldapmod(mctx, rdlist, &change[1]));
