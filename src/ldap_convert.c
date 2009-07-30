@@ -85,8 +85,10 @@ dn_to_dnsname(isc_mem_t *mctx, const char *dn, dns_name_t *target)
 	CHECK(dns_name_fromtext(&name, &buffer, dns_rootname, 0, NULL));
 
 cleanup:
-	if (result != ISC_R_FAILURE)
+	if (result == ISC_R_SUCCESS)
 		result = dns_name_dupwithoffsets(&name, mctx, target);
+	else
+		log_error_r("failed to convert dn %s to DNS name", dn);
 
 	str_destroy(&str);
 
