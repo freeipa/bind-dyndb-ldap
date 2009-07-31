@@ -20,19 +20,11 @@
 #include <stdio.h>
 
 #include <isc/formatcheck.h>
+#include <isc/util.h>
 
 #include <dns/log.h>
 
 #include "log.h"
-
-#define MSG_BUFFER_SIZE 2048
-
-/*
- * TODO:
- * - Some compiler format checks would be nice.
- * - Think about log_unexpected_file_line(), maybe use something else.
- */
-
 
 void
 log_debug(int level, const char *format, ...)
@@ -40,16 +32,13 @@ log_debug(int level, const char *format, ...)
 	va_list args;
 
 	va_start(args, format);
+#ifndef LOG_AS_ERROR
+	UNUSED(level);
 	isc_log_vwrite(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
-		      ISC_LOG_DEBUG(level), format, args);
-#if 0
-	/*
-	 * For now, behave same as log_error(), so we can see every debugging
-	 * logs without the need to specify -d.
-	 */
+		       ISC_LOG_ERROR, format, args);
+#else
 	isc_log_vwrite(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
-		      ISC_LOG_ERROR, format, args);
-	(void)level;
+		       ISC_LOG_DEBUG(level), format, args);
 #endif
 
 	va_end(args);
@@ -62,7 +51,7 @@ log_error(const char *format, ...)
 
 	va_start(args, format);
 	isc_log_vwrite(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
-		      ISC_LOG_ERROR, format, args);
+		       ISC_LOG_ERROR, format, args);
 	va_end(args);
 
 }
