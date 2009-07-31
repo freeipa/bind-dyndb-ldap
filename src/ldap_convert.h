@@ -23,7 +23,7 @@
 #include <dns/types.h>
 
 #include "str.h"
-#include "ldap_helper.h"
+#include "zone_register.h"
 
 /*
  * Convert LDAP DN 'dn', to dns_name_t 'target'. 'target' needs to be
@@ -33,7 +33,7 @@
 isc_result_t dn_to_dnsname(isc_mem_t *mctx, const char *dn,
 			   dns_name_t *target);
 
-isc_result_t dnsname_to_dn(ldap_instance_t *ldap_inst, dns_name_t *name,
+isc_result_t dnsname_to_dn(zone_register_t *zr, dns_name_t *name,
 			   ld_string_t *target);
 
 isc_result_t ldap_attribute_to_rdatatype(const char *ldap_record,

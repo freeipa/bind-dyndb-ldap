@@ -34,9 +34,9 @@
 
 #include "str.h"
 #include "ldap_convert.h"
-#include "ldap_helper.h"
 #include "log.h"
 #include "util.h"
+#include "zone_register.h"
 
 /*
  * Consistency must be preserved in these tables.
@@ -190,13 +190,13 @@ explode_rdn(const char *rdn, char ***explodedp, int notypes)
 }
 
 isc_result_t
-dnsname_to_dn(ldap_instance_t *ldap_inst, dns_name_t *name, ld_string_t *target)
+dnsname_to_dn(zone_register_t *zr, dns_name_t *name, ld_string_t *target)
 {
 	isc_result_t result;
 	int label_count;
 	const char *zone_dn = NULL;
 
-	REQUIRE(ldap_inst != NULL);
+	REQUIRE(zr != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(target != NULL);
 
@@ -208,7 +208,7 @@ dnsname_to_dn(ldap_instance_t *ldap_inst, dns_name_t *name, ld_string_t *target)
 
 		INIT_BUFFERED_NAME(zone);
 
-		CHECK(get_zone_dn(ldap_inst, name, &zone_dn, &zone));
+		CHECK(zr_get_zone_dn(zr, name, &zone_dn, &zone));
 
 		dns_name_fullcompare(name, &zone, &dummy, &common_labels);
 		label_count = dns_name_countlabels(name) - common_labels;

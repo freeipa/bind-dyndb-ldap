@@ -55,6 +55,7 @@
 #include "settings.h"
 #include "str.h"
 #include "util.h"
+#include "zone_register.h"
 
 
 #define DEFAULT_TTL 86400
@@ -108,8 +109,7 @@ struct ldap_instance {
 	LIST(ldap_connection_t)	conn_list;
 
 	/* Our own list of zones. */
-	isc_rwlock_t		zone_rwlock;
-	dns_rbt_t		*zone_names;
+	zone_register_t		*zone_register;
 
 	/* krb5 kinit mutex */
 	isc_mutex_t		kinit_lock;
@@ -199,13 +199,9 @@ const ldap_auth_pair_t supported_ldap_auth[] = {
  */
 
 /* TODO: reorganize this stuff & clean it up. */
-void string_deleter(void *arg1, void *arg2);
 static isc_result_t new_ldap_connection(ldap_instance_t *ldap_inst,
 		ldap_connection_t **ldap_connp);
 static void destroy_ldap_connection(ldap_connection_t **ldap_connp);
-static isc_result_t add_or_modify_zone(ldap_instance_t *ldap_inst, const char *dn,
-		const char *db_name, const char *update_str,
-		dns_zonemgr_t *zmgr);
 
 static isc_result_t findrdatatype_or_create(isc_mem_t *mctx,
 		ldapdb_rdatalist_t *rdatalist, ldap_entry_t *entry,
@@ -312,8 +308,7 @@ new_ldap_instance(isc_mem_t *mctx, dns_view_t *view, ldap_instance_t **ldap_inst
 
 	INIT_LIST(ldap_inst->conn_list);
 
-	CHECK(isc_rwlock_init(&ldap_inst->zone_rwlock, 0, 0));
-	CHECK(dns_rbt_create(mctx, string_deleter, mctx, &ldap_inst->zone_names));
+	CHECK(zr_create(mctx, &ldap_inst->zone_register));
 
 	CHECK(isc_mutex_init(&ldap_inst->kinit_lock));
 
@@ -430,8 +425,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 
 	DESTROYLOCK(&ldap_inst->kinit_lock);
 
-	dns_rbt_destroy(&ldap_inst->zone_names);
-	isc_rwlock_destroy(&ldap_inst->zone_rwlock);
+	zr_destroy(&ldap_inst->zone_register);
 
 	isc_mem_putanddetach(&ldap_inst->mctx, ldap_inst, sizeof(ldap_instance_t));
 
@@ -503,9 +497,88 @@ destroy_ldap_connection(ldap_connection_t **ldap_connp)
 	*ldap_connp = NULL;
 }
 
-/* TODO: Delete old zones. */
+/*
+ * Create a new zone with origin 'name'. The zone will be added to the
+ * view set in 'ldap_inst'.
+ */
+static isc_result_t
+create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, const char *db_name,
+	    dns_zonemgr_t *zmgr, dns_zone_t **zonep)
+{
+	isc_result_t result;
+	dns_zone_t *zone = NULL;
+	const char *argv[2];
+
+	REQUIRE(ldap_inst != NULL);
+	REQUIRE(name != NULL);
+	REQUIRE(db_name != NULL);
+	REQUIRE(zmgr != NULL);
+	REQUIRE(zonep != NULL && *zonep == NULL);
+
+	argv[0] = ldapdb_impname;
+	argv[1] = db_name;
+
+	result = dns_view_findzone(ldap_inst->view, name, &zone);
+	if (result == ISC_R_SUCCESS) {
+		result = ISC_R_EXISTS;
+		log_error_r("failed to create new zone");
+		goto cleanup;
+	} else if (result != ISC_R_NOTFOUND) {
+		log_error_r("dns_view_findzone() failed");
+		goto cleanup;
+	}
+
+	CHECK(dns_zone_create(&zone, ldap_inst->mctx));
+	dns_zone_setview(zone, ldap_inst->view);
+	CHECK(dns_zone_setorigin(zone, name));
+	dns_zone_setclass(zone, dns_rdataclass_in);
+	dns_zone_settype(zone, dns_zone_master);
+	CHECK(dns_zone_setdbtype(zone, 2, argv));
+	CHECK(dns_zonemgr_managezone(zmgr, zone));
+	CHECK(dns_view_addzone(ldap_inst->view, zone));
+
+	*zonep = zone;
+	return ISC_R_SUCCESS;
+
+cleanup:
+	if (zone != NULL)
+		dns_zone_detach(&zone);
+
+	return result;
+}
+
+static isc_result_t
+modify_zone(dns_zone_t *zone, const char *update_str)
+{
+	REQUIRE(zone != NULL);
+
+	/*
+	 * This is meant only for debugging.
+	 * DANGEROUS: Do not leave uncommented!
+	 */
+#if 0
+	{
+		dns_acl_t *any;
+		dns_acl_any(dns_zone_getmctx(zone), &any);
+		dns_zone_setupdateacl(zone, any);
+		dns_acl_detach(&any);
+	}
+
+	return ISC_R_SUCCESS;
+#endif
+
+	/* Set simple update table. */
+	return acl_configure_zone_ssutable(update_str, zone);
+}
+
+/*
+ * Search in LDAP for zones. If 'zmgr' is not NULL, add the zones. Otherwise,
+ * we assume that we are past the configuration phase and no new zones can be
+ * added. In that case, only modify the zone's properties, like the update
+ * policy.
+ */
 isc_result_t
-refresh_zones_from_ldap(ldap_instance_t *ldap_inst, const char *name,
+refresh_zones_from_ldap(ldap_instance_t *ldap_inst, const char *db_name,
 			dns_zonemgr_t *zmgr)
 {
 	isc_result_t result = ISC_R_SUCCESS;
@@ -516,14 +589,14 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, const char *name,
 	};
 
 	REQUIRE(ldap_inst != NULL);
-	REQUIRE(name != NULL);
+	REQUIRE(db_name != NULL);
 
-	log_debug(2, "refreshing list of zones");
+	log_debug(2, "refreshing list of zones for %s", db_name);
 
 	ldap_conn = get_connection(ldap_inst);
 
-	CHECK(ldap_query(ldap_conn, str_buf(ldap_inst->base), LDAP_SCOPE_SUBTREE,
-			 attrs, 0,
+	CHECK(ldap_query(ldap_conn, str_buf(ldap_inst->base),
+			 LDAP_SCOPE_SUBTREE, attrs, 0,
 			 "(&(objectClass=idnsZone)(idnsZoneActive=True))"));
 	CHECK(cache_query_results(ldap_conn));
 
@@ -531,25 +604,48 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, const char *name,
 	     entry != NULL;
 	     entry = NEXT(entry, link)) {
 		const char *dn;
-		const char *update_str = NULL;
 		ldap_value_list_t values;
+		dns_name_t name;
+		dns_zone_t *zone;
 
+		zone = NULL;
+		dns_name_init(&name, NULL);
+
+		/* Derive the dns name of the zone from the DN. */
 		dn = get_dn(ldap_conn, entry);
+		CHECK_NEXT(dn_to_dnsname(ldap_inst->mctx, dn, &name));
 
-		/* Look if there's an update policy. */
+		/* If we are in the configuration phase, create the zone,
+		 * otherwise we will just search for it in our zone register
+		 * and modify the zone we found. */
+		if (zmgr != NULL) {
+			CHECK_NEXT(create_zone(ldap_inst, &name, db_name, zmgr,
+					       &zone));
+			CHECK_NEXT(zr_add_zone(ldap_inst->zone_register, zone,
+					       dn));
+			log_error("created zone %p: %s", zone, dn);
+		} else {
+			CHECK_NEXT(zr_get_zone_ptr(ldap_inst->zone_register,
+						   &name, &zone));
+		}
+
+		log_error("modifying zone %p: %s", zone, dn);
+		/* Get the update policy and update the zone with it. */
 		result = get_values(entry, "idnsUpdatePolicy", &values);
 		if (result == ISC_R_SUCCESS)
-			update_str = HEAD(values)->value;
+			modify_zone(zone, HEAD(values)->value);
+		else
+			modify_zone(zone, NULL);
 
-		result = add_or_modify_zone(ldap_inst, dn, name, update_str,
-					    zmgr);
-
-		/* TODO: move this to the add_or_modify_zone() */
-		if (result != ISC_R_SUCCESS)
-			log_error("failed to add/modify zone %s", dn);
+next:
+		if (dns_name_dynamic(&name))
+			dns_name_free(&name, ldap_inst->mctx);
+		if (zone != NULL)
+			dns_zone_detach(&zone);
 	}
 
 cleanup:
+	/* XXX: Cleanup here */
 	put_connection(ldap_conn);
 
 	log_debug(2, "finished refreshing list of zones");
@@ -586,148 +682,6 @@ get_dn(ldap_connection_t *inst)
 
 }
 #endif
-
-void
-string_deleter(void *arg1, void *arg2)
-{
-	char *string = arg1;
-	isc_mem_t *mctx = arg2;
-
-	REQUIRE(string != NULL);
-	REQUIRE(mctx != NULL);
-
-	isc_mem_free(mctx, string);
-}
-
-isc_result_t
-get_zone_dn(ldap_instance_t *ldap_inst, dns_name_t *name, const char **dn,
-	    dns_name_t *matched_name)
-{
-	isc_result_t result;
-	dns_rbt_t *rbt;
-	void *data = NULL;
-
-	REQUIRE(ldap_inst != NULL);
-	REQUIRE(name != NULL);
-	REQUIRE(dn != NULL && *dn == NULL);
-	REQUIRE(matched_name != NULL);
-
-	RWLOCK(&ldap_inst->zone_rwlock, isc_rwlocktype_read);
-	rbt = ldap_inst->zone_names;
-
-	result = dns_rbt_findname(rbt, name, 0, matched_name, &data);
-	if (result == DNS_R_PARTIALMATCH)
-		result = ISC_R_SUCCESS;
-	if (result == ISC_R_SUCCESS) {
-		INSIST(data != NULL);
-		*dn = data;
-	}
-
-	RWUNLOCK(&ldap_inst->zone_rwlock, isc_rwlocktype_read);
-
-	return result;
-}
-
-static isc_result_t
-add_zone_dn(ldap_instance_t *ldap_inst, dns_name_t *name, const char *dn)
-{
-	isc_result_t result;
-	dns_rbt_t *rbt;
-	void *data = NULL;
-	char *new_dn = NULL;
-
-	REQUIRE(ldap_inst != NULL);
-	REQUIRE(name != NULL);
-	REQUIRE(dn != NULL);
-
-	RWLOCK(&ldap_inst->zone_rwlock, isc_rwlocktype_write);
-	rbt = ldap_inst->zone_names;
-
-	CHECKED_MEM_STRDUP(ldap_inst->mctx, dn, new_dn);
-
-	/* First make sure the node doesn't exist. */
-	result = dns_rbt_findname(rbt, name, 0, NULL, &data);
-	if (result == ISC_R_SUCCESS)
-		CHECK(dns_rbt_deletename(rbt, name, ISC_FALSE));
-	else if (result != ISC_R_NOTFOUND && result != DNS_R_PARTIALMATCH)
-		goto cleanup;
-
-	/* Now add it. */
-	CHECK(dns_rbt_addname(rbt, name, (void *)new_dn));
-
-cleanup:
-	RWUNLOCK(&ldap_inst->zone_rwlock, isc_rwlocktype_write);
-
-	if (result != ISC_R_SUCCESS && new_dn != NULL)
-		isc_mem_free(ldap_inst->mctx, new_dn);
-
-	return result;
-}
-
-/* FIXME: Better error handling. */
-static isc_result_t
-add_or_modify_zone(ldap_instance_t *ldap_inst, const char *dn, const char *db_name,
-		   const char *update_str, dns_zonemgr_t *zmgr)
-{
-	isc_result_t result;
-	dns_zone_t *zone;
-	dns_name_t name;
-	const char *argv[2];
-
-	REQUIRE(ldap_inst != NULL);
-	REQUIRE(dn != NULL);
-	REQUIRE(db_name != NULL);
-
-	argv[0] = ldapdb_impname;
-	argv[1] = db_name;
-
-	zone = NULL;
-	dns_name_init(&name, NULL);
-
-	CHECK(dn_to_dnsname(ldap_inst->mctx, dn, &name));
-
-	/* If the zone doesn't exist, create it. */
-	result = dns_view_findzone(ldap_inst->view, &name, &zone);
-	if (result == ISC_R_NOTFOUND) {
-		CHECK(dns_zone_create(&zone, ldap_inst->mctx));
-		dns_zone_setview(zone, ldap_inst->view);
-		CHECK(dns_zone_setorigin(zone, &name));
-		dns_zone_setclass(zone, dns_rdataclass_in);
-		dns_zone_settype(zone, dns_zone_master);
-		CHECK(dns_zone_setdbtype(zone, 2, argv));
-		CHECK(dns_zonemgr_managezone(zmgr, zone));
-		CHECK(dns_view_addzone(ldap_inst->view, zone));
-		CHECK(add_zone_dn(ldap_inst, &name, dn));
-	} else if (result != ISC_R_SUCCESS) {
-		goto cleanup;
-	}
-
-	/* Set simple update table. */
-	CHECK(acl_configure_zone_ssutable(update_str, zone));
-
-	/*
-	 * ACLs:
-	 * dns_zone_setqueryacl()
-	 * dns_zone_setqueryonacl()
-	 * dns_zone_setupdateacl()
-	 * dns_zone_setforwardacl()
-	 * dns_zone_setxfracl()
-	 */
-
-	/*
-	 * maybe?
-	 * dns_zone_setnotifytype()
-	 * dns_zone_setalsonotify()
-	 */
-
-cleanup:
-	if (dns_name_dynamic(&name))
-		dns_name_free(&name, ldap_inst->mctx);
-	if (zone != NULL)
-		dns_zone_detach(&zone);
-
-	return result;
-}
 
 static isc_result_t
 findrdatatype_or_create(isc_mem_t *mctx, ldapdb_rdatalist_t *rdatalist,
@@ -853,7 +807,7 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 
 	INIT_LIST(*rdatalist);
 	CHECK(str_new(mctx, &string));
-	CHECK(dnsname_to_dn(ldap_inst, name, string));
+	CHECK(dnsname_to_dn(ldap_inst->zone_register, name, string));
 
 	CHECK(ldap_query(ldap_conn, str_buf(string), LDAP_SCOPE_BASE, NULL, 0,
 				"(objectClass=idnsRecord)"));
@@ -1983,7 +1937,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	ldap_conn = get_connection(ldap_inst);
 
 	CHECK(str_new(mctx, &owner_dn));
-	CHECK(dnsname_to_dn(ldap_inst, owner, owner_dn));
+	CHECK(dnsname_to_dn(ldap_inst->zone_register, owner, owner_dn));
 
 	if (rdlist->type == dns_rdatatype_soa) {
 		result = modify_soa_record(ldap_conn, str_buf(owner_dn),
