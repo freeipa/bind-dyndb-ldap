@@ -14,7 +14,8 @@ HDRS =				\
 	settings.h		\
 	str.h			\
 	util.h			\
-	zone_manager.h
+	zone_manager.h		\
+	zone_register.h
 
 ldap_la_SOURCES =		\
 	$(HDRS)			\
@@ -29,7 +30,8 @@ ldap_la_SOURCES =		\
 	semaphore.c		\
 	settings.c		\
 	str.c			\
-	zone_manager.c
+	zone_manager.c		\
+	zone_register.c
 
 ldap_la_CFLAGS = -Wall -Wextra -std=c99 -O2
 
