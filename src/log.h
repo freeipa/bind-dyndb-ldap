@@ -25,6 +25,12 @@
 #define fatal_error(...) \
     isc_error_fatal(__FILE__, __LINE__, __VA_ARGS__)
 
+#define log_bug(fmt, ...) \
+	log_error("bug in %s(): " fmt, __func__,##__VA_ARGS__)
+
+#define log_error_r(fmt, ...) \
+	log_error(fmt ": %s", ##__VA_ARGS__, isc_result_totext(result))
+
 /* Basic logging functions */
 void log_debug(int level, const char *format, ...) ISC_FORMAT_PRINTF(2, 3);
 void log_error(const char *format, ...) ISC_FORMAT_PRINTF(1, 2);
