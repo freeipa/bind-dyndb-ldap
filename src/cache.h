@@ -28,8 +28,7 @@ typedef struct ldap_cache ldap_cache_t;
  * Create a new cache.
  */
 isc_result_t
-new_ldap_cache(isc_mem_t *mctx, ldap_cache_t **cachep,
-	       const char * const *argv);
+new_ldap_cache(isc_mem_t *mctx, const char * const *argv, ldap_cache_t **cachep);
 
 /*
  * Free all resources used up by the cache.

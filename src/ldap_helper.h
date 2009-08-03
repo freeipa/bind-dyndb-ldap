@@ -83,11 +83,13 @@ isc_result_t ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
  * DNS_R_PARTIALMATCH
  */
 
-isc_result_t new_ldap_instance(isc_mem_t *mctx, dns_view_t *view, ldap_instance_t **ldap_instp,
-			 const char * const *argv);
+isc_result_t
+new_ldap_instance(isc_mem_t *mctx, const char *db_name,
+		  const char * const *argv, dns_dyndb_arguments_t *dyndb_args,
+		  ldap_instance_t **ldap_instp);
 void destroy_ldap_instance(ldap_instance_t **ldap_inst);
-isc_result_t refresh_zones_from_ldap(ldap_instance_t *ldap_inst,
-				     const char *db_name, dns_zonemgr_t *zmgr);
+isc_result_t
+refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t create);
 
 /* Functions for writing to LDAP. */
 isc_result_t write_to_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,

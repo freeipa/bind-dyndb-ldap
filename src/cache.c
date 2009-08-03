@@ -101,8 +101,7 @@ cleanup:
 }
 
 isc_result_t
-new_ldap_cache(isc_mem_t *mctx, ldap_cache_t **cachep,
-	       const char * const *argv)
+new_ldap_cache(isc_mem_t *mctx, const char *const *argv, ldap_cache_t **cachep)
 {
 	isc_result_t result;
 	ldap_cache_t *cache = NULL;

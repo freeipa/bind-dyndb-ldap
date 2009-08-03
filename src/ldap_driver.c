@@ -1021,10 +1021,6 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 		    dns_dyndb_arguments_t *dyndb_args)
 {
 	isc_result_t result;
-	ldap_instance_t *ldap_inst = NULL;
-	ldap_cache_t *ldap_cache = NULL;
-	dns_view_t *view;
-	dns_zonemgr_t *zmgr;
 
 	REQUIRE(mctx != NULL);
 	REQUIRE(name != NULL);
@@ -1032,9 +1028,6 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 	REQUIRE(dyndb_args != NULL);
 
 	log_debug(2, "registering dynamic ldap driver for %s.", name);
-
-	view = dns_dyndb_get_view(dyndb_args);
-	zmgr = dns_dyndb_get_zonemgr(dyndb_args);
 
 	/*
 	 * We need to discover what rdataset methods does
@@ -1060,27 +1053,8 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 	if (result != ISC_R_SUCCESS && result != ISC_R_EXISTS)
 		return result;
 
-	CHECK(new_ldap_instance(mctx, view, &ldap_inst, argv));
-	CHECK(new_ldap_cache(mctx, &ldap_cache, argv));
-	CHECK(manager_add_db_instance(mctx, name, ldap_inst, ldap_cache, zmgr));
-
-	/*
-	 * TODO: now fetch all zones and initialize ldap zone manager
-	 * (periodically check for new zones)
-	 * - manager has to share server zonemgr (ns_g_server->zonemgr)
-	 *
-	 * zone has to be bind-ed to specified view:
-	 * - dns_view_findzone (check if zone already exists)
-	 * - dns_view_addzone
-	 */
-
-	return ISC_R_SUCCESS;
-
-cleanup:
-	if (ldap_inst != NULL)
-		destroy_ldap_instance(&ldap_inst);
-	if (ldap_cache != NULL)
-		destroy_ldap_cache(&ldap_cache);
+	/* Finally, create the instance. */
+	result = manager_create_db_instance(mctx, name, argv, dyndb_args);
 
 	return result;
 }

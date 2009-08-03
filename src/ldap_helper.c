@@ -18,6 +18,7 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
+#include <dns/dynamic_db.h>
 #include <dns/rbt.h>
 #include <dns/rdata.h>
 #include <dns/rdataclass.h>
@@ -102,7 +103,11 @@ struct ldap_auth_pair {
 /* These are typedefed in ldap_helper.h */
 struct ldap_instance {
 	isc_mem_t		*mctx;
+
+	/* These are needed for zone creation. */
+	const char *		db_name;
 	dns_view_t		*view;
+	dns_zonemgr_t		*zmgr;
 
 	/* List of LDAP connections. */
 	semaphore_t		conn_semaphore;
@@ -268,8 +273,9 @@ static isc_result_t modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_
 		dns_rdatalist_t *rdlist, int mod_op);
 
 isc_result_t
-new_ldap_instance(isc_mem_t *mctx, dns_view_t *view, ldap_instance_t **ldap_instp,
-	    const char * const *argv)
+new_ldap_instance(isc_mem_t *mctx, const char *db_name,
+		  const char * const *argv, dns_dyndb_arguments_t *dyndb_args,
+		  ldap_instance_t **ldap_instp)
 {
 	unsigned int i;
 	isc_result_t result;
@@ -292,7 +298,6 @@ new_ldap_instance(isc_mem_t *mctx, dns_view_t *view, ldap_instance_t **ldap_inst
 	};
 
 	REQUIRE(mctx != NULL);
-	REQUIRE(view != NULL);
 	REQUIRE(ldap_instp != NULL && *ldap_instp == NULL);
 
 	ldap_inst = isc_mem_get(mctx, sizeof(ldap_instance_t));
@@ -302,7 +307,9 @@ new_ldap_instance(isc_mem_t *mctx, dns_view_t *view, ldap_instance_t **ldap_inst
 	ZERO_PTR(ldap_inst);
 
 	isc_mem_attach(mctx, &ldap_inst->mctx);
-	ldap_inst->view = view;
+	ldap_inst->db_name = db_name;
+	ldap_inst->view = dns_dyndb_get_view(dyndb_args);
+	ldap_inst->zmgr = dns_dyndb_get_zonemgr(dyndb_args);
 	/* commented out for now, cause named to hang */
 	//dns_view_attach(view, &ldap_inst->view);
 
@@ -499,11 +506,10 @@ destroy_ldap_connection(ldap_connection_t **ldap_connp)
 
 /*
  * Create a new zone with origin 'name'. The zone will be added to the
- * view set in 'ldap_inst'.
+ * ldap_inst->view.
  */
 static isc_result_t
-create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, const char *db_name,
-	    dns_zonemgr_t *zmgr, dns_zone_t **zonep)
+create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, dns_zone_t **zonep)
 {
 	isc_result_t result;
 	dns_zone_t *zone = NULL;
@@ -511,12 +517,10 @@ create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, const char *db_name,
 
 	REQUIRE(ldap_inst != NULL);
 	REQUIRE(name != NULL);
-	REQUIRE(db_name != NULL);
-	REQUIRE(zmgr != NULL);
 	REQUIRE(zonep != NULL && *zonep == NULL);
 
 	argv[0] = ldapdb_impname;
-	argv[1] = db_name;
+	argv[1] = ldap_inst->db_name;
 
 	result = dns_view_findzone(ldap_inst->view, name, &zone);
 	if (result == ISC_R_SUCCESS) {
@@ -534,7 +538,7 @@ create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, const char *db_name,
 	dns_zone_setclass(zone, dns_rdataclass_in);
 	dns_zone_settype(zone, dns_zone_master);
 	CHECK(dns_zone_setdbtype(zone, 2, argv));
-	CHECK(dns_zonemgr_managezone(zmgr, zone));
+	CHECK(dns_zonemgr_managezone(ldap_inst->zmgr, zone));
 	CHECK(dns_view_addzone(ldap_inst->view, zone));
 
 	*zonep = zone;
@@ -572,14 +576,13 @@ modify_zone(dns_zone_t *zone, const char *update_str)
 }
 
 /*
- * Search in LDAP for zones. If 'zmgr' is not NULL, add the zones. Otherwise,
+ * Search in LDAP for zones. If 'create' is true, create the zones. Otherwise,
  * we assume that we are past the configuration phase and no new zones can be
  * added. In that case, only modify the zone's properties, like the update
  * policy.
  */
 isc_result_t
-refresh_zones_from_ldap(ldap_instance_t *ldap_inst, const char *db_name,
-			dns_zonemgr_t *zmgr)
+refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t create)
 {
 	isc_result_t result = ISC_R_SUCCESS;
 	ldap_connection_t *ldap_conn;
@@ -589,9 +592,8 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, const char *db_name,
 	};
 
 	REQUIRE(ldap_inst != NULL);
-	REQUIRE(db_name != NULL);
 
-	log_debug(2, "refreshing list of zones for %s", db_name);
+	log_debug(2, "refreshing list of zones for %s", ldap_inst->db_name);
 
 	ldap_conn = get_connection(ldap_inst);
 
@@ -618,18 +620,17 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, const char *db_name,
 		/* If we are in the configuration phase, create the zone,
 		 * otherwise we will just search for it in our zone register
 		 * and modify the zone we found. */
-		if (zmgr != NULL) {
-			CHECK_NEXT(create_zone(ldap_inst, &name, db_name, zmgr,
-					       &zone));
+		if (create) {
+			CHECK_NEXT(create_zone(ldap_inst, &name, &zone));
 			CHECK_NEXT(zr_add_zone(ldap_inst->zone_register, zone,
 					       dn));
-			log_error("created zone %p: %s", zone, dn);
+			log_debug(2, "created zone %p: %s", zone, dn);
 		} else {
 			CHECK_NEXT(zr_get_zone_ptr(ldap_inst->zone_register,
 						   &name, &zone));
 		}
 
-		log_error("modifying zone %p: %s", zone, dn);
+		log_debug(2, "modifying zone %p: %s", zone, dn);
 		/* Get the update policy and update the zone with it. */
 		result = get_values(entry, "idnsUpdatePolicy", &values);
 		if (result == ISC_R_SUCCESS)

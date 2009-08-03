@@ -20,8 +20,11 @@
 #include <isc/mem.h>
 #include <isc/once.h>
 #include <isc/result.h>
+#include <isc/task.h>
+#include <isc/timer.h>
 #include <isc/util.h>
 
+#include <dns/dynamic_db.h>
 #include <dns/view.h>
 #include <dns/zone.h>
 
@@ -30,6 +33,7 @@
 #include "ldap_convert.h"
 #include "ldap_helper.h"
 #include "log.h"
+#include "settings.h"
 #include "util.h"
 #include "zone_manager.h"
 
@@ -38,7 +42,7 @@ struct db_instance {
 	char			*name;
 	ldap_instance_t		*ldap_inst;
 	ldap_cache_t		*ldap_cache;
-	dns_zonemgr_t		*dns_zone_manager;
+	isc_timer_t		*timer;
 	LINK(db_instance_t)	link;
 };
 
@@ -86,8 +90,12 @@ destroy_db_instance(db_instance_t **db_instp)
 
 	db_inst = *db_instp;
 
-	destroy_ldap_instance(&db_inst->ldap_inst);
-	destroy_ldap_cache(&db_inst->ldap_cache);
+	if (db_inst->timer != NULL)
+		isc_timer_detach(&db_inst->timer);
+	if (db_inst->ldap_inst != NULL)
+		destroy_ldap_instance(&db_inst->ldap_inst);
+	if (db_inst->ldap_cache != NULL)
+		destroy_ldap_cache(&db_inst->ldap_cache);
 	if (db_inst->name != NULL)
 		isc_mem_free(db_inst->mctx, db_inst->name);
 
@@ -96,22 +104,26 @@ destroy_db_instance(db_instance_t **db_instp)
 	*db_instp = NULL;
 }
 
+static void refresh_zones_action(isc_task_t *task, isc_event_t *event);
+
 isc_result_t
-manager_add_db_instance(isc_mem_t *mctx, const char *name, ldap_instance_t *ldap_inst,
-			ldap_cache_t *ldap_cache, dns_zonemgr_t *zmgr)
+manager_create_db_instance(isc_mem_t *mctx, const char *name,
+			   const char * const *argv,
+			   dns_dyndb_arguments_t *dyndb_args)
 {
 	isc_result_t result;
-	db_instance_t *db_inst;
+	db_instance_t *db_inst = NULL;
+	unsigned int zone_refresh;
+	setting_t manager_settings[] = {
+		{ "zone_refresh", default_uint(0) },
+		end_of_settings
+	};
 
 	REQUIRE(mctx != NULL);
 	REQUIRE(name != NULL);
-	REQUIRE(ldap_inst != NULL);
-	REQUIRE(ldap_cache != NULL);
-	REQUIRE(zmgr != NULL);
+	REQUIRE(dyndb_args != NULL);
 
 	isc_once_do(&initialize_once, initialize_manager);
-
-	db_inst = NULL;
 
 	result = find_db_instance(name, &db_inst);
 	if (result == ISC_R_SUCCESS) {
@@ -123,19 +135,38 @@ manager_add_db_instance(isc_mem_t *mctx, const char *name, ldap_instance_t *ldap
 		result = ISC_R_SUCCESS;
 	}
 
+	/* Parse settings. */
+	manager_settings[0].target = &zone_refresh;
+	CHECK(set_settings(manager_settings, argv));
+
 	CHECKED_MEM_GET_PTR(mctx, db_inst);
-	CHECKED_MEM_STRDUP(mctx, name, db_inst->name);
-	db_inst->mctx = NULL;
+	ZERO_PTR(db_inst);
+
 	isc_mem_attach(mctx, &db_inst->mctx);
-	db_inst->ldap_inst = ldap_inst;
-	db_inst->ldap_cache = ldap_cache;
-	db_inst->dns_zone_manager = zmgr;
+	CHECKED_MEM_STRDUP(mctx, name, db_inst->name);
+	CHECK(new_ldap_instance(mctx, db_inst->name, argv, dyndb_args, &db_inst->ldap_inst));
+	CHECK(new_ldap_cache(mctx, argv, &db_inst->ldap_cache));
+
+	refresh_zones_from_ldap(db_inst->ldap_inst, ISC_TRUE);
+
+	/* Add a timer to periodically refresh the zones. */
+	if (zone_refresh) {
+		isc_task_t *task;
+		isc_timermgr_t *timer_mgr;
+		isc_interval_t interval;
+
+		task = dns_dyndb_get_task(dyndb_args);
+		timer_mgr = dns_dyndb_get_timermgr(dyndb_args);
+		isc_interval_set(&interval, zone_refresh, 0);
+
+		CHECK(isc_timer_create(timer_mgr, isc_timertype_ticker, NULL,
+				       &interval, task, refresh_zones_action,
+				       db_inst, &db_inst->timer));
+	}
 
 	LOCK(&instance_list_lock);
 	APPEND(instance_list, db_inst, link);
 	UNLOCK(&instance_list_lock);
-
-	refresh_zones_from_ldap(ldap_inst, name, zmgr);
 
 	return ISC_R_SUCCESS;
 
@@ -146,25 +177,23 @@ cleanup:
 	return result;
 }
 
-void
-manager_refresh_zones(void)
+static void
+refresh_zones_action(isc_task_t *task, isc_event_t *event)
 {
-	db_instance_t *db_inst;
+	db_instance_t *db_inst = event->ev_arg;
+
+	UNUSED(task);
 
 	LOCK(&instance_list_lock);
-	db_inst = HEAD(instance_list);
-	while (db_inst != NULL) {
-		refresh_zones_from_ldap(db_inst->ldap_inst, db_inst->name,
-					db_inst->dns_zone_manager);
-		db_inst = NEXT(db_inst, link);
-	}
-
+	refresh_zones_from_ldap(db_inst->ldap_inst, ISC_FALSE);
 	UNLOCK(&instance_list_lock);
+
+	isc_event_free(&event);
 }
 
 isc_result_t
 manager_get_ldap_instance_and_cache(const char *name, ldap_instance_t **ldap_inst,
-			      ldap_cache_t **ldap_cache)
+				    ldap_cache_t **ldap_cache)
 {
 	isc_result_t result;
 	db_instance_t *db_inst;
