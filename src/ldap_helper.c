@@ -1215,7 +1215,7 @@ ldap_query(ldap_connection_t *ldap_conn, const char *base, int scope, char **att
 		  str_buf(ldap_conn->query_string));
 
 	if (ldap_conn->handle == NULL) {
-		log_error("bug in ldap_query(): ldap_conn->handle is NULL");
+		log_bug("ldap_conn->handle is NULL");
 		return ISC_R_FAILURE;
 	}
 
@@ -1443,51 +1443,40 @@ ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
 	if (ld == NULL || sin == NULL)
 		return LDAP_PARAM_ERROR;
 
+	log_debug(4, "doing interactive bind");
 	for (in = sin; in != NULL && in->id != SASL_CB_LIST_END; in++) {
 		switch (in->id) {
 		case SASL_CB_USER:
-			log_error("SASL_CB_USER");
+			log_debug(4, "got request for SASL_CB_USER");
 			in->result = str_buf(ldap_inst->sasl_user);
 			in->len = str_len(ldap_inst->sasl_user);
 			ret = LDAP_SUCCESS;
-			break;
-		case SASL_CB_NOECHOPROMPT:
-			log_error("SASL_CB_NOECHOPROMPT");
-			in->result = NULL;
-			in->len = 0;
-			ret = LDAP_OTHER;
-			break;
-		case SASL_CB_ECHOPROMPT:
-			log_error("SASL_CB_ECHOPROMPT");
-			in->result = NULL;
-			in->len = 0;
-			ret = LDAP_OTHER;
 			break;
 		case SASL_CB_GETREALM:
-			log_error("SASL_CB_GETREALM");
-			in->result = NULL;
-			in->len = 0;
-			ret = LDAP_OTHER;
+			log_debug(4, "got request for SASL_CB_GETREALM");
+			in->result = str_buf(ldap_inst->sasl_realm);
+			in->len = str_len(ldap_inst->sasl_realm);
+			ret = LDAP_SUCCESS;
 			break;
+#if 0
 		case SASL_CB_AUTHNAME:
-			log_error("SASL_CB_AUTHNAME");
+			log_debug(4, "got request for SASL_CB_AUTHNAME");
 			in->result = str_buf(ldap_inst->sasl_user);
 			in->len = str_len(ldap_inst->sasl_user);
 			ret = LDAP_SUCCESS;
 			break;
+#endif
 		case SASL_CB_PASS:
-			log_error("SASL_CB_PASS");
+			log_debug(4, "got request for SASL_CB_PASS");
 			in->result = str_buf(ldap_inst->password);
 			in->len = str_len(ldap_inst->password);
 			ret = LDAP_SUCCESS;
 			break;
 		default:
-			log_error("SASL_UNKNOWN");
 			in->result = NULL;
 			in->len = 0;
 			ret = LDAP_OTHER;
 		}
-		log_error("result: %s", (char *)(in->result?in->result:""));
 	}
 
 	return ret;
@@ -1545,9 +1534,6 @@ ldap_reconnect(ldap_connection_t *ldap_conn)
 	ldap_instance_t *ldap_inst;
 	const char *bind_dn = NULL;
 	const char *password = NULL;
-#if 0
-	struct berval *servercred = NULL;
-#endif
 
 	ldap_inst = ldap_conn->database;
 
@@ -1562,6 +1548,8 @@ ldap_reconnect(ldap_connection_t *ldap_conn)
 			return ISC_R_FAILURE;
 	}
 
+	/* If either bind_dn or the password is not set, we will use
+	 * password-less bind. */
 	if (str_len(ldap_inst->bind_dn) > 0 && str_len(ldap_inst->password) > 0) {
 		bind_dn = str_buf(ldap_inst->bind_dn);
 		password = str_buf(ldap_inst->password);
@@ -1593,7 +1581,6 @@ ldap_reconnect(ldap_connection_t *ldap_conn)
 		ret = ldap_simple_bind_s(ldap_conn->handle, bind_dn, password);
 		break;
 	case AUTH_SASL:
-
 		if (strcmp(str_buf(ldap_inst->sasl_mech), "GSSAPI") == 0) {
 			isc_result_t result;
 			LOCK(&ldap_inst->kinit_lock);
@@ -1605,7 +1592,8 @@ ldap_reconnect(ldap_connection_t *ldap_conn)
 				return result;
 		}
 
-		log_error("%s", str_buf(ldap_inst->sasl_mech));
+		log_debug(4, "trying interactive bind using %s mechanism",
+			  str_buf(ldap_inst->sasl_mech));
 		ret = ldap_sasl_interactive_bind_s(ldap_conn->handle, NULL,
 						   str_buf(ldap_inst->sasl_mech),
 						   NULL, NULL, LDAP_SASL_QUIET,
@@ -1613,8 +1601,7 @@ ldap_reconnect(ldap_connection_t *ldap_conn)
 						   ldap_inst);
 		break;
 	default:
-		log_error("bug in ldap_connect(): unsupported "
-			  "authentication mechanism");
+		log_bug("unsupported authentication mechanism");
 		ret = LDAP_OTHER;
 		break;
 	}
@@ -1623,6 +1610,8 @@ ldap_reconnect(ldap_connection_t *ldap_conn)
 		log_error("bind to LDAP server failed: %s",
 			  ldap_err2string(ret));
 		return ISC_R_FAILURE;
+	} else {
+		log_debug(2, "bind to LDAP server successful");
 	}
 
 	ldap_conn->tries = 0;
