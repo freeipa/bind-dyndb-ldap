@@ -147,7 +147,14 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 	CHECK(new_ldap_instance(mctx, db_inst->name, argv, dyndb_args, &db_inst->ldap_inst));
 	CHECK(new_ldap_cache(mctx, argv, &db_inst->ldap_cache));
 
-	refresh_zones_from_ldap(db_inst->ldap_inst, ISC_TRUE);
+	result = refresh_zones_from_ldap(db_inst->ldap_inst, ISC_TRUE);
+	if (result != ISC_R_SUCCESS) {
+		/* In case we don't find any zones, we at least return
+		 * ISC_R_SUCCESS so BIND won't exit because of this. */
+		result = ISC_R_SUCCESS;
+		log_error("no valid zones found");
+		goto cleanup;
+	}
 
 	/* Add a timer to periodically refresh the zones. */
 	if (zone_refresh) {

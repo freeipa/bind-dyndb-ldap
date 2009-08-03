@@ -580,12 +580,16 @@ modify_zone(dns_zone_t *zone, const char *update_str)
  * we assume that we are past the configuration phase and no new zones can be
  * added. In that case, only modify the zone's properties, like the update
  * policy.
+ *
+ * Returns ISC_R_SUCCESS if we found and successfully added at least one zone.
+ * Returns ISC_R_FAILURE otherwise.
  */
 isc_result_t
 refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t create)
 {
 	isc_result_t result = ISC_R_SUCCESS;
 	ldap_connection_t *ldap_conn;
+	int zone_count = 0;
 	ldap_entry_t *entry;
 	char *attrs[] = {
 		"idnsName", "idnsUpdatePolicy", NULL
@@ -634,10 +638,11 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t create)
 		/* Get the update policy and update the zone with it. */
 		result = get_values(entry, "idnsUpdatePolicy", &values);
 		if (result == ISC_R_SUCCESS)
-			modify_zone(zone, HEAD(values)->value);
+			CHECK_NEXT(modify_zone(zone, HEAD(values)->value));
 		else
-			modify_zone(zone, NULL);
+			CHECK_NEXT(modify_zone(zone, NULL));
 
+		zone_count++;
 next:
 		if (dns_name_dynamic(&name))
 			dns_name_free(&name, ldap_inst->mctx);
@@ -646,12 +651,14 @@ next:
 	}
 
 cleanup:
-	/* XXX: Cleanup here */
 	put_connection(ldap_conn);
 
 	log_debug(2, "finished refreshing list of zones");
 
-	return result;
+	if (zone_count > 0)
+		return ISC_R_SUCCESS;
+	else
+		return ISC_R_FAILURE;
 }
 
 static const char *
