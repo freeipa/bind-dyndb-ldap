@@ -129,7 +129,9 @@ struct ldap_instance {
 	ld_string_t		*password;
 	ld_string_t		*sasl_mech;
 	ld_string_t		*sasl_user;
+	ld_string_t		*sasl_auth_name;
 	ld_string_t		*sasl_realm;
+	ld_string_t		*sasl_password;
 	ld_string_t		*krb5_keytab;
 };
 
@@ -290,9 +292,11 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		{ "auth_method", default_string("none")		},
 		{ "bind_dn",	 default_string("")		},
 		{ "password",	 default_string("")		},
-		{ "sasl_mech",	 default_string("ANONYMOUS")	},
+		{ "sasl_mech",	 default_string("GSSAPI")	},
 		{ "sasl_user",	 default_string("")		},
+		{ "sasl_auth_name", default_string("")		},
 		{ "sasl_realm",	 default_string("")		},
+		{ "sasl_password", default_string("")		},
 		{ "krb5_keytab", default_string("")		},
 		end_of_settings
 	};
@@ -326,7 +330,9 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	CHECK(str_new(mctx, &ldap_inst->password));
 	CHECK(str_new(mctx, &ldap_inst->sasl_mech));
 	CHECK(str_new(mctx, &ldap_inst->sasl_user));
+	CHECK(str_new(mctx, &ldap_inst->sasl_auth_name));
 	CHECK(str_new(mctx, &ldap_inst->sasl_realm));
+	CHECK(str_new(mctx, &ldap_inst->sasl_password));
 	CHECK(str_new(mctx, &ldap_inst->krb5_keytab));
 
 	i = 0;
@@ -339,7 +345,9 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	ldap_settings[i++].target = ldap_inst->password;
 	ldap_settings[i++].target = ldap_inst->sasl_mech;
 	ldap_settings[i++].target = ldap_inst->sasl_user;
+	ldap_settings[i++].target = ldap_inst->sasl_auth_name;
 	ldap_settings[i++].target = ldap_inst->sasl_realm;
+	ldap_settings[i++].target = ldap_inst->sasl_password;
 	ldap_settings[i++].target = ldap_inst->krb5_keytab;
 
 	CHECK(set_settings(ldap_settings, argv));
@@ -423,7 +431,8 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	str_destroy(&ldap_inst->password);
 	str_destroy(&ldap_inst->sasl_mech);
 	str_destroy(&ldap_inst->sasl_user);
-	str_destroy(&ldap_inst->sasl_realm);
+	str_destroy(&ldap_inst->sasl_auth_name);
+	str_destroy(&ldap_inst->sasl_password);
 	str_destroy(&ldap_inst->krb5_keytab);
 
 	semaphore_destroy(&ldap_inst->conn_semaphore);
@@ -1458,18 +1467,16 @@ ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
 			in->len = str_len(ldap_inst->sasl_realm);
 			ret = LDAP_SUCCESS;
 			break;
-#if 0
 		case SASL_CB_AUTHNAME:
 			log_debug(4, "got request for SASL_CB_AUTHNAME");
-			in->result = str_buf(ldap_inst->sasl_user);
-			in->len = str_len(ldap_inst->sasl_user);
+			in->result = str_buf(ldap_inst->sasl_auth_name);
+			in->len = str_len(ldap_inst->sasl_auth_name);
 			ret = LDAP_SUCCESS;
 			break;
-#endif
 		case SASL_CB_PASS:
 			log_debug(4, "got request for SASL_CB_PASS");
-			in->result = str_buf(ldap_inst->password);
-			in->len = str_len(ldap_inst->password);
+			in->result = str_buf(ldap_inst->sasl_password);
+			in->len = str_len(ldap_inst->sasl_password);
 			ret = LDAP_SUCCESS;
 			break;
 		default:
