@@ -13,15 +13,13 @@ Hopefully, the patch will once be included in the official BIND release.
 
 2. Features
 ===========
-* short-term caching, to take the load off the LDAP server
-* support for dynamic updates (still a bit buggy)
+* support for dynamic updates
+* SASL authentication
 
 
 2.1 Planned features
 --------------------
-* SASL authentication
-* adding zones without reloading
-* using persistent search
+* persistent search
 
 
 3. Installation
@@ -34,18 +32,19 @@ $ ./configure --libdir=<libdir>
 $ make
 
 Where <libdir> is a directory where your libdns is installed. This is
-typically going to be /usr/lib or /usr/lib64 on 64 bit machines.
+typically going to be /usr/lib or /usr/lib64 on 64 bit systems.
 
 Then, to install, run this as root:
 # make install
 
-This will then install the file ldap.so into the <libdir>/bind/ directory.
+This will install the file ldap.so into the <libdir>/bind/ directory.
 
 
 4. LDAP schema
 ==============
 
-You can find the complete LDAP schema in the documentation directory.
+You can find the complete LDAP schema in the documentation directory. An
+example zone ldif is available in the doc directory.
 
 
 5. Configuration
@@ -88,8 +87,8 @@ base
 
 auth_method (default "none")
 	The method used to authenticate to the LDAP server. Currently
-	supported methods are "none" and "simple". The none method is
-	effectively a simple authentication without password.
+	supported methods are "none", "simple" and "sasl". The none
+	method is effectively a simple authentication without password.
 
 bind_dn (default "")
 	Distinguished Name used to bind to the LDAP server. If this is
@@ -97,9 +96,28 @@ bind_dn (default "")
 	will fall-back and use the "none" authentication method.
 
 password (default "")
-	Password for simple authentication. If left empty, the LDAP
-	back-end will fall-back and use the "none" authentication
-	method.
+	Password for simple and SASL authentication. If the authentication
+	method is set to "simple" and the password is empty, the LDAP
+	driver will fall-back to the "none" authentication method.
+
+sasl_mech (default "GSSAPI")
+	Name of the SASL mechanism to be used for negotiation.
+
+sasl_auth_name
+	The user name to be used for SASL authentication.
+
+sasl_user
+	The user name to be used for SASL proxy authorization.
+
+sasl_password
+	The password to use for the SASL authentication.
+
+sasl_realm
+	The SASL realm name.
+
+krb5_keytab
+	Path to the kerberos keytab containing credentials to be used for
+	SASL authentication.
 
 cache_ttl (default 120)
 	This is the number of seconds to keep DNS records that we get
@@ -107,6 +125,13 @@ cache_ttl (default 120)
 	caching completely, set this to 0. If your LDAP server is under
 	a heavy load and/or you don't update your records very often, you
 	probably want to set this option on a higher value.
+
+zone_refresh (default 0)
+	Interval (in seconds) of how often the LDAP driver should query the
+	LDAP server for changes in zone settings. Currently, this is only
+	the idnsUpdatePolicy attribute which specifies the update policy for
+	a zone. If this option is set to 0, the LDAP driver will never refresh
+	the settings.
 
 
 5.2 Sample configuration
@@ -130,13 +155,7 @@ will register a new zone with BIND. The LDAP back-end will keep each
 record it gets from LDAP in its cache for 5 minutes.
 
 
-6. Examples
-===========
-
-An example zone ldif is available in the doc directory.
-
-
-7. License
+6. License
 ==========
 
 This package is licensed under the GNU General Public License, version 2
