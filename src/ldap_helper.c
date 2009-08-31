@@ -613,7 +613,7 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t create)
 
 	CHECK(ldap_query(ldap_conn, str_buf(ldap_inst->base),
 			 LDAP_SCOPE_SUBTREE, attrs, 0,
-			 "(&(objectClass=idnsZone)(idnsZoneActive=True))"));
+			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
 	CHECK(cache_query_results(ldap_conn));
 
 	for (entry = HEAD(ldap_conn->ldap_entries);

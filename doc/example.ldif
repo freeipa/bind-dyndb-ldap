@@ -11,7 +11,7 @@ objectClass: idnsZone
 objectClass: idnsRecord
 idnsName: ipatest.com
 idnsUpdatePolicy: grant EXAMPLE.COM krb5-self * A;
-idnsZoneActive: True
+idnsZoneActive: TRUE
 idnsSOAmName: server.example.com
 idnsSOArName: root.server.example.com
 idnsSOAserial: 1
