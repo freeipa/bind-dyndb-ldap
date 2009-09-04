@@ -433,6 +433,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	str_destroy(&ldap_inst->sasl_mech);
 	str_destroy(&ldap_inst->sasl_user);
 	str_destroy(&ldap_inst->sasl_auth_name);
+	str_destroy(&ldap_inst->sasl_realm);
 	str_destroy(&ldap_inst->sasl_password);
 	str_destroy(&ldap_inst->krb5_keytab);
 
