@@ -1523,10 +1523,11 @@ ldap_connect(ldap_connection_t *ldap_conn)
 	LDAP_OPT_CHECK(ret, "failed to set timeout: %s", ldap_err2string(ret));
 	*/
 
+	if (ldap_conn->handle != NULL)
+		ldap_unbind_ext_s(ldap_conn->handle, NULL, NULL);
 	ldap_conn->handle = ld;
-	ldap_reconnect(ldap_conn);
 
-	return ISC_R_SUCCESS;
+	return ldap_reconnect(ldap_conn);
 
 cleanup:
 
@@ -1646,11 +1647,10 @@ handle_connection_error(ldap_connection_t *ldap_conn, isc_result_t *result)
 		*result = ISC_R_SUCCESS;
 		ldap_conn->tries = 0;
 		return 0;
-	} else if (err_code == LDAP_SERVER_DOWN) {
+	} else if (err_code == LDAP_SERVER_DOWN || LDAP_CONNECT_ERROR) {
 		if (ldap_conn->tries == 0)
 			log_error("connection to the LDAP server was lost");
-		*result = ldap_reconnect(ldap_conn);
-		if (*result == ISC_R_SUCCESS)
+		if (ldap_connect(ldap_conn) == ISC_R_SUCCESS)
 			return 1;
 	} else {
 		err_string = ldap_err2string(err_code);
