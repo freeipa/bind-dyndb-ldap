@@ -1647,7 +1647,7 @@ handle_connection_error(ldap_connection_t *ldap_conn, isc_result_t *result)
 		*result = ISC_R_SUCCESS;
 		ldap_conn->tries = 0;
 		return 0;
-	} else if (err_code == LDAP_SERVER_DOWN || LDAP_CONNECT_ERROR) {
+	} else if (err_code == LDAP_SERVER_DOWN || err_code == LDAP_CONNECT_ERROR) {
 		if (ldap_conn->tries == 0)
 			log_error("connection to the LDAP server was lost");
 		if (ldap_connect(ldap_conn) == ISC_R_SUCCESS)
