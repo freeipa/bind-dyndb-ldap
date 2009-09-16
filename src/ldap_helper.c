@@ -957,8 +957,6 @@ add_soa_record(isc_mem_t *mctx, ldap_connection_t *ldap_conn, dns_name_t *origin
 
 	CHECK(get_soa_record(entry, string));
 	rdclass = get_rdataclass(entry);
-
-	CHECK(get_soa_record(entry, string));
 	CHECK(parse_rdata(mctx, ldap_conn, rdclass, dns_rdatatype_soa, origin,
 			  str_buf(string), &rdata));
 
