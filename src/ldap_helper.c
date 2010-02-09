@@ -134,6 +134,7 @@ struct ldap_instance {
 	ld_string_t		*sasl_realm;
 	ld_string_t		*sasl_password;
 	ld_string_t		*krb5_keytab;
+	ld_string_t		*fake_mname;
 };
 
 struct ldap_connection {
@@ -221,7 +222,6 @@ static dns_rdataclass_t get_rdataclass(ldap_entry_t *ldap_entry);
 static dns_ttl_t get_ttl(ldap_entry_t *ldap_entry);
 static isc_result_t get_values(const ldap_entry_t *entry,
 		const char *attr_name, ldap_value_list_t *values);
-static isc_result_t get_soa_record(ldap_entry_t *entry, ld_string_t *target);
 static ldap_attribute_t *get_next_attr(ldap_entry_t *entry,
 		const char **attr_list);
 static ldap_value_t *get_next_value(ldap_attribute_t *attr);
@@ -299,6 +299,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		{ "sasl_realm",	 default_string("")		},
 		{ "sasl_password", default_string("")		},
 		{ "krb5_keytab", default_string("")		},
+		{ "fake_mname",	 default_string("")		},
 		end_of_settings
 	};
 
@@ -335,6 +336,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	CHECK(str_new(mctx, &ldap_inst->sasl_realm));
 	CHECK(str_new(mctx, &ldap_inst->sasl_password));
 	CHECK(str_new(mctx, &ldap_inst->krb5_keytab));
+	CHECK(str_new(mctx, &ldap_inst->fake_mname));
 
 	i = 0;
 	ldap_settings[i++].target = ldap_inst->uri;
@@ -350,6 +352,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	ldap_settings[i++].target = ldap_inst->sasl_realm;
 	ldap_settings[i++].target = ldap_inst->sasl_password;
 	ldap_settings[i++].target = ldap_inst->krb5_keytab;
+	ldap_settings[i++].target = ldap_inst->fake_mname;
 
 	CHECK(set_settings(ldap_settings, argv));
 
@@ -436,6 +439,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	str_destroy(&ldap_inst->sasl_realm);
 	str_destroy(&ldap_inst->sasl_password);
 	str_destroy(&ldap_inst->krb5_keytab);
+	str_destroy(&ldap_inst->fake_mname);
 
 	semaphore_destroy(&ldap_inst->conn_semaphore);
 	/* commented out for now, causes named to hang */
@@ -918,10 +922,12 @@ get_ttl(ldap_entry_t *entry)
 }
 
 static isc_result_t
-get_soa_record(ldap_entry_t *entry, ld_string_t *target)
+get_soa_record(ldap_connection_t *ldap_conn, ldap_entry_t *entry,
+	       ld_string_t *target)
 {
 	isc_result_t result = ISC_R_NOTFOUND;
 	ldap_value_list_t values;
+	int i = 0;
 
 	const char *soa_attrs[] = {
 		"idnsSOAmName", "idnsSOArName", "idnsSOAserial",
@@ -933,7 +939,12 @@ get_soa_record(ldap_entry_t *entry, ld_string_t *target)
 	REQUIRE(target != NULL);
 
 	str_clear(target);
-	for (unsigned i = 0; soa_attrs[i] != NULL; i++) {
+	if (str_len(ldap_conn->database->fake_mname) > 0) {
+		i = 1;
+		CHECK(str_cat(target, ldap_conn->database->fake_mname));
+		CHECK(str_cat_char(target, " "));
+	}
+	for (; soa_attrs[i] != NULL; i++) {
 		CHECK(get_values(entry, soa_attrs[i], &values));
 		CHECK(str_cat_char(target, HEAD(values)->value));
 		CHECK(str_cat_char(target, " "));
@@ -955,7 +966,7 @@ add_soa_record(isc_mem_t *mctx, ldap_connection_t *ldap_conn, dns_name_t *origin
 
 	CHECK(str_new(mctx, &string));
 
-	CHECK(get_soa_record(entry, string));
+	CHECK(get_soa_record(ldap_conn, entry, string));
 	rdclass = get_rdataclass(entry);
 	CHECK(parse_rdata(mctx, ldap_conn, rdclass, dns_rdatatype_soa, origin,
 			  str_buf(string), &rdata));
