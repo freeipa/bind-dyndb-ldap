@@ -407,6 +407,8 @@ retry:
 			ldap_inst->auth_method = AUTH_NONE;
 			log_debug(2, "falling back to password-less login");
 			goto retry;
+		} else if (result != ISC_R_SUCCESS) {
+			goto cleanup;
 		}
 		APPEND(ldap_inst->conn_list, ldap_conn, link);
 	}
