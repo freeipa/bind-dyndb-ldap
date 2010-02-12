@@ -392,10 +392,22 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 
 	CHECK(semaphore_init(&ldap_inst->conn_semaphore, ldap_inst->connections));
 
+retry:
 	for (i = 0; i < ldap_inst->connections; i++) {
 		ldap_conn = NULL;
 		CHECK(new_ldap_connection(ldap_inst, &ldap_conn));
-		ldap_connect(ldap_conn);
+		result = ldap_connect(ldap_conn);
+		/* If the credentials are invalid, try passwordless login. */
+		if (result == ISC_R_NOPERM
+		    && ldap_inst->auth_method != AUTH_NONE) {
+			destroy_ldap_connection(&ldap_conn);
+			FOR_EACH_UNLINK(ldap_conn, ldap_inst->conn_list) {
+				destroy_ldap_connection(&ldap_conn);
+			} END_FOR_EACH_UNLINK(ldap_conn);
+			ldap_inst->auth_method = AUTH_NONE;
+			log_debug(2, "falling back to password-less login");
+			goto retry;
+		}
 		APPEND(ldap_inst->conn_list, ldap_conn, link);
 	}
 
@@ -1628,6 +1640,8 @@ ldap_reconnect(ldap_connection_t *ldap_conn)
 	if (ret != LDAP_SUCCESS) {
 		log_error("bind to LDAP server failed: %s",
 			  ldap_err2string(ret));
+		if (ret == LDAP_INVALID_CREDENTIALS)
+			return ISC_R_NOPERM;
 		return ISC_R_FAILURE;
 	} else {
 		log_debug(2, "bind to LDAP server successful");
