@@ -1,5 +1,5 @@
 AC_PREREQ([2.59])
-AC_INIT([bind-dyndb-ldap], [0.1.0a1], [mnagy@redhat.com])
+AC_INIT([bind-dyndb-ldap], [0.1.0b], [mnagy@redhat.com])
 
 AM_INIT_AUTOMAKE([-Wall foreign dist-bzip2])
 
