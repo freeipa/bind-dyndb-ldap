@@ -14,8 +14,10 @@ AC_PROG_CC
 AC_PROG_LIBTOOL
 
 # Checks for libraries.
-AC_CHECK_LIB([dns], [dns_name_init])
-AC_CHECK_LIB([ldap], [ldap_initialize])
+AC_CHECK_LIB([dns], [dns_name_init], [],
+	AC_MSG_ERROR([Install BIND9 development files]))
+AC_CHECK_LIB([ldap], [ldap_initialize], [],
+	AC_MSG_ERROR([Install OpenLDAP development files]))
 
 # Checks for header files.
 AC_CHECK_HEADERS([stddef.h stdlib.h string.h strings.h])
