@@ -180,9 +180,12 @@ zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn)
 
 	RWLOCK(&zr->rwlock, isc_rwlocktype_write);
 
-	/* First make sure the node doesn't exist. */
+	/*
+	 * First make sure the node doesn't exist. Partial matches mean
+	 * there are also child zones in the LDAP database which is allowed.
+	 */
 	result = dns_rbt_findname(zr->rbt, name, 0, NULL, &dummy);
-	if (result != ISC_R_NOTFOUND) {
+	if (result != ISC_R_NOTFOUND && result != DNS_R_PARTIALMATCH) {
 		if (result == ISC_R_SUCCESS)
 			result = ISC_R_EXISTS;
 		log_error_r("failed to add zone to the zone register");
