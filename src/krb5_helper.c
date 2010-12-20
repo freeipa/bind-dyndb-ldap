@@ -111,7 +111,7 @@ get_krb5_tgt(isc_mem_t *mctx, const char *principal, const char *keyfile)
 			  DEFAULT_KEYTAB);
 		keyfile = DEFAULT_KEYTAB;
 	} else {
-		if (strcmp(keyfile, "FILE:") != 0) {
+		if (strncmp(keyfile, "FILE:", 5) != 0) {
 			log_error("Unknown keytab file name format, "
 				  "missing leading 'FILE:' prefix");
 			return ISC_R_FAILURE;
