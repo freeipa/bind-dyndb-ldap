@@ -36,6 +36,7 @@
 #include <dns/rdataclass.h>
 #include <dns/rdatalist.h>
 #include <dns/rdataset.h>
+#include <dns/rdatasetiter.h>
 #include <dns/rdatatype.h>
 #include <dns/result.h>
 #include <dns/types.h>
@@ -75,12 +76,71 @@ typedef struct {
 	ldapdb_rdatalist_t		rdatalist;
 } ldapdbnode_t;
 
+typedef struct {
+	dns_rdatasetiter_t		common;
+	dns_rdatalist_t			*current;
+} ldapdb_rdatasetiter_t;
+
 static int dummy;
 static void *ldapdb_version = &dummy;
 
 static void free_ldapdb(ldapdb_t *ldapdb);
 static void detachnode(dns_db_t *db, dns_dbnode_t **targetp);
 static unsigned int rdatalist_length(const dns_rdatalist_t *rdlist);
+static isc_result_t clone_rdatalist_to_rdataset(isc_mem_t *mctx,
+						dns_rdatalist_t *rdlist,
+						dns_rdataset_t *rdataset);
+
+/* ldapdb_rdatasetiter_t methods */
+static void
+rdatasetiter_destroy(dns_rdatasetiter_t **iterp)
+{
+	ldapdb_rdatasetiter_t *ldapdbiter = (ldapdb_rdatasetiter_t *)(*iterp);
+
+	detachnode(ldapdbiter->common.db, &ldapdbiter->common.node);
+	SAFE_MEM_PUT_PTR(ldapdbiter->common.db->mctx, ldapdbiter);
+	*iterp = NULL;
+}
+
+static isc_result_t
+rdatasetiter_first(dns_rdatasetiter_t *iter)
+{
+	ldapdb_rdatasetiter_t *ldapdbiter = (ldapdb_rdatasetiter_t *)iter;
+	ldapdbnode_t *node = (ldapdbnode_t *)iter->node;
+
+	if (EMPTY(node->rdatalist))
+		return ISC_R_NOMORE;
+
+	ldapdbiter->current = HEAD(node->rdatalist);
+	return ISC_R_SUCCESS;
+}
+
+static isc_result_t
+rdatasetiter_next(dns_rdatasetiter_t *iter)
+{
+	ldapdb_rdatasetiter_t *ldapdbiter = (ldapdb_rdatasetiter_t *)iter;
+
+	ldapdbiter->current = NEXT(ldapdbiter->current, link);
+	return (ldapdbiter->current == NULL) ? ISC_R_NOMORE : ISC_R_SUCCESS;
+}
+
+static void
+rdatasetiter_current(dns_rdatasetiter_t *iter, dns_rdataset_t *rdataset)
+{
+	ldapdb_rdatasetiter_t *ldapdbiter = (ldapdb_rdatasetiter_t *)iter;
+	isc_result_t result;
+
+	result = clone_rdatalist_to_rdataset(ldapdbiter->common.db->mctx,
+					     ldapdbiter->current, rdataset);
+	INSIST(result == ISC_R_SUCCESS);
+}
+
+static dns_rdatasetitermethods_t rdatasetiter_methods = {
+	rdatasetiter_destroy,
+	rdatasetiter_first,
+	rdatasetiter_next,
+	rdatasetiter_current
+};
 
 /* ldapdbnode_t functions */
 static isc_result_t
