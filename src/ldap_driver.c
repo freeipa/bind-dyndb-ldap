@@ -435,6 +435,13 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	if (result != ISC_R_SUCCESS && result != DNS_R_PARTIALMATCH)
 		return (result == ISC_R_NOTFOUND) ? DNS_R_NXDOMAIN : result;
 
+	/*
+	 * ANY pseudotype indicates the whole node, skip routines
+	 * which attempts to find the exact RR type.
+	 */
+	if (type == dns_rdatatype_any)
+		goto anyfound;
+
 	result = ldapdb_rdatalist_findrdatatype(&rdatalist, type, &rdlist);
 	if (result != ISC_R_SUCCESS) {
 		/* No exact rdtype match. Check CNAME */
@@ -455,6 +462,7 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 		goto cleanup;
 	}
 
+anyfound:
 	/* XXX currently we implemented only exact authoritative matches */
 	CHECK(dns_name_copy(name, foundname, NULL));
 
