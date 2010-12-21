@@ -606,13 +606,26 @@ static isc_result_t
 allrdatasets(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	     isc_stdtime_t now, dns_rdatasetiter_t **iteratorp)
 {
-	UNUSED(db);
-	UNUSED(node);
-	UNUSED(version);
-	UNUSED(now);
-	UNUSED(iteratorp);
+	ldapdb_rdatasetiter_t *iter;
+	isc_result_t result;
 
-	return ISC_R_NOTIMPLEMENTED;
+	REQUIRE(version == NULL || version == &dummy);
+
+	CHECKED_MEM_GET_PTR(db->mctx, iter);
+	iter->common.magic = DNS_RDATASETITER_MAGIC;
+	iter->common.methods = &rdatasetiter_methods;
+	iter->common.db = db;
+	iter->common.node = NULL;
+	attachnode(db, node, &iter->common.node);
+	iter->common.version = version;
+	iter->common.now = now;
+
+	*iteratorp = (dns_rdatasetiter_t *)iter;
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	return result;
 }
 
 /*
