@@ -47,6 +47,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <strings.h>
+#include <unistd.h>
 
 #include "acl.h"
 #include "krb5_helper.h"
@@ -128,6 +129,7 @@ struct ldap_instance {
 	ldap_auth_t		auth_method;
 	ld_string_t		*bind_dn;
 	ld_string_t		*password;
+	ld_string_t		*krb5_principal;
 	ld_string_t		*sasl_mech;
 	ld_string_t		*sasl_user;
 	ld_string_t		*sasl_auth_name;
@@ -293,6 +295,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		{ "auth_method", default_string("none")		},
 		{ "bind_dn",	 default_string("")		},
 		{ "password",	 default_string("")		},
+		{ "krb5_principal", default_string("")		},
 		{ "sasl_mech",	 default_string("GSSAPI")	},
 		{ "sasl_user",	 default_string("")		},
 		{ "sasl_auth_name", default_string("")		},
@@ -330,6 +333,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	CHECK(str_new(mctx, &ldap_inst->base));
 	CHECK(str_new(mctx, &ldap_inst->bind_dn));
 	CHECK(str_new(mctx, &ldap_inst->password));
+	CHECK(str_new(mctx, &ldap_inst->krb5_principal));
 	CHECK(str_new(mctx, &ldap_inst->sasl_mech));
 	CHECK(str_new(mctx, &ldap_inst->sasl_user));
 	CHECK(str_new(mctx, &ldap_inst->sasl_auth_name));
@@ -346,6 +350,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	ldap_settings[i++].target = auth_method_str;
 	ldap_settings[i++].target = ldap_inst->bind_dn;
 	ldap_settings[i++].target = ldap_inst->password;
+	ldap_settings[i++].target = ldap_inst->krb5_principal;
 	ldap_settings[i++].target = ldap_inst->sasl_mech;
 	ldap_settings[i++].target = ldap_inst->sasl_user;
 	ldap_settings[i++].target = ldap_inst->sasl_auth_name;
@@ -382,11 +387,25 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	/* check we have the right data when SASL/GSSAPI is selected */
 	if ((ldap_inst->auth_method == AUTH_SASL) &&
 	     (str_casecmp_char(ldap_inst->sasl_mech, "GSSAPI") == 0)) {
-		if ((ldap_inst->sasl_user == NULL) ||
-		    (str_len(ldap_inst->sasl_user) == 0)) {
-			log_error("Sasl mech GSSAPI defined but sasl_user is empty");
-			result = ISC_R_FAILURE;
-			goto cleanup;
+		if ((ldap_inst->krb5_principal == NULL) ||
+		    (str_len(ldap_inst->krb5_principal) == 0)) {
+			if ((ldap_inst->sasl_user == NULL) ||
+			    (str_len(ldap_inst->sasl_user) == 0)) {
+				char hostname[255];
+				if (gethostname(hostname, 255) != 0) {
+					log_error("SASL mech GSSAPI defined but krb5_principal"
+						"and sasl_user are empty. Could not get hostname");
+					result = ISC_R_FAILURE;
+					goto cleanup;
+				} else {
+					str_sprintf(ldap_inst->krb5_principal, "DNS/%s", hostname);
+					log_debug(2, "SASL mech GSSAPI defined but krb5_principal"
+						"and sasl_user are empty, using default %s",
+						str_buf(ldap_inst->krb5_principal));
+				}
+			} else {
+				str_copy(ldap_inst->krb5_principal, ldap_inst->sasl_user);
+			}
 		}
 	}
 
@@ -447,6 +466,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	str_destroy(&ldap_inst->base);
 	str_destroy(&ldap_inst->bind_dn);
 	str_destroy(&ldap_inst->password);
+	str_destroy(&ldap_inst->krb5_principal);
 	str_destroy(&ldap_inst->sasl_mech);
 	str_destroy(&ldap_inst->sasl_user);
 	str_destroy(&ldap_inst->sasl_auth_name);
@@ -1618,7 +1638,7 @@ ldap_reconnect(ldap_connection_t *ldap_conn)
 			isc_result_t result;
 			LOCK(&ldap_inst->kinit_lock);
 			result = get_krb5_tgt(ldap_inst->mctx,
-					      str_buf(ldap_inst->sasl_user),
+					      str_buf(ldap_inst->krb5_principal),
 					      str_buf(ldap_inst->krb5_keytab));
 			UNLOCK(&ldap_inst->kinit_lock);
 			if (result != ISC_R_SUCCESS)
