@@ -116,8 +116,14 @@ sasl_realm
 	The SASL realm name.
 
 krb5_keytab
-	Path to the kerberos keytab containing credentials to be used for
-	SASL authentication.
+	Path to the kerberos keytab containing service credentials to be used
+	for SASL authentication. Append the "FILE:" prefix to the file path.
+	(FILE:/etc/named.keytab, for example)
+
+krb5_principal
+	Kerberos principal of the service, used for SASL authentication.
+	If not set then it is copied from "sasl_user" option. Principal
+	is loaded from file specified in "krb5_keytab" option.
 
 cache_ttl (default 120)
 	This is the number of seconds to keep DNS records that we get
