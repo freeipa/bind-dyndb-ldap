@@ -431,16 +431,16 @@ str_vsprintf(ld_string_t *dest, const char *format, va_list ap)
 		CHECK(str_alloc(dest, len));
 		len = vsnprintf(dest->data, dest->allocated, format, backup);
 	}
-	va_end(backup);
 
 	if (len < 0) {
 		result = ISC_R_FAILURE;
 		goto cleanup;
 	}
 
-	return ISC_R_SUCCESS;
+	result = ISC_R_SUCCESS;
 
 cleanup:
+	va_end(backup);
 	return result;
 }
 
