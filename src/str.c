@@ -570,7 +570,7 @@ str_split(const ld_string_t *src, const char delimiter, ld_split_t *split)
 	current_pos = 0;
 	save = 1;
 	for (unsigned int i = 0;
-	     i < split->allocated && current_pos < LD_MAX_SPLITS;
+	     i < split->allocated && current_pos < LD_MAX_SPLITS - 1;
 	     i++) {
 		if (save && split->data[i] != '\0') {
 			split->splits[current_pos] = split->data + i;
