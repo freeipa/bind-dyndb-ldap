@@ -126,6 +126,7 @@ struct ldap_instance {
 	ld_string_t		*base;
 	unsigned int		connections;
 	unsigned int		reconnect_interval;
+	unsigned int		timeout;
 	ldap_auth_t		auth_method;
 	ld_string_t		*bind_dn;
 	ld_string_t		*password;
@@ -291,6 +292,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		{ "uri",	 no_default_string		},
 		{ "connections", default_uint(2)		},
 		{ "reconnect_interval", default_uint(60)	},
+		{ "timeout",	 default_uint(10)		},
 		{ "base",	 no_default_string		},
 		{ "auth_method", default_string("none")		},
 		{ "bind_dn",	 default_string("")		},
@@ -346,6 +348,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	ldap_settings[i++].target = ldap_inst->uri;
 	ldap_settings[i++].target = &ldap_inst->connections;
 	ldap_settings[i++].target = &ldap_inst->reconnect_interval;
+	ldap_settings[i++].target = &ldap_inst->timeout;
 	ldap_settings[i++].target = ldap_inst->base;
 	ldap_settings[i++].target = auth_method_str;
 	ldap_settings[i++].target = ldap_inst->bind_dn;
@@ -1545,6 +1548,7 @@ ldap_connect(ldap_connection_t *ldap_conn)
 	int ret;
 	int version;
 	ldap_instance_t *ldap_inst;
+	struct timeval timeout;
 
 	REQUIRE(ldap_conn != NULL);
 
@@ -1561,10 +1565,11 @@ ldap_connect(ldap_connection_t *ldap_conn)
 	ret = ldap_set_option(ld, LDAP_OPT_PROTOCOL_VERSION, &version);
 	LDAP_OPT_CHECK(ret, "failed to set LDAP version");
 
-	/*
-	ret = ldap_set_option(ld, LDAP_OPT_TIMELIMIT, (void *)&ldap_inst->timeout);
-	LDAP_OPT_CHECK(ret, "failed to set timeout: %s", ldap_err2string(ret));
-	*/
+	timeout.tv_sec = ldap_conn->database->timeout;
+	timeout.tv_usec = 0;
+
+	ret = ldap_set_option(ld, LDAP_OPT_TIMEOUT, &timeout);
+	LDAP_OPT_CHECK(ret, "failed to set timeout");
 
 	if (ldap_conn->handle != NULL)
 		ldap_unbind_ext_s(ldap_conn->handle, NULL, NULL);
@@ -1697,6 +1702,8 @@ handle_connection_error(ldap_connection_t *ldap_conn, isc_result_t *result)
 			log_error("connection to the LDAP server was lost");
 		if (ldap_connect(ldap_conn) == ISC_R_SUCCESS)
 			return 1;
+	} else if (err_code == LDAP_TIMEOUT) {
+		log_error("LDAP query timed out. Try to adjust \"timeout\" parameter");
 	} else {
 		err_string = ldap_err2string(err_code);
 	}

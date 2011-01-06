@@ -139,6 +139,11 @@ zone_refresh (default 0)
 	a zone. If this option is set to 0, the LDAP driver will never refresh
 	the settings.
 
+timeout (default 10)
+	Timeout (in seconds) of the queries to the LDAP server. If the LDAP
+	server don't respond before this timeout then lookup is aborted and
+	BIND returns SERVFAIL. Value "0" means infinite timeout (no timeout).
+
 
 5.2 Sample configuration
 ------------------------
