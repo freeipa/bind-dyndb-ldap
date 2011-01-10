@@ -787,6 +787,7 @@ subtractrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	dns_rdatalist_t *rdlist;
 	dns_rdatalist_t diff;
 	isc_result_t result;
+	isc_boolean_t delete_node = ISC_FALSE;
 
 	REQUIRE(version == ldapdb_version);
 
@@ -822,7 +823,18 @@ subtractrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 		goto cleanup;
 	}
 
-	CHECK(remove_from_ldap(&ldapdbnode->owner, ldapdb->ldap_inst, &diff));
+	/*
+	 * If there is only one rdatalist in the node with no rdata
+	 * it means all resource records associated with the node's DNS
+	 * name (owner) was deleted. So delete the whole node from the
+	 * LDAP.
+	 */
+	if (HEAD(ldapdbnode->rdatalist) == TAIL(ldapdbnode->rdatalist) &&
+	    HEAD((HEAD(ldapdbnode->rdatalist))->rdata) == NULL)
+		delete_node = ISC_TRUE;
+
+	CHECK(remove_from_ldap(&ldapdbnode->owner, ldapdb->ldap_inst, &diff,
+			       delete_node));
 	CHECK(discard_from_cache(ldapdb->ldap_cache, &ldapdbnode->owner));
 
 	if (newrdataset != NULL) {

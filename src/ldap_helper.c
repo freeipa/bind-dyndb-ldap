@@ -259,7 +259,7 @@ static isc_result_t ldap_query(ldap_connection_t *ldap_conn, const char *base,
 
 /* Functions for writing to LDAP. */
 static isc_result_t ldap_modify_do(ldap_connection_t *ldap_conn, const char *dn,
-		LDAPMod **mods);
+		LDAPMod **mods, isc_boolean_t delete_node);
 static isc_result_t ldap_rdttl_to_ldapmod(isc_mem_t *mctx,
 		dns_rdatalist_t *rdlist, LDAPMod **changep);
 static isc_result_t ldap_rdatalist_to_ldapmod(isc_mem_t *mctx,
@@ -269,7 +269,7 @@ static isc_result_t ldap_rdata_to_char_array(isc_mem_t *mctx,
 		dns_rdata_t *rdata_head, char ***valsp);
 static void free_char_array(isc_mem_t *mctx, char ***valsp);
 static isc_result_t modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
-		dns_rdatalist_t *rdlist, int mod_op);
+		dns_rdatalist_t *rdlist, int mod_op, isc_boolean_t delete_node);
 
 isc_result_t
 new_ldap_instance(isc_mem_t *mctx, const char *db_name,
@@ -1740,7 +1740,8 @@ handle_connection_error(ldap_connection_t *ldap_conn, isc_result_t *result)
 
 /* FIXME: Handle the case where the LDAP handle is NULL -> try to reconnect. */
 static isc_result_t
-ldap_modify_do(ldap_connection_t *ldap_conn, const char *dn, LDAPMod **mods)
+ldap_modify_do(ldap_connection_t *ldap_conn, const char *dn, LDAPMod **mods,
+	       isc_boolean_t delete_node)
 {
 	int ret;
 	int err_code;
@@ -1750,9 +1751,14 @@ ldap_modify_do(ldap_connection_t *ldap_conn, const char *dn, LDAPMod **mods)
 	REQUIRE(dn != NULL);
 	REQUIRE(mods != NULL);
 
-	log_debug(2, "writing to '%s'", dn);
+	if (delete_node) {
+		log_debug(2, "deleting whole node: '%s'", dn);
+		ret = ldap_delete_ext_s(ldap_conn->handle, dn, NULL, NULL);
+	} else {
+		log_debug(2, "writing to '%s'", dn);
+		ret = ldap_modify_ext_s(ldap_conn->handle, dn, mods, NULL, NULL);
+	}
 
-	ret = ldap_modify_ext_s(ldap_conn->handle, dn, mods, NULL, NULL);
 	if (ret == LDAP_SUCCESS)
 		return ISC_R_SUCCESS;
 
@@ -1998,14 +2004,14 @@ modify_soa_record(ldap_connection_t *ldap_conn, const char *zone_dn,
 
 	dns_rdata_freestruct((void *)&soa);
 
-	return ldap_modify_do(ldap_conn, zone_dn, changep);
+	return ldap_modify_do(ldap_conn, zone_dn, changep, ISC_FALSE);
 
 #undef SET_LDAP_MOD
 }
 
 static isc_result_t
 modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
-		   dns_rdatalist_t *rdlist, int mod_op)
+		   dns_rdatalist_t *rdlist, int mod_op, isc_boolean_t delete_node)
 {
 	isc_result_t result;
 	isc_mem_t *mctx = ldap_inst->mctx;
@@ -2033,7 +2039,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		CHECK(ldap_rdttl_to_ldapmod(mctx, rdlist, &change[1]));
 	}
 
-	CHECK(ldap_modify_do(ldap_conn, str_buf(owner_dn), change));
+	CHECK(ldap_modify_do(ldap_conn, str_buf(owner_dn), change, delete_node));
 
 cleanup:
 	put_connection(ldap_conn);
@@ -2047,12 +2053,13 @@ cleanup:
 isc_result_t
 write_to_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst, dns_rdatalist_t *rdlist)
 {
-	return modify_ldap_common(owner, ldap_inst, rdlist, LDAP_MOD_ADD);
+	return modify_ldap_common(owner, ldap_inst, rdlist, LDAP_MOD_ADD, ISC_FALSE);
 }
 
 isc_result_t
 remove_from_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,
-		 dns_rdatalist_t *rdlist)
+		 dns_rdatalist_t *rdlist, isc_boolean_t delete_node)
 {
-	return modify_ldap_common(owner, ldap_inst, rdlist, LDAP_MOD_DELETE);
+	return modify_ldap_common(owner, ldap_inst, rdlist, LDAP_MOD_DELETE,
+				  delete_node);
 }

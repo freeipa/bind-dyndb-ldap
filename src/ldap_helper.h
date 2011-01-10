@@ -105,6 +105,6 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t create);
 isc_result_t write_to_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		dns_rdatalist_t *rdlist);
 isc_result_t remove_from_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,
-		dns_rdatalist_t *rdlist);
+		dns_rdatalist_t *rdlist, isc_boolean_t delete_node);
 
 #endif /* !_LD_LDAP_HELPER_H_ */
