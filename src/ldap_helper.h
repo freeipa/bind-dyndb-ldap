@@ -22,9 +22,18 @@
 #ifndef _LD_LDAP_HELPER_H_
 #define _LD_LDAP_HELPER_H_
 
+#include "ldap_helper.h"
+
 #include <isc/util.h>
 
 typedef struct ldap_instance	ldap_instance_t;
+
+typedef struct ldap_value	ldap_value_t;
+typedef LIST(ldap_value_t)	ldap_value_list_t;
+struct ldap_value {
+	char			*value;
+	LINK(ldap_value_t)	link;
+};
 
 /*
  * some nice words about ldapdb_rdatalist_t:

@@ -59,6 +59,7 @@
 #include <string.h>
 #include <strings.h>
 
+#include "acl.h"
 #include "str.h"
 #include "util.h"
 #include "log.h"
@@ -393,3 +394,125 @@ acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone)
 
 	return result;
 }
+
+static isc_result_t
+inaddr_fromtext(const char *addr, struct in_addr *in)
+{
+	if (inet_pton(AF_INET, addr, in) == 1)
+		return ISC_R_SUCCESS;
+
+	return ISC_R_FAILURE;
+}
+
+static isc_result_t
+in6addr_fromtext(const char *addr, struct in6_addr *in6)
+{
+	if (inet_pton(AF_INET6, addr, in6) == 1)
+		return ISC_R_SUCCESS;
+
+	return ISC_R_FAILURE;
+}
+
+isc_result_t
+acl_from_ldap(isc_mem_t *mctx, const ldap_value_list_t *vals, dns_acl_t **aclp)
+{
+	dns_acl_t *acl = NULL;
+	ldap_value_t *val;
+	int count = 0;
+	isc_result_t result = ISC_R_FAILURE;
+
+	/* *aclp != NULL means nested ACL which is not allowed */
+	REQUIRE(aclp != NULL && *aclp == NULL);
+
+	CHECK(dns_acl_create(mctx, count, &acl));
+
+	/* Process ACL elements */
+	for (val = HEAD(*vals); val != NULL; val = NEXT(val, link)) {
+		char *addr = val->value;
+		char *prefix;
+		isc_boolean_t neg = ISC_FALSE;
+		unsigned int bitlen;
+		struct in_addr in;
+		struct in6_addr in6;
+		isc_netaddr_t na;
+
+		if (*addr == '!') {
+			neg = ISC_TRUE;
+			addr++;
+			acl->has_negatives = ISC_TRUE;
+		}
+
+		if ((prefix = strchr(addr, '/')) != NULL) {
+			/* Net prefix */
+			char *err;
+
+			*prefix = '\0';
+			prefix++;
+
+			bitlen = strtol(prefix, &err, 10);
+			if (*err != '\0') {
+				log_error("Invalid network prefix");
+				result = ISC_R_FAILURE;
+				goto cleanup;
+			}
+
+			/* Convert IPv4/IPv6 address and add it to iptable */
+			if (inaddr_fromtext(addr, &in) == ISC_R_SUCCESS) {
+				if (bitlen > 32) {
+					log_error("Too long network prefix");
+					result = ISC_R_FAILURE;
+					goto cleanup;
+				}
+				isc_netaddr_fromin(&na, &in);
+			} else if (in6addr_fromtext(addr, &in6) == ISC_R_SUCCESS) {
+				if (bitlen > 128) {
+					log_error("Too long network prefix");
+					result = ISC_R_FAILURE;
+					goto cleanup;
+				}
+				isc_netaddr_fromin6(&na, &in6);
+			} else {
+				log_error("Invalid network address");
+				result = ISC_R_FAILURE;
+				goto cleanup;
+			}
+
+			CHECK(dns_iptable_addprefix(acl->iptable, &na, bitlen,
+						    !neg));
+		} else {
+			/* It is IP address or "none" or "any" or invalid value */
+			if (inaddr_fromtext(addr, &in) == ISC_R_SUCCESS) {
+				isc_netaddr_fromin(&na, &in);
+				bitlen = 32;
+				CHECK(dns_iptable_addprefix(acl->iptable, &na, bitlen,
+							    !neg));
+			} else if (in6addr_fromtext(addr, &in6) == ISC_R_SUCCESS) {
+				isc_netaddr_fromin6(&na, &in6);
+				bitlen = 128;
+				CHECK(dns_iptable_addprefix(acl->iptable, &na, bitlen,
+							    !neg));
+			} else if (strcasecmp(addr, "none") == 0) {
+				CHECK(dns_iptable_addprefix(acl->iptable, NULL, 0,
+							    neg));
+			} else if (strcasecmp(addr, "any") == 0) {
+				CHECK(dns_iptable_addprefix(acl->iptable, NULL, 0,
+							    !neg));
+			} else {
+				log_error("Invalid ACL element: %s", val->value);
+				result = ISC_R_FAILURE;
+				goto cleanup;
+			}
+		}
+	}
+
+	*aclp = acl;
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	if (acl != NULL)
+		dns_acl_detach(&acl);
+
+	return result;
+}
+

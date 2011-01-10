@@ -21,7 +21,24 @@
 #ifndef _LD_ACL_H_
 #define _LD_ACL_H_
 
+#include "ldap_helper.h"
+
+#include <dns/acl.h>
+
 isc_result_t
 acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone);
+
+isc_result_t
+acl_from_ldap(isc_mem_t *mctx, const ldap_value_list_t *vals, dns_acl_t **aclp);
+/*
+ * Converts multiple ACL elements to the zone ACL.
+ *
+ * Allowed elements are:
+ *
+ * IPv4/IPv6 net prefix - 192.168.1.0/24
+ * IPv4/IPv6 address - 192.168.1.1
+ * any and none keywords
+ * "!" prefix means negation
+ */
 
 #endif /* !_LD_ACL_H_ */

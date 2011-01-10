@@ -82,10 +82,8 @@
 typedef struct ldap_connection  ldap_connection_t;
 typedef struct ldap_auth_pair	ldap_auth_pair_t;
 typedef struct settings		settings_t;
-typedef struct ldap_value	ldap_value_t;
 typedef struct ldap_attribute	ldap_attribute_t;
 typedef struct ldap_entry	ldap_entry_t;
-typedef LIST(ldap_value_t)	ldap_value_list_t;
 typedef LIST(ldap_attribute_t)	ldap_attribute_list_t;
 typedef LIST(ldap_entry_t)	ldap_entry_list_t;
 
@@ -185,11 +183,6 @@ struct ldap_attribute {
 	ldap_value_t		*last_value;
 	ldap_value_list_t	values;
 	LINK(ldap_attribute_t)	link;
-};
-
-struct ldap_value {
-	char			*value;
-	LINK(ldap_value_t)	link;
 };
 
 /*
@@ -603,8 +596,9 @@ cleanup:
 	return result;
 }
 
+/* In BIND9 terminology "ssu" means "Simple Secure Update" */
 static isc_result_t
-modify_zone(dns_zone_t *zone, const char *update_str)
+configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
 {
 	REQUIRE(zone != NULL);
 
@@ -644,7 +638,8 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t create)
 	int zone_count = 0;
 	ldap_entry_t *entry;
 	char *attrs[] = {
-		"idnsName", "idnsUpdatePolicy", NULL
+		"idnsName", "idnsUpdatePolicy", "idnsAllowQuery",
+		"idnsAllowTransfer", NULL
 	};
 
 	REQUIRE(ldap_inst != NULL);
@@ -686,13 +681,34 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t create)
 						   &name, &zone));
 		}
 
-		log_debug(2, "modifying zone %p: %s", zone, dn);
+		log_debug(2, "Setting SSU table for %p: %s", zone, dn);
 		/* Get the update policy and update the zone with it. */
 		result = get_values(entry, "idnsUpdatePolicy", &values);
 		if (result == ISC_R_SUCCESS)
-			CHECK_NEXT(modify_zone(zone, HEAD(values)->value));
+			CHECK_NEXT(configure_zone_ssutable(zone, HEAD(values)->value));
 		else
-			CHECK_NEXT(modify_zone(zone, NULL));
+			CHECK_NEXT(configure_zone_ssutable(zone, NULL));
+
+		/* Fetch allow-query and allow-transfer ACLs */
+		log_debug(2, "Setting allow-query for %p: %s", zone, dn);
+		result = get_values(entry, "idnsAllowQuery", &values);
+		if (result == ISC_R_SUCCESS) {
+			dns_acl_t *queryacl = NULL;
+			CHECK_NEXT(acl_from_ldap(ldap_inst->mctx, &values, &queryacl));
+			dns_zone_setqueryacl(zone, queryacl);
+			dns_acl_detach(&queryacl);
+		} else
+			log_debug(2, "allow-query not set");
+
+		log_debug(2, "Setting allow-transfer for %p: %s", zone, dn);
+		result = get_values(entry, "idnsAllowTransfer", &values);
+		if (result == ISC_R_SUCCESS) {
+			dns_acl_t *transferacl = NULL;
+			CHECK_NEXT(acl_from_ldap(ldap_inst->mctx, &values, &transferacl));
+			dns_zone_setxfracl(zone, transferacl);
+			dns_acl_detach(&transferacl);
+		} else
+			log_debug(2, "allow-transfer not set");
 
 		zone_count++;
 next:

@@ -46,6 +46,34 @@ This will install the file ldap.so into the <libdir>/bind/ directory.
 You can find the complete LDAP schema in the documentation directory. An
 example zone ldif is available in the doc directory.
 
+4.1 Zone (idnsZone) attributes
+------------------------------
+
+* idnsAllowQuery
+	Specifies BIND9 zone ACL element. This attribute can be set multiple
+	times and are merged together to the one ACL.
+
+	Example:
+		idnsAllowQuery: 127.0.0.1
+		idnsAllowQuery: ::1
+		idnsAllowQuery: 192.168.1.0/24
+
+	In the example above clients with 127.0.0.1 and ::1 IP addresses and
+	clients from the 192.168.1.0/24 network are allowed to obtain records
+	from the zone.
+
+	You can specify IPv4/IPv6 address, IPv4/IPv6 network address in CIDR
+	format and "any" or "none" keywords. The "!" prefix (for example
+	!192.168.1.0/24) means negation of the ACL element.
+
+	If not set then zone inherits global allow-query from named.conf.
+
+* idnsAllowTransfer
+	Uses same format as idnsAllowQuery. Allows zone transfers for matching
+	clients.
+
+	If not set then zone inherits global allow-transfer from named.conf.
+
 
 5. Configuration
 ================
