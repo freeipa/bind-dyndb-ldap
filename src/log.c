@@ -33,7 +33,7 @@ log_debug(int level, const char *format, ...)
 	va_list args;
 
 	va_start(args, format);
-#ifndef LOG_AS_ERROR
+#ifdef LOG_AS_ERROR
 	UNUSED(level);
 	isc_log_vwrite(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
 		       ISC_LOG_ERROR, format, args);
