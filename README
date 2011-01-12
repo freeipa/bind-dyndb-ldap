@@ -144,6 +144,12 @@ timeout (default 10)
 	server don't respond before this timeout then lookup is aborted and
 	BIND returns SERVFAIL. Value "0" means infinite timeout (no timeout).
 
+fake_mname (default "")
+	Ignore value of the idnsSOAmName (primary master DNS name) attribute
+	and use this value instead. This allows multiple BIND processes to share
+	one LDAP database and every BIND reports itself as a primary master in
+	SOA record, for example.
+
 
 5.2 Sample configuration
 ------------------------
