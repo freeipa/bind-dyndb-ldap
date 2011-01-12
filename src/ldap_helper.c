@@ -422,6 +422,9 @@ retry:
 			ldap_inst->auth_method = AUTH_NONE;
 			log_debug(2, "falling back to password-less login");
 			goto retry;
+		} else if (result == ISC_R_NOTCONNECTED) {
+			/* LDAP server is down which can happen, continue */
+			result = ISC_R_SUCCESS;
 		} else if (result != ISC_R_SUCCESS) {
 			goto cleanup;
 		}
@@ -1683,12 +1686,17 @@ ldap_reconnect(ldap_connection_t *ldap_conn)
 	if (ret != LDAP_SUCCESS) {
 		log_error("bind to LDAP server failed: %s",
 			  ldap_err2string(ret));
-		if (ret == LDAP_INVALID_CREDENTIALS)
+
+		switch (ret) {
+		case LDAP_INVALID_CREDENTIALS:
 			return ISC_R_NOPERM;
-		return ISC_R_FAILURE;
-	} else {
+		case LDAP_SERVER_DOWN:
+			return ISC_R_NOTCONNECTED;
+		default:
+			return ISC_R_FAILURE;
+		}
+	} else
 		log_debug(2, "bind to LDAP server successful");
-	}
 
 	ldap_conn->tries = 0;
 
