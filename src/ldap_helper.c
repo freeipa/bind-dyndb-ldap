@@ -872,7 +872,6 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 	ld_string_t *string = NULL;
 
 	dns_rdataclass_t rdclass;
-	dns_ttl_t ttl;
 	dns_rdatatype_t rdtype;
 	dns_rdata_t *rdata = NULL;
 	dns_rdatalist_t *rdlist = NULL;
@@ -907,7 +906,6 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 			goto cleanup;
 
 		rdclass = get_rdataclass(entry);
-		ttl = get_ttl(entry);
 
 		for (result = get_next_rdatatype(entry, &attr, &rdtype);
 		     result == ISC_R_SUCCESS;
