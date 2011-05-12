@@ -142,7 +142,6 @@ struct ldap_connection {
 	isc_mem_t		*mctx;
 	isc_mutex_t		lock;
 	ld_string_t		*query_string;
-	ld_string_t		*base;
 
 	LDAP			*handle;
 	LDAPMessage		*result;
@@ -520,7 +519,6 @@ new_ldap_connection(ldap_instance_t *ldap_inst, ldap_connection_t **ldap_connp)
 	isc_mem_attach(ldap_inst->mctx, &ldap_conn->mctx);
 
 	CHECK(str_new(ldap_conn->mctx, &ldap_conn->query_string));
-	CHECK(str_new(ldap_conn->mctx, &ldap_conn->base));
 
 	CHECK(isc_lex_create(ldap_conn->mctx, TOKENSIZ, &ldap_conn->lex));
 	CHECKED_MEM_GET(ldap_conn->mctx, ldap_conn->rdata_target_mem, MINTSIZ);
@@ -548,7 +546,6 @@ destroy_ldap_connection(ldap_instance_t *ldap_inst, ldap_connection_t **ldap_con
 		ldap_unbind_ext_s(ldap_conn->handle, NULL, NULL);
 
 	str_destroy(&ldap_conn->query_string);
-	str_destroy(&ldap_conn->base);
 
 	if (ldap_conn->lex != NULL)
 		isc_lex_destroy(&ldap_conn->lex);
@@ -1243,8 +1240,6 @@ get_connection(ldap_instance_t *ldap_inst)
 	RUNTIME_CHECK(ldap_conn != NULL);
 
 	INIT_LIST(ldap_conn->ldap_entries);
-	/* TODO: find a clever way to not really require this */
-	str_copy(ldap_conn->base, ldap_inst->base);
 
 	return ldap_conn;
 }
