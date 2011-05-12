@@ -143,17 +143,16 @@ void
 destroy_ldap_cache(ldap_cache_t **cachep)
 {
 	ldap_cache_t *cache;
-	int is_locked = 0;
 
 	REQUIRE(cachep != NULL && *cachep != NULL);
 
 	cache = *cachep;
 
 	if (cache->rbt) {
-		CONTROLED_LOCK(&cache->mutex);
+		LOCK(&cache->mutex);
 		dns_rbt_destroy(&cache->rbt);
 		cache->rbt = NULL;
-		CONTROLED_UNLOCK(&cache->mutex);
+		UNLOCK(&cache->mutex);
 		DESTROYLOCK(&cache->mutex);
 	}
 
