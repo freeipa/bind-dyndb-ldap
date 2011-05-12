@@ -140,7 +140,6 @@ struct ldap_instance {
 
 struct ldap_connection {
 	isc_mem_t		*mctx;
-	ldap_instance_t		*database;
 	isc_mutex_t		lock;
 	LINK(ldap_connection_t)	link;
 	ld_string_t		*query_string;
@@ -253,11 +252,14 @@ static const char *get_dn(ldap_connection_t *inst);
 static ldap_connection_t * get_connection(ldap_instance_t *ldap_inst);
 static void put_connection(ldap_instance_t *ldap_inst,
 		ldap_connection_t *ldap_conn);
-static isc_result_t ldap_connect(ldap_connection_t *ldap_conn);
-static isc_result_t ldap_reconnect(ldap_connection_t *ldap_conn);
-static int handle_connection_error(ldap_connection_t *ldap_conn,
-		isc_result_t *result);
-static isc_result_t ldap_query(ldap_connection_t *ldap_conn, const char *base,
+static isc_result_t ldap_connect(ldap_instance_t *ldap_inst,
+		ldap_connection_t *ldap_conn);
+static isc_result_t ldap_reconnect(ldap_instance_t *ldap_inst,
+		ldap_connection_t *ldap_conn);
+static int handle_connection_error(ldap_instance_t *ldap_inst,
+		ldap_connection_t *ldap_conn, isc_result_t *result);
+static isc_result_t ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
+		const char *base,
 		int scope, char **attrs, int attrsonly, const char *filter, ...);
 
 /* Functions for writing to LDAP. */
@@ -414,7 +416,7 @@ retry:
 	for (i = 0; i < ldap_inst->connections; i++) {
 		ldap_conn = NULL;
 		CHECK(new_ldap_connection(ldap_inst, &ldap_conn));
-		result = ldap_connect(ldap_conn);
+		result = ldap_connect(ldap_inst, ldap_conn);
 		/* If the credentials are invalid, try passwordless login. */
 		if (result == ISC_R_NOPERM
 		    && ldap_inst->auth_method != AUTH_NONE) {
@@ -505,7 +507,6 @@ new_ldap_connection(ldap_instance_t *ldap_inst, ldap_connection_t **ldap_connp)
 
 	ZERO_PTR(ldap_conn);
 
-	ldap_conn->database = ldap_inst;
 	INIT_LINK(ldap_conn, link);
 	result = isc_mutex_init(&ldap_conn->lock);
 	if (result != ISC_R_SUCCESS) {
@@ -658,7 +659,7 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t create)
 
 	ldap_conn = get_connection(ldap_inst);
 
-	CHECK(ldap_query(ldap_conn, str_buf(ldap_inst->base),
+	CHECK(ldap_query(ldap_inst, ldap_conn, str_buf(ldap_inst->base),
 			 LDAP_SCOPE_SUBTREE, attrs, 0,
 			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
 	CHECK(cache_query_results(ldap_conn));
@@ -894,8 +895,8 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 	CHECK(str_new(mctx, &string));
 	CHECK(dnsname_to_dn(ldap_inst->zone_register, name, string));
 
-	CHECK(ldap_query(ldap_conn, str_buf(string), LDAP_SCOPE_BASE, NULL, 0,
-				"(objectClass=idnsRecord)"));
+	CHECK(ldap_query(ldap_inst, ldap_conn, str_buf(string), LDAP_SCOPE_BASE,
+			 NULL, 0, "(objectClass=idnsRecord)"));
 	CHECK(cache_query_results(ldap_conn));
 
 	if (EMPTY(ldap_conn->ldap_entries)) {
@@ -1280,7 +1281,8 @@ put_connection(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn)
 
 
 static isc_result_t
-ldap_query(ldap_connection_t *ldap_conn, const char *base, int scope, char **attrs,
+ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
+	   const char *base, int scope, char **attrs,
 	   int attrsonly, const char *filter, ...)
 {
 	va_list ap;
@@ -1317,7 +1319,7 @@ ldap_query(ldap_connection_t *ldap_conn, const char *base, int scope, char **att
 
 			return ISC_R_SUCCESS;
 		}
-	} while (handle_connection_error(ldap_conn, &result));
+	} while (handle_connection_error(ldap_inst, ldap_conn, &result));
 
 	return result;
 }
@@ -1563,20 +1565,17 @@ ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
 
 /*
  * Initialize the LDAP handle and bind to the server. Needed authentication
- * credentials and settings are available from the ldap_conn->database.
+ * credentials and settings are available from the ldap_inst.
  */
 static isc_result_t
-ldap_connect(ldap_connection_t *ldap_conn)
+ldap_connect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn)
 {
 	LDAP *ld;
 	int ret;
 	int version;
-	ldap_instance_t *ldap_inst;
 	struct timeval timeout;
 
 	REQUIRE(ldap_conn != NULL);
-
-	ldap_inst = ldap_conn->database;
 
 	ret = ldap_initialize(&ld, str_buf(ldap_inst->uri));
 	if (ret != LDAP_SUCCESS) {
@@ -1589,7 +1588,7 @@ ldap_connect(ldap_connection_t *ldap_conn)
 	ret = ldap_set_option(ld, LDAP_OPT_PROTOCOL_VERSION, &version);
 	LDAP_OPT_CHECK(ret, "failed to set LDAP version");
 
-	timeout.tv_sec = ldap_conn->database->timeout;
+	timeout.tv_sec = ldap_inst->timeout;
 	timeout.tv_usec = 0;
 
 	ret = ldap_set_option(ld, LDAP_OPT_TIMEOUT, &timeout);
@@ -1599,7 +1598,7 @@ ldap_connect(ldap_connection_t *ldap_conn)
 		ldap_unbind_ext_s(ldap_conn->handle, NULL, NULL);
 	ldap_conn->handle = ld;
 
-	return ldap_reconnect(ldap_conn);
+	return ldap_reconnect(ldap_inst, ldap_conn);
 
 cleanup:
 
@@ -1610,14 +1609,11 @@ cleanup:
 }
 
 static isc_result_t
-ldap_reconnect(ldap_connection_t *ldap_conn)
+ldap_reconnect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn)
 {
 	int ret = 0;
-	ldap_instance_t *ldap_inst;
 	const char *bind_dn = NULL;
 	const char *password = NULL;
-
-	ldap_inst = ldap_conn->database;
 
 	if (ldap_conn->tries > 0) {
 		isc_time_t now;
@@ -1709,7 +1705,8 @@ ldap_reconnect(ldap_connection_t *ldap_conn)
 }
 
 static int
-handle_connection_error(ldap_connection_t *ldap_conn, isc_result_t *result)
+handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
+			isc_result_t *result)
 {
 	int ret;
 	int err_code;
@@ -1729,7 +1726,7 @@ handle_connection_error(ldap_connection_t *ldap_conn, isc_result_t *result)
 	} else if (err_code == LDAP_SERVER_DOWN || err_code == LDAP_CONNECT_ERROR) {
 		if (ldap_conn->tries == 0)
 			log_error("connection to the LDAP server was lost");
-		if (ldap_connect(ldap_conn) == ISC_R_SUCCESS)
+		if (ldap_connect(ldap_inst, ldap_conn) == ISC_R_SUCCESS)
 			return 1;
 	} else if (err_code == LDAP_TIMEOUT) {
 		log_error("LDAP query timed out. Try to adjust \"timeout\" parameter");
