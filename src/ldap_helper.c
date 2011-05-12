@@ -250,7 +250,8 @@ static const char *get_dn(ldap_connection_t *inst);
 #endif
 
 static ldap_connection_t * get_connection(ldap_instance_t *ldap_inst);
-static void put_connection(ldap_connection_t *ldap_conn);
+static void put_connection(ldap_instance_t *ldap_inst,
+		ldap_connection_t *ldap_conn);
 static isc_result_t ldap_connect(ldap_connection_t *ldap_conn);
 static isc_result_t ldap_reconnect(ldap_connection_t *ldap_conn);
 static int handle_connection_error(ldap_connection_t *ldap_conn,
@@ -723,7 +724,7 @@ next:
 	}
 
 cleanup:
-	put_connection(ldap_conn);
+	put_connection(ldap_inst, ldap_conn);
 
 	log_debug(2, "finished refreshing list of zones");
 
@@ -930,7 +931,7 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 	result = ISC_R_SUCCESS;
 
 cleanup:
-	put_connection(ldap_conn);
+	put_connection(ldap_inst, ldap_conn);
 	str_destroy(&string);
 
 	if (result != ISC_R_SUCCESS)
@@ -1240,7 +1241,7 @@ get_connection(ldap_instance_t *ldap_inst)
 }
 
 static void
-put_connection(ldap_connection_t *ldap_conn)
+put_connection(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn)
 {
 	if (ldap_conn == NULL)
 		return;
@@ -1269,7 +1270,7 @@ put_connection(ldap_connection_t *ldap_conn)
 	free_query_cache(ldap_conn);
 
 	UNLOCK(&ldap_conn->lock);
-	semaphore_signal(&ldap_conn->database->conn_semaphore);
+	semaphore_signal(&ldap_inst->conn_semaphore);
 }
 
 
@@ -2041,7 +2042,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	CHECK(ldap_modify_do(ldap_conn, str_buf(owner_dn), change, delete_node));
 
 cleanup:
-	put_connection(ldap_conn);
+	put_connection(ldap_inst, ldap_conn);
 	str_destroy(&owner_dn);
 	free_ldapmod(mctx, &change[0]);
 	free_ldapmod(mctx, &change[1]);
