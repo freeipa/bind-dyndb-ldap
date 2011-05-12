@@ -79,6 +79,20 @@
  * LDAP related typedefs and structs.
  */
 
+/*
+ * Note about locking in this source.
+ *
+ * ldap_instance_t structure is equal to dynamic-db {}; statement in named.conf.
+ * Attributes in ldap_instance_t can be modified only in new_ldap_instance
+ * function, which means server is started or reloaded.
+ *
+ * ldap_connection_t structure represents connection to the LDAP database and
+ * per-connection specific data. Access is controlled via
+ * ldap_connection_t->lock and ldap_instance_t->conn_semaphore. Each read
+ * or write access to ldap_connection_t structure (except create/destroy)
+ * must acquire the semaphore and the lock.
+ */
+
 typedef struct ldap_connection  ldap_connection_t;
 typedef struct ldap_auth_pair	ldap_auth_pair_t;
 typedef struct settings		settings_t;
