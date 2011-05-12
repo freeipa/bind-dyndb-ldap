@@ -206,7 +206,8 @@ const ldap_auth_pair_t supported_ldap_auth[] = {
 /* TODO: reorganize this stuff & clean it up. */
 static isc_result_t new_ldap_connection(ldap_instance_t *ldap_inst,
 		ldap_connection_t **ldap_connp);
-static void destroy_ldap_connection(ldap_connection_t **ldap_connp);
+static void destroy_ldap_connection(ldap_instance_t *ldap_inst,
+		ldap_connection_t **ldap_connp);
 
 static isc_result_t findrdatatype_or_create(isc_mem_t *mctx,
 		ldapdb_rdatalist_t *rdatalist, ldap_entry_t *entry,
@@ -415,9 +416,9 @@ retry:
 		/* If the credentials are invalid, try passwordless login. */
 		if (result == ISC_R_NOPERM
 		    && ldap_inst->auth_method != AUTH_NONE) {
-			destroy_ldap_connection(&ldap_conn);
+			destroy_ldap_connection(ldap_inst, &ldap_conn);
 			FOR_EACH_UNLINK(ldap_conn, ldap_inst->conn_list) {
-				destroy_ldap_connection(&ldap_conn);
+				destroy_ldap_connection(ldap_inst, &ldap_conn);
 			} END_FOR_EACH_UNLINK(ldap_conn);
 			ldap_inst->auth_method = AUTH_NONE;
 			log_debug(2, "falling back to password-less login");
@@ -457,7 +458,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	while (elem != NULL) {
 		next = NEXT(elem, link);
 		UNLINK(ldap_inst->conn_list, elem, link);
-		destroy_ldap_connection(&elem);
+		destroy_ldap_connection(ldap_inst, &elem);
 		elem = next;
 	}
 
@@ -521,13 +522,13 @@ new_ldap_connection(ldap_instance_t *ldap_inst, ldap_connection_t **ldap_connp)
 	return ISC_R_SUCCESS;
 
 cleanup:
-	destroy_ldap_connection(&ldap_conn);
+	destroy_ldap_connection(ldap_inst, &ldap_conn);
 
 	return result;
 }
 
 static void
-destroy_ldap_connection(ldap_connection_t **ldap_connp)
+destroy_ldap_connection(ldap_instance_t *ldap_inst, ldap_connection_t **ldap_connp)
 {
 	ldap_connection_t *ldap_conn;
 
@@ -544,11 +545,11 @@ destroy_ldap_connection(ldap_connection_t **ldap_connp)
 	if (ldap_conn->lex != NULL)
 		isc_lex_destroy(&ldap_conn->lex);
 	if (ldap_conn->rdata_target_mem != NULL) {
-		isc_mem_put(ldap_conn->database->mctx,
+		isc_mem_put(ldap_inst->mctx,
 			    ldap_conn->rdata_target_mem, MINTSIZ);
 	}
 
-	isc_mem_put(ldap_conn->database->mctx, *ldap_connp, sizeof(ldap_connection_t));
+	isc_mem_put(ldap_inst->mctx, *ldap_connp, sizeof(ldap_connection_t));
 	*ldap_connp = NULL;
 }
 
