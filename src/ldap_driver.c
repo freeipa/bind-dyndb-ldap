@@ -64,7 +64,6 @@ static dns_rdatasetmethods_t rdataset_methods;
 typedef struct {
 	dns_db_t			common;
 	isc_refcount_t			refs;
-	isc_mutex_t			lock; /* convert to isc_rwlock_t ? */
 	ldap_instance_t			*ldap_inst;
 	ldap_cache_t			*ldap_cache;
 } ldapdb_t;
@@ -262,7 +261,6 @@ detach(dns_db_t **dbp)
 static void
 free_ldapdb(ldapdb_t *ldapdb)
 {
-	DESTROYLOCK(&ldapdb->lock);
 	dns_name_free(&ldapdb->common.origin, ldapdb->common.mctx);
 	isc_mem_putanddetach(&ldapdb->common.mctx, ldapdb, sizeof(*ldapdb));
 }
@@ -1053,7 +1051,6 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 {
 	ldapdb_t *ldapdb = NULL;
 	isc_result_t result;
-	int lock_is_initialized = 0;
 
 	UNUSED(driverarg); /* Currently we don't need any data */
 
@@ -1071,9 +1068,6 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 
 	dns_name_init(&ldapdb->common.origin, NULL);
 	isc_ondestroy_init(&ldapdb->common.ondest);
-
-	CHECK(isc_mutex_init(&ldapdb->lock));
-	lock_is_initialized = 1;
 
 	ldapdb->common.magic = DNS_DB_MAGIC;
 	ldapdb->common.impmagic = LDAPDB_MAGIC;
@@ -1094,8 +1088,6 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 
 cleanup:
 	if (ldapdb != NULL) {
-		if (lock_is_initialized)
-			DESTROYLOCK(&ldapdb->lock);
 		if (dns_name_dynamic(&ldapdb->common.origin))
 			dns_name_free(&ldapdb->common.origin, mctx);
 
