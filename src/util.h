@@ -99,19 +99,4 @@
 		dns_name_setbuffer(&name, &name##__buffer);		\
 	} while (0)
 
-#define FOR_EACH(elt, list)						\
-	for ((elt) = HEAD(list); (elt) != NULL; (elt) = NEXT(elt, link))
-
-#define FOR_EACH_UNLINK(elt, list)					     \
-	do {								     \
-		typeof(elt) __next_elt;					     \
-		for (elt = HEAD(list); elt != NULL; elt = NEXT(elt, link)) { \
-			__next_elt = NEXT(elt, link);			     \
-			UNLINK(list, elt, link);
-
-#define END_FOR_EACH_UNLINK(elt)					\
-			elt = __next_elt;				\
-		}							\
-	} while (0)
-
 #endif /* !_LD_UTIL_H_ */

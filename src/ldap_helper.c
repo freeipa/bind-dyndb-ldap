@@ -110,8 +110,9 @@ struct ldap_instance {
 	dns_zonemgr_t		*zmgr;
 
 	/* List of LDAP connections. */
+	unsigned int		connections; /* number of connections */
 	semaphore_t		conn_semaphore;
-	LIST(ldap_connection_t)	conn_list;
+	ldap_connection_t	**conns;
 
 	/* Our own list of zones. */
 	zone_register_t		*zone_register;
@@ -122,7 +123,6 @@ struct ldap_instance {
 	/* Settings. */
 	ld_string_t		*uri;
 	ld_string_t		*base;
-	unsigned int		connections;
 	unsigned int		reconnect_interval;
 	unsigned int		timeout;
 	ldap_auth_t		auth_method;
@@ -141,7 +141,6 @@ struct ldap_instance {
 struct ldap_connection {
 	isc_mem_t		*mctx;
 	isc_mutex_t		lock;
-	LINK(ldap_connection_t)	link;
 	ld_string_t		*query_string;
 	ld_string_t		*base;
 
@@ -322,8 +321,6 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	/* commented out for now, cause named to hang */
 	//dns_view_attach(view, &ldap_inst->view);
 
-	INIT_LIST(ldap_inst->conn_list);
-
 	CHECK(zr_create(mctx, &ldap_inst->zone_register));
 
 	CHECK(isc_mutex_init(&ldap_inst->kinit_lock));
@@ -411,6 +408,9 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	}
 
 	CHECK(semaphore_init(&ldap_inst->conn_semaphore, ldap_inst->connections));
+	CHECKED_MEM_GET(mctx, ldap_inst->conns,
+			ldap_inst->connections * sizeof(ldap_connection_t *));
+	memset(ldap_inst->conns, 0, ldap_inst->connections * sizeof(ldap_connection_t *));
 
 retry:
 	for (i = 0; i < ldap_inst->connections; i++) {
@@ -421,9 +421,12 @@ retry:
 		if (result == ISC_R_NOPERM
 		    && ldap_inst->auth_method != AUTH_NONE) {
 			destroy_ldap_connection(ldap_inst, &ldap_conn);
-			FOR_EACH_UNLINK(ldap_conn, ldap_inst->conn_list) {
-				destroy_ldap_connection(ldap_inst, &ldap_conn);
-			} END_FOR_EACH_UNLINK(ldap_conn);
+			/* It's safe to reuse "i" here */
+			for (i = 0; i < ldap_inst->connections; i++) {
+				ldap_conn = ldap_inst->conns[i];
+				if (ldap_conn != NULL)
+					destroy_ldap_connection(ldap_inst, &ldap_conn);
+			}
 			ldap_inst->auth_method = AUTH_NONE;
 			log_debug(2, "falling back to password-less login");
 			goto retry;
@@ -433,7 +436,7 @@ retry:
 		} else if (result != ISC_R_SUCCESS) {
 			goto cleanup;
 		}
-		APPEND(ldap_inst->conn_list, ldap_conn, link);
+		ldap_inst->conns[i] = ldap_conn;
 	}
 
 cleanup:
@@ -451,20 +454,21 @@ void
 destroy_ldap_instance(ldap_instance_t **ldap_instp)
 {
 	ldap_instance_t *ldap_inst;
-	ldap_connection_t *elem;
-	ldap_connection_t *next;
+	ldap_connection_t *ldap_conn;
+	unsigned int i;
 
 	REQUIRE(ldap_instp != NULL && *ldap_instp != NULL);
 
 	ldap_inst = *ldap_instp;
 
-	elem = HEAD(ldap_inst->conn_list);
-	while (elem != NULL) {
-		next = NEXT(elem, link);
-		UNLINK(ldap_inst->conn_list, elem, link);
-		destroy_ldap_connection(ldap_inst, &elem);
-		elem = next;
+	for (i = 0; i < ldap_inst->connections; i++) {
+		ldap_conn = ldap_inst->conns[i];
+		if (ldap_conn != NULL)
+			destroy_ldap_connection(ldap_inst, &ldap_conn);
 	}
+
+	SAFE_MEM_PUT(ldap_inst->mctx, ldap_inst->conns,
+		     ldap_inst->connections * sizeof(ldap_connection_t *));
 
 	str_destroy(&ldap_inst->uri);
 	str_destroy(&ldap_inst->base);
@@ -507,7 +511,6 @@ new_ldap_connection(ldap_instance_t *ldap_inst, ldap_connection_t **ldap_connp)
 
 	ZERO_PTR(ldap_conn);
 
-	INIT_LINK(ldap_conn, link);
 	result = isc_mutex_init(&ldap_conn->lock);
 	if (result != ISC_R_SUCCESS) {
 		isc_mem_put(ldap_inst->mctx, ldap_inst, sizeof(ldap_connection_t));
@@ -1226,15 +1229,15 @@ static ldap_connection_t *
 get_connection(ldap_instance_t *ldap_inst)
 {
 	ldap_connection_t *ldap_conn;
+	unsigned int i;
 
 	REQUIRE(ldap_inst != NULL);
 
 	semaphore_wait(&ldap_inst->conn_semaphore);
-	ldap_conn = HEAD(ldap_inst->conn_list);
-	while (ldap_conn != NULL) {
+	for (i = 0; i < ldap_inst->connections; i++) {
+		ldap_conn = ldap_inst->conns[i];
 		if (isc_mutex_trylock(&ldap_conn->lock) == ISC_R_SUCCESS)
 			break;
-		ldap_conn = NEXT(ldap_conn, link);
 	}
 
 	RUNTIME_CHECK(ldap_conn != NULL);
