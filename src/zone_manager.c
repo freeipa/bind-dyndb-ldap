@@ -115,6 +115,7 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 	isc_result_t result;
 	db_instance_t *db_inst = NULL;
 	unsigned int zone_refresh;
+	isc_task_t *task;
 	setting_t manager_settings[] = {
 		{ "zone_refresh", default_uint(0) },
 		end_of_settings
@@ -148,7 +149,8 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 	CHECK(new_ldap_instance(mctx, db_inst->name, argv, dyndb_args, &db_inst->ldap_inst));
 	CHECK(new_ldap_cache(mctx, argv, &db_inst->ldap_cache));
 
-	result = refresh_zones_from_ldap(db_inst->ldap_inst, ISC_TRUE);
+	task = dns_dyndb_get_task(dyndb_args);
+	result = refresh_zones_from_ldap(task, db_inst->ldap_inst, ISC_TRUE);
 	if (result != ISC_R_SUCCESS) {
 		/* In case we don't find any zones, we at least return
 		 * ISC_R_SUCCESS so BIND won't exit because of this. */
@@ -159,11 +161,9 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 
 	/* Add a timer to periodically refresh the zones. */
 	if (zone_refresh) {
-		isc_task_t *task;
 		isc_timermgr_t *timer_mgr;
 		isc_interval_t interval;
 
-		task = dns_dyndb_get_task(dyndb_args);
 		timer_mgr = dns_dyndb_get_timermgr(dyndb_args);
 		isc_interval_set(&interval, zone_refresh, 0);
 
@@ -190,11 +190,7 @@ refresh_zones_action(isc_task_t *task, isc_event_t *event)
 {
 	db_instance_t *db_inst = event->ev_arg;
 
-	UNUSED(task);
-
-	LOCK(&instance_list_lock);
-	refresh_zones_from_ldap(db_inst->ldap_inst, ISC_FALSE);
-	UNLOCK(&instance_list_lock);
+	refresh_zones_from_ldap(task, db_inst->ldap_inst, ISC_FALSE);
 
 	isc_event_free(&event);
 }

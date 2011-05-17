@@ -36,6 +36,7 @@
 #include <isc/mutex.h>
 #include <isc/region.h>
 #include <isc/rwlock.h>
+#include <isc/task.h>
 #include <isc/time.h>
 #include <isc/util.h>
 
@@ -656,7 +657,8 @@ configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
  * Returns ISC_R_FAILURE otherwise.
  */
 isc_result_t
-refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t create)
+refresh_zones_from_ldap(isc_task_t *task, ldap_instance_t *ldap_inst,
+			isc_boolean_t create)
 {
 	isc_result_t result = ISC_R_SUCCESS;
 	ldap_connection_t *ldap_conn;
@@ -697,11 +699,17 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t create)
 		 * otherwise we will just search for it in our zone register
 		 * and modify the zone we found. */
 		if (create) {
+			/* Configuration phase, make sure we are running exclusively */
+			RUNTIME_CHECK(isc_task_beginexclusive(task) == ISC_R_LOCKBUSY);
+
 			CHECK_NEXT(create_zone(ldap_inst, &name, &zone));
 			CHECK_NEXT(zr_add_zone(ldap_inst->zone_register, zone,
 					       dn));
 			log_debug(2, "created zone %p: %s", zone, dn);
 		} else {
+			/* Run exclusively */
+			RUNTIME_CHECK(isc_task_beginexclusive(task) == ISC_R_SUCCESS);
+
 			CHECK_NEXT(zr_get_zone_ptr(ldap_inst->zone_register,
 						   &name, &zone));
 		}
@@ -737,6 +745,8 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t create)
 
 		zone_count++;
 next:
+		if (!create)
+			isc_task_endexclusive(task);
 		if (dns_name_dynamic(&name))
 			dns_name_free(&name, ldap_inst->mctx);
 		if (zone != NULL)

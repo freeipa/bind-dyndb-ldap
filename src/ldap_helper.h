@@ -99,7 +99,8 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		  ldap_instance_t **ldap_instp);
 void destroy_ldap_instance(ldap_instance_t **ldap_inst);
 isc_result_t
-refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t create);
+refresh_zones_from_ldap(isc_task_t *task, ldap_instance_t *ldap_inst,
+			isc_boolean_t create);
 
 /* Functions for writing to LDAP. */
 isc_result_t write_to_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,
