@@ -683,6 +683,7 @@ refresh_zones_from_ldap(isc_task_t *task, ldap_instance_t *ldap_inst,
 	ldap_connection_t *ldap_conn;
 	int zone_count = 0;
 	ldap_entry_t *entry;
+	isc_boolean_t runtime_add = ISC_FALSE;
 	char *attrs[] = {
 		"idnsName", "idnsUpdatePolicy", "idnsAllowQuery",
 		"idnsAllowTransfer", NULL
@@ -720,7 +721,7 @@ refresh_zones_from_ldap(isc_task_t *task, ldap_instance_t *ldap_inst,
 		if (create) {
 			/* Configuration phase, make sure we are running exclusively */
 			RUNTIME_CHECK(isc_task_beginexclusive(task) == ISC_R_LOCKBUSY);
-
+newzone:
 			CHECK_NEXT(create_zone(ldap_inst, &name, &zone));
 			CHECK_NEXT(zr_add_zone(ldap_inst->zone_register, zone,
 					       dn));
@@ -729,8 +730,13 @@ refresh_zones_from_ldap(isc_task_t *task, ldap_instance_t *ldap_inst,
 			/* Run exclusively */
 			RUNTIME_CHECK(isc_task_beginexclusive(task) == ISC_R_SUCCESS);
 
-			CHECK_NEXT(zr_get_zone_ptr(ldap_inst->zone_register,
-						   &name, &zone));
+			result = zr_get_zone_ptr(ldap_inst->zone_register,
+						 &name, &zone);
+			if (result != ISC_R_SUCCESS) {
+				dns_view_thaw(ldap_inst->view);
+				runtime_add = ISC_TRUE;
+				goto newzone;
+			}
 		}
 
 		log_debug(2, "Setting SSU table for %p: %s", zone, dn);
@@ -762,13 +768,23 @@ refresh_zones_from_ldap(isc_task_t *task, ldap_instance_t *ldap_inst,
 		} else
 			log_debug(2, "allow-transfer not set");
 
-		if (create) {
+		if (create || runtime_add) {
 			/* Everything is set correctly, publish zone */
 			CHECK_NEXT(publish_zone(ldap_inst, zone));
 		}
 
 		zone_count++;
 next:
+		if (runtime_add) {
+			/*
+			 * Don't bother if load fails, server will return
+			 * SERVFAIL for queries beneath this zone. This is
+			 * admin's problem.
+			 */
+			(void) dns_zone_load(zone);
+			dns_view_freeze(ldap_inst->view);
+			runtime_add = ISC_FALSE;
+		}
 		if (!create)
 			isc_task_endexclusive(task);
 		if (dns_name_dynamic(&name))
