@@ -609,8 +609,6 @@ create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, dns_zone_t **zonep)
 	dns_zone_setclass(zone, dns_rdataclass_in);
 	dns_zone_settype(zone, dns_zone_master);
 	CHECK(dns_zone_setdbtype(zone, 2, argv));
-	CHECK(dns_zonemgr_managezone(ldap_inst->zmgr, zone));
-	CHECK(dns_view_addzone(ldap_inst->view, zone));
 
 	*zonep = zone;
 	return ISC_R_SUCCESS;
@@ -618,6 +616,27 @@ create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, dns_zone_t **zonep)
 cleanup:
 	if (zone != NULL)
 		dns_zone_detach(&zone);
+
+	return result;
+}
+
+static isc_result_t
+publish_zone(ldap_instance_t *ldap_inst, dns_zone_t *zone)
+{
+	isc_result_t result;
+
+	REQUIRE(ldap_inst != NULL);
+	REQUIRE(zone != NULL);
+
+	result = dns_zonemgr_managezone(ldap_inst->zmgr, zone);
+	if (result != ISC_R_SUCCESS)
+		return result;
+	CHECK(dns_view_addzone(ldap_inst->view, zone));
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	dns_zonemgr_releasezone(ldap_inst->zmgr, zone);
 
 	return result;
 }
@@ -742,6 +761,11 @@ refresh_zones_from_ldap(isc_task_t *task, ldap_instance_t *ldap_inst,
 			dns_acl_detach(&transferacl);
 		} else
 			log_debug(2, "allow-transfer not set");
+
+		if (create) {
+			/* Everything is set correctly, publish zone */
+			CHECK_NEXT(publish_zone(ldap_inst, zone));
+		}
 
 		zone_count++;
 next:
