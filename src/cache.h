@@ -38,17 +38,6 @@ new_ldap_cache(isc_mem_t *mctx, const char * const *argv, ldap_cache_t **cachep)
 void
 destroy_ldap_cache(ldap_cache_t **cachep);
 
-
-/*
- * If caching is enabled, lookup 'name' in 'cache'. If the record is found and
- * is not expired, make a copy and return it. If the record is not found or is
- * expired, look it up in LDAP and cache it.
- */
-isc_result_t
-cached_ldap_rdatalist_get(isc_mem_t *mctx, ldap_cache_t *cache,
-			  ldap_instance_t *ldap_inst, dns_name_t *name,
-			  dns_name_t *origin, ldapdb_rdatalist_t *rdatalist);
-
 /*
  * Get rdatalist from cache.
  *

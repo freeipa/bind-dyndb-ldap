@@ -36,21 +36,6 @@
 #include "settings.h"
 #include "util.h"
 
-/* These macros require that variable 'is_locked' exists. */
-#define CONTROLED_LOCK(lock)						\
-	do {								\
-		LOCK(lock);						\
-		is_locked = 1;						\
-	} while (0)
-
-#define CONTROLED_UNLOCK(lock)						\
-	do {								\
-		if (is_locked) {					\
-			UNLOCK(lock);					\
-			is_locked = 0;					\
-		}							\
-	} while (0)
-
 struct ldap_cache {
 	isc_mutex_t	mutex;
 	isc_mem_t	*mctx;
@@ -160,75 +145,6 @@ destroy_ldap_cache(ldap_cache_t **cachep)
 	MEM_PUT_AND_DETACH(cache);
 
 	*cachep = NULL;
-}
-
-isc_result_t
-cached_ldap_rdatalist_get(isc_mem_t *mctx, ldap_cache_t *cache,
-			  ldap_instance_t *ldap_inst, dns_name_t *name,
-			  dns_name_t *origin, ldapdb_rdatalist_t *rdatalist)
-{
-	isc_result_t result;
-	ldapdb_rdatalist_t rdlist;
-	cache_node_t *node = NULL;
-	int in_cache = 0;
-	int is_locked = 0;
-
-	REQUIRE(cache != NULL);
-
-	INIT_LIST(*rdatalist);
-
-	if (cache->rbt == NULL)
-		return ldapdb_rdatalist_get(mctx, ldap_inst, name, origin,
-					    rdatalist);
-
-	CONTROLED_LOCK(&cache->mutex);
-	result = dns_rbt_findname(cache->rbt, name, 0, NULL, (void *)&node);
-	if (result == ISC_R_SUCCESS) {
-		isc_time_t now;
-
-		CHECK(isc_time_now(&now));
-
-		/* Check if the record is still valid. */
-		if (isc_time_compare(&now, &node->valid_until) > 0) {
-			CHECK(dns_rbt_deletename(cache->rbt, name, ISC_FALSE));
-			in_cache = 0;
-		} else {
-			rdlist = node->rdatalist;
-			in_cache = 1;
-		}
-	} else if (result != ISC_R_NOTFOUND && result != DNS_R_PARTIALMATCH) {
-		goto cleanup;
-	}
-	CONTROLED_UNLOCK(&cache->mutex);
-
-	if (!in_cache) {
-		INIT_LIST(rdlist);
-		result = ldapdb_rdatalist_get(mctx, ldap_inst, name, origin,
-					      &rdlist);
-		/* TODO: Cache entries that are not found. */
-		if (result != ISC_R_SUCCESS)
-			goto cleanup;
-		CONTROLED_LOCK(&cache->mutex);
-		/* Check again to make sure. */
-		node = NULL;
-		result = dns_rbt_findname(cache->rbt, name, 0, NULL,
-					  (void *)&node);
-		if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
-			node = NULL;
-			CHECK(cache_node_create(cache, rdlist, &node));
-			CHECK(dns_rbt_addname(cache->rbt, name, (void *)node));
-		}
-		CONTROLED_UNLOCK(&cache->mutex);
-	}
-
-	CHECK(ldap_rdatalist_copy(mctx, rdlist, rdatalist));
-
-	if (EMPTY(*rdatalist))
-		result = ISC_R_NOTFOUND;
-
-cleanup:
-	CONTROLED_UNLOCK(&cache->mutex);
-	return result;
 }
 
 isc_result_t
