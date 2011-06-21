@@ -129,6 +129,9 @@ struct ldap_instance {
 	semaphore_t		conn_semaphore;
 	ldap_connection_t	**conns;
 
+	/* RRs cache */
+	ldap_cache_t		*cache;
+
 	/* Our own list of zones. */
 	zone_register_t		*zone_register;
 
@@ -426,6 +429,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 			ldap_inst->connections * sizeof(ldap_connection_t *));
 	memset(ldap_inst->conns, 0, ldap_inst->connections * sizeof(ldap_connection_t *));
 
+	CHECK(new_ldap_cache(mctx, argv, &ldap_inst->cache));
 retry:
 	for (i = 0; i < ldap_inst->connections; i++) {
 		ldap_conn = NULL;
@@ -502,6 +506,9 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	//dns_view_detach(&ldap_inst->view);
 
 	DESTROYLOCK(&ldap_inst->kinit_lock);
+
+	if (ldap_inst->cache != NULL)
+		destroy_ldap_cache(&ldap_inst->cache);
 
 	zr_destroy(&ldap_inst->zone_register);
 
@@ -2127,3 +2134,10 @@ remove_from_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	return modify_ldap_common(owner, ldap_inst, rdlist, LDAP_MOD_DELETE,
 				  delete_node);
 }
+
+ldap_cache_t *
+ldap_instance_getcache(ldap_instance_t *ldap_inst)
+{
+	return ldap_inst->cache;
+}
+

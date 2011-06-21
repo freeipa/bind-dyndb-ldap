@@ -1,7 +1,8 @@
 /*
  * Authors: Martin Nagy <mnagy@redhat.com>
+ * 	    Adam Tkac <atkac@redhat.com>
  *
- * Copyright (C) 2009  Red Hat
+ * Copyright (C) 2009 - 2011 Red Hat
  * see file 'COPYING' for use and warranty information
  *
  * This program is free software; you can redistribute it and/or
@@ -36,7 +37,7 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 			   dns_dyndb_arguments_t *dyndb_args);
 
 isc_result_t
-manager_get_ldap_instance_and_cache(const char *name, ldap_instance_t **ldap_inst,
-				    ldap_cache_t **ldap_cache);
+manager_get_ldap_instance_and_cache(const char *name,
+				    ldap_instance_t **ldap_inst);
 
 #endif /* !_LD_ZONE_MANAGER_H_ */

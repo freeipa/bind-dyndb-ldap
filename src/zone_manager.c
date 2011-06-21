@@ -42,7 +42,6 @@ struct db_instance {
 	isc_mem_t		*mctx;
 	char			*name;
 	ldap_instance_t		*ldap_inst;
-	ldap_cache_t		*ldap_cache;
 	isc_timer_t		*timer;
 	LINK(db_instance_t)	link;
 };
@@ -95,8 +94,6 @@ destroy_db_instance(db_instance_t **db_instp)
 		isc_timer_detach(&db_inst->timer);
 	if (db_inst->ldap_inst != NULL)
 		destroy_ldap_instance(&db_inst->ldap_inst);
-	if (db_inst->ldap_cache != NULL)
-		destroy_ldap_cache(&db_inst->ldap_cache);
 	if (db_inst->name != NULL)
 		isc_mem_free(db_inst->mctx, db_inst->name);
 
@@ -147,7 +144,6 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 	isc_mem_attach(mctx, &db_inst->mctx);
 	CHECKED_MEM_STRDUP(mctx, name, db_inst->name);
 	CHECK(new_ldap_instance(mctx, db_inst->name, argv, dyndb_args, &db_inst->ldap_inst));
-	CHECK(new_ldap_cache(mctx, argv, &db_inst->ldap_cache));
 
 	task = dns_dyndb_get_task(dyndb_args);
 	result = refresh_zones_from_ldap(task, db_inst->ldap_inst, ISC_TRUE);
@@ -196,15 +192,13 @@ refresh_zones_action(isc_task_t *task, isc_event_t *event)
 }
 
 isc_result_t
-manager_get_ldap_instance_and_cache(const char *name, ldap_instance_t **ldap_inst,
-				    ldap_cache_t **ldap_cache)
+manager_get_ldap_instance_and_cache(const char *name, ldap_instance_t **ldap_inst)
 {
 	isc_result_t result;
 	db_instance_t *db_inst;
 
 	REQUIRE(name != NULL);
 	REQUIRE(ldap_inst != NULL);
-	REQUIRE(ldap_cache != NULL);
 
 	isc_once_do(&initialize_once, initialize_manager);
 
@@ -212,7 +206,6 @@ manager_get_ldap_instance_and_cache(const char *name, ldap_instance_t **ldap_ins
 	CHECK(find_db_instance(name, &db_inst));
 
 	*ldap_inst = db_inst->ldap_inst;
-	*ldap_cache = db_inst->ldap_cache;
 
 cleanup:
 	return result;

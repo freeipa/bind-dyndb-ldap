@@ -22,7 +22,7 @@
 #ifndef _LD_CACHE_H_
 #define _LD_CACHE_H_
 
-#include "ldap_helper.h"
+#include "types.h"
 
 typedef struct ldap_cache ldap_cache_t;
 

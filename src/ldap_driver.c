@@ -65,7 +65,6 @@ typedef struct {
 	dns_db_t			common;
 	isc_refcount_t			refs;
 	ldap_instance_t			*ldap_inst;
-	ldap_cache_t			*ldap_cache;
 } ldapdb_t;
 
 typedef struct {
@@ -370,11 +369,13 @@ findnode(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 	isc_result_t result;
 	ldapdb_rdatalist_t rdatalist;
 	ldapdbnode_t *node = NULL;
+	ldap_cache_t *cache;
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
 
-	result = ldap_cache_getrdatalist(ldapdb->common.mctx, ldapdb->ldap_cache,
-					 name, &rdatalist);
+	cache = ldap_instance_getcache(ldapdb->ldap_inst);
+	result = ldap_cache_getrdatalist(ldapdb->common.mctx, cache, name,
+					 &rdatalist);
 	switch (result) {
 	case ISC_R_SUCCESS:
 		goto cachehit;
@@ -393,8 +394,7 @@ cachemiss:
 				      &rdatalist);
 	/* Cache rdatalist if found. */
 	if (result == ISC_R_SUCCESS)
-		CHECK(ldap_cache_addrdatalist(ldapdb->ldap_cache, name,
-					      &rdatalist));
+		CHECK(ldap_cache_addrdatalist(cache, name, &rdatalist));
 cachehit:
 	if (create == ISC_FALSE) {
 		if (result != ISC_R_SUCCESS)
@@ -430,6 +430,7 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	dns_rdatalist_t *rdlist = NULL;
 	isc_boolean_t is_cname = ISC_FALSE;
 	ldapdb_rdatalist_t rdatalist;
+	ldap_cache_t *cache;
 
 	UNUSED(now);
 	UNUSED(options);
@@ -443,8 +444,9 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 		REQUIRE(version == ldapdb_version);
 	}
 
-	result = ldap_cache_getrdatalist(ldapdb->common.mctx, ldapdb->ldap_cache,
-					 name, &rdatalist);
+	cache = ldap_instance_getcache(ldapdb->ldap_inst);
+	result = ldap_cache_getrdatalist(ldapdb->common.mctx, cache, name,
+					 &rdatalist);
 	switch (result) {
 	case ISC_R_SUCCESS:
 		goto cachehit;
@@ -464,8 +466,7 @@ cachemiss:
 				      &rdatalist);
 	/* Cache rdatalist if found. */
 	if (result == ISC_R_SUCCESS)
-		CHECK(ldap_cache_addrdatalist(ldapdb->ldap_cache, name,
-					      &rdatalist));
+		CHECK(ldap_cache_addrdatalist(cache, name, &rdatalist));
 cachehit:
 	if (result != ISC_R_SUCCESS && result != DNS_R_PARTIALMATCH)
 		return (result == ISC_R_NOTFOUND) ? DNS_R_NXDOMAIN : result;
@@ -717,6 +718,7 @@ addrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	dns_rdatalist_t diff;
 	isc_result_t result;
 	isc_boolean_t rdatalist_exists = ISC_FALSE;
+	ldap_cache_t *cache;
 
 	UNUSED(now);
 	UNUSED(db);
@@ -770,7 +772,8 @@ addrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	}
 
 	CHECK(write_to_ldap(&ldapdbnode->owner, ldapdb->ldap_inst, new_rdlist));
-	CHECK(discard_from_cache(ldapdb->ldap_cache, &ldapdbnode->owner));
+	cache = ldap_instance_getcache(ldapdb->ldap_inst);
+	CHECK(discard_from_cache(cache, &ldapdbnode->owner));
 
 	if (addedrdataset != NULL) {
 		result = dns_rdatalist_tordataset(new_rdlist, addedrdataset);
@@ -823,6 +826,7 @@ subtractrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	dns_rdatalist_t diff;
 	isc_result_t result;
 	isc_boolean_t delete_node = ISC_FALSE;
+	ldap_cache_t *cache;
 
 	REQUIRE(version == ldapdb_version);
 
@@ -870,7 +874,8 @@ subtractrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 
 	CHECK(remove_from_ldap(&ldapdbnode->owner, ldapdb->ldap_inst, &diff,
 			       delete_node));
-	CHECK(discard_from_cache(ldapdb->ldap_cache, &ldapdbnode->owner));
+	cache = ldap_instance_getcache(ldapdb->ldap_inst);
+	CHECK(discard_from_cache(cache, &ldapdbnode->owner));
 
 	if (newrdataset != NULL) {
 		result = dns_rdatalist_tordataset(found_rdlist, newrdataset);
@@ -1116,8 +1121,7 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 	CHECK(dns_name_dupwithoffsets(name, mctx, &ldapdb->common.origin));
 
 	CHECK(isc_refcount_init(&ldapdb->refs, 1));
-	CHECK(manager_get_ldap_instance_and_cache(argv[0], &ldapdb->ldap_inst,
-					    &ldapdb->ldap_cache));
+	CHECK(manager_get_ldap_instance_and_cache(argv[0], &ldapdb->ldap_inst));
 
 	*dbp = (dns_db_t *)ldapdb;
 
