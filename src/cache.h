@@ -1,7 +1,8 @@
 /*
  * Authors: Martin Nagy <mnagy@redhat.com>
+ * 	    Adam Tkac <atkac@redhat.com>
  *
- * Copyright (C) 2009  Red Hat
+ * Copyright (C) 2009 - 2011  Red Hat
  * see file 'COPYING' for use and warranty information
  *
  * This program is free software; you can redistribute it and/or
@@ -47,6 +48,32 @@ isc_result_t
 cached_ldap_rdatalist_get(isc_mem_t *mctx, ldap_cache_t *cache,
 			  ldap_instance_t *ldap_inst, dns_name_t *name,
 			  dns_name_t *origin, ldapdb_rdatalist_t *rdatalist);
+
+/*
+ * Get rdatalist from cache.
+ *
+ * Returns ISC_R_SUCCESS, ISC_R_NOTFOUND or ISC_R_FAILURE.
+ */
+isc_result_t
+ldap_cache_getrdatalist(isc_mem_t *mctx, ldap_cache_t *cache,
+			dns_name_t *name, ldapdb_rdatalist_t *rdatalist);
+
+/*
+ * Add rdatalist to the cache.
+ *
+ * Note: No rdatalist can be bound to the name.
+ *
+ * Returns ISC_R_SUCCESS, ISC_R_NOMEMORY and ISC_R_FAILURE.
+ */
+isc_result_t
+ldap_cache_addrdatalist(ldap_cache_t *cache, dns_name_t *name,
+			ldapdb_rdatalist_t *rdatalist);
+
+/*
+ * Returns ISC_TRUE when cache is enabled.
+ */
+isc_boolean_t
+ldap_cache_enabled(ldap_cache_t *cache);
 
 /*
  * Discard 'name' from the cache. If caching is not really turned on or 'name'

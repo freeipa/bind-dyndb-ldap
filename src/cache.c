@@ -76,6 +76,7 @@ cache_node_deleter(void *data, void *deleter_arg)
 	MEM_PUT_AND_DETACH(node);
 }
 
+/* TODO: Remove the rdatalist parameter */
 static isc_result_t
 cache_node_create(ldap_cache_t *cache, ldapdb_rdatalist_t rdatalist,
 		  cache_node_t **nodep)
@@ -227,6 +228,85 @@ cached_ldap_rdatalist_get(isc_mem_t *mctx, ldap_cache_t *cache,
 
 cleanup:
 	CONTROLED_UNLOCK(&cache->mutex);
+	return result;
+}
+
+isc_result_t
+ldap_cache_getrdatalist(isc_mem_t *mctx, ldap_cache_t *cache,
+			dns_name_t *name, ldapdb_rdatalist_t *rdatalist)
+{
+	isc_result_t result;
+	ldapdb_rdatalist_t rdlist;
+	cache_node_t *node = NULL;
+	isc_time_t now;
+
+	REQUIRE(cache != NULL);
+
+	/* Return NOTFOUND if caching is disabled */
+	if (!ldap_cache_enabled(cache))
+		return ISC_R_NOTFOUND;
+
+	LOCK(&cache->mutex);
+	result = dns_rbt_findname(cache->rbt, name, 0, NULL, (void *)&node);
+	switch (result) {
+	case ISC_R_SUCCESS:
+		CHECK(isc_time_now(&now));
+		if (isc_time_compare(&now, &node->valid_until) > 0) {
+			/* Delete expired records and treat them as NOTFOUND */
+			CHECK(dns_rbt_deletename(cache->rbt, name, ISC_FALSE));
+			result = ISC_R_NOTFOUND;
+		} else {
+			rdlist = node->rdatalist;
+			CHECK(ldap_rdatalist_copy(mctx, rdlist, rdatalist));
+			INSIST(!EMPTY(*rdatalist)); /* Empty rdatalist indicates a bug */
+		}
+		break;
+	case DNS_R_PARTIALMATCH:
+		result = ISC_R_NOTFOUND;
+		/* Fall through */
+	case ISC_R_NOTFOUND:
+		goto cleanup;
+		/* Not reached */
+	default:
+		result = ISC_R_FAILURE;
+	}
+
+cleanup:
+	UNLOCK(&cache->mutex);
+	return result;
+}
+
+isc_boolean_t
+ldap_cache_enabled(ldap_cache_t *cache)
+{
+	return (cache->rbt != NULL) ? ISC_TRUE : ISC_FALSE;
+}
+
+isc_result_t
+ldap_cache_addrdatalist(ldap_cache_t *cache, dns_name_t *name,
+			ldapdb_rdatalist_t *rdatalist)
+{
+	isc_result_t result;
+	ldapdb_rdatalist_t rdlist;
+	cache_node_t *node = NULL;
+
+	REQUIRE(cache != NULL);
+
+	if (!ldap_cache_enabled(cache))
+		return ISC_R_SUCCESS; /* Caching is disabled */
+
+	CHECK(cache_node_create(cache, rdlist, &node));
+	CHECK(ldap_rdatalist_copy(cache->mctx, *rdatalist, &node->rdatalist));
+
+	LOCK(&cache->mutex);
+	result = dns_rbt_addname(cache->rbt, name, (void *)node);
+	INSIST(result != ISC_R_EXISTS); /* Indicates a bug */
+	
+	UNLOCK(&cache->mutex);
+cleanup:
+	if (result != ISC_R_SUCCESS && node != NULL)
+		MEM_PUT_AND_DETACH(node);
+		
 	return result;
 }
 
