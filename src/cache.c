@@ -63,8 +63,7 @@ cache_node_deleter(void *data, void *deleter_arg)
 
 /* TODO: Remove the rdatalist parameter */
 static isc_result_t
-cache_node_create(ldap_cache_t *cache, ldapdb_rdatalist_t rdatalist,
-		  cache_node_t **nodep)
+cache_node_create(ldap_cache_t *cache, cache_node_t **nodep)
 {
 	isc_result_t result;
 	cache_node_t *node;
@@ -75,7 +74,7 @@ cache_node_create(ldap_cache_t *cache, ldapdb_rdatalist_t rdatalist,
 	CHECKED_MEM_GET_PTR(cache->mctx, node);
 	ZERO_PTR(node);
 	isc_mem_attach(cache->mctx, &node->mctx);
-	node->rdatalist = rdatalist;
+	ZERO_PTR(&node->rdatalist);
 	CHECK(isc_time_nowplusinterval(&node->valid_until, &cache->cache_ttl));
 
 	*nodep = node;
@@ -203,7 +202,6 @@ ldap_cache_addrdatalist(ldap_cache_t *cache, dns_name_t *name,
 			ldapdb_rdatalist_t *rdatalist)
 {
 	isc_result_t result;
-	ldapdb_rdatalist_t rdlist;
 	cache_node_t *node = NULL;
 
 	REQUIRE(cache != NULL);
@@ -211,7 +209,7 @@ ldap_cache_addrdatalist(ldap_cache_t *cache, dns_name_t *name,
 	if (!ldap_cache_enabled(cache))
 		return ISC_R_SUCCESS; /* Caching is disabled */
 
-	CHECK(cache_node_create(cache, rdlist, &node));
+	CHECK(cache_node_create(cache, &node));
 	CHECK(ldap_rdatalist_copy(cache->mctx, *rdatalist, &node->rdatalist));
 
 	LOCK(&cache->mutex);
