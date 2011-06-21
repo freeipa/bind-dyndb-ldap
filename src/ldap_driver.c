@@ -373,10 +373,29 @@ findnode(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
 
-	result = cached_ldap_rdatalist_get(ldapdb->common.mctx,
-					   ldapdb->ldap_cache, ldapdb->ldap_inst,
-					   name, &ldapdb->common.origin,
-					   &rdatalist);
+	result = ldap_cache_getrdatalist(ldapdb->common.mctx, ldapdb->ldap_cache,
+					 name, &rdatalist);
+	switch (result) {
+	case ISC_R_SUCCESS:
+		goto cachehit;
+		/* Not reached */
+	case ISC_R_NOTFOUND:
+		goto cachemiss;
+		/* Not reached */
+	default:
+		goto cleanup;
+	}
+
+cachemiss:
+	INIT_LIST(rdatalist); /* XXX Should this be moved to ldapdb_rdatalist_get ? */
+	result = ldapdb_rdatalist_get(ldapdb->common.mctx, ldapdb->ldap_inst,
+				      name, &ldapdb->common.origin,
+				      &rdatalist);
+	/* Cache rdatalist if found. */
+	if (result == ISC_R_SUCCESS)
+		CHECK(ldap_cache_addrdatalist(ldapdb->ldap_cache, name,
+					      &rdatalist));
+cachehit:
 	if (create == ISC_FALSE) {
 		if (result != ISC_R_SUCCESS)
 			goto cleanup;
@@ -424,12 +443,30 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 		REQUIRE(version == ldapdb_version);
 	}
 
-	result = cached_ldap_rdatalist_get(ldapdb->common.mctx,
-					   ldapdb->ldap_cache, ldapdb->ldap_inst,
-					   name, &ldapdb->common.origin,
-					   &rdatalist);
-	INSIST(result != DNS_R_PARTIALMATCH); /* XXX Not yet implemented */
+	result = ldap_cache_getrdatalist(ldapdb->common.mctx, ldapdb->ldap_cache,
+					 name, &rdatalist);
+	switch (result) {
+	case ISC_R_SUCCESS:
+		goto cachehit;
+		/* Not reached */
+	case ISC_R_NOTFOUND:
+		goto cachemiss;
+		/* Not reached */
+	default:
+		goto cleanup;
+	}
 
+cachemiss:
+	/* XXX Move ldap_cache_addrdatalist into ldapdb_rdatalist_get. */
+	INIT_LIST(rdatalist); /* XXX Should this be moved to ldapdb_rdatalist_get ? */
+	result = ldapdb_rdatalist_get(ldapdb->common.mctx, ldapdb->ldap_inst,
+				      name, &ldapdb->common.origin,
+				      &rdatalist);
+	/* Cache rdatalist if found. */
+	if (result == ISC_R_SUCCESS)
+		CHECK(ldap_cache_addrdatalist(ldapdb->ldap_cache, name,
+					      &rdatalist));
+cachehit:
 	if (result != ISC_R_SUCCESS && result != DNS_R_PARTIALMATCH)
 		return (result == ISC_R_NOTFOUND) ? DNS_R_NXDOMAIN : result;
 
