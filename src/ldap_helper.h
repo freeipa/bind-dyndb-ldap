@@ -2,7 +2,7 @@
  * Authors: Martin Nagy <mnagy@redhat.com>
  *          Adam Tkac <atkac@redhat.com>
  *
- * Copyright (C) 2008, 2009  Red Hat
+ * Copyright (C) 2008 - 2011 Red Hat
  * see file 'COPYING' for use and warranty information
  *
  * This program is free software; you can redistribute it and/or
@@ -22,7 +22,7 @@
 #ifndef _LD_LDAP_HELPER_H_
 #define _LD_LDAP_HELPER_H_
 
-#include "ldap_helper.h"
+#include "types.h"
 
 #include <isc/util.h>
 
@@ -34,21 +34,6 @@ struct ldap_value {
 	char			*value;
 	LINK(ldap_value_t)	link;
 };
-
-/*
- * some nice words about ldapdb_rdatalist_t:
- * - it is list of all RRs which have same owner name
- * - rdata buffer is reachable only via dns_rdata_toregion()
- *
- * structure:
- *
- * class1                               class2
- * type1                                type2
- * ttl1                                 ttl2
- * rdata1 -> rdata2 -> rdata3           rdata4 -> rdata5
- * next_rdatalist              ->       next_rdatalist  ...
- */
-typedef LIST(dns_rdatalist_t) ldapdb_rdatalist_t;
 
 isc_result_t ldapdb_rdatalist_findrdatatype(ldapdb_rdatalist_t *rdatalist,
 					    dns_rdatatype_t rdtype,
