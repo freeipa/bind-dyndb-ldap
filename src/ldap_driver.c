@@ -388,7 +388,6 @@ findnode(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 	}
 
 cachemiss:
-	INIT_LIST(rdatalist); /* XXX Should this be moved to ldapdb_rdatalist_get ? */
 	result = ldapdb_rdatalist_get(ldapdb->common.mctx, ldapdb->ldap_inst,
 				      name, &ldapdb->common.origin,
 				      &rdatalist);
@@ -460,7 +459,6 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 
 cachemiss:
 	/* XXX Move ldap_cache_addrdatalist into ldapdb_rdatalist_get. */
-	INIT_LIST(rdatalist); /* XXX Should this be moved to ldapdb_rdatalist_get ? */
 	result = ldapdb_rdatalist_get(ldapdb->common.mctx, ldapdb->ldap_inst,
 				      name, &ldapdb->common.origin,
 				      &rdatalist);
