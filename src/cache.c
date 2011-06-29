@@ -202,6 +202,7 @@ ldap_cache_addrdatalist(ldap_cache_t *cache, dns_name_t *name,
 			ldapdb_rdatalist_t *rdatalist)
 {
 	isc_result_t result;
+	isc_boolean_t free_rdlist = ISC_FALSE;
 	cache_node_t *node = NULL;
 
 	REQUIRE(cache != NULL);
@@ -211,14 +212,27 @@ ldap_cache_addrdatalist(ldap_cache_t *cache, dns_name_t *name,
 
 	CHECK(cache_node_create(cache, &node));
 	CHECK(ldap_rdatalist_copy(cache->mctx, *rdatalist, &node->rdatalist));
+	free_rdlist = ISC_TRUE;
 
 	LOCK(&cache->mutex);
+retry:
 	result = dns_rbt_addname(cache->rbt, name, (void *)node);
-	INSIST(result != ISC_R_EXISTS); /* Indicates a bug */
-	
+	if (result == ISC_R_EXISTS) {
+		/* Replace it */
+		CHECK(dns_rbt_deletename(cache->rbt, name, ISC_FALSE));
+		goto retry;
+	} else if (result != ISC_R_SUCCESS) {
+		UNLOCK(&cache->mutex);
+		goto cleanup;
+	}
 	UNLOCK(&cache->mutex);
+
+	return ISC_R_SUCCESS;
+
 cleanup:
-	if (result != ISC_R_SUCCESS && node != NULL)
+	if (free_rdlist)
+		ldapdb_rdatalist_destroy(cache->mctx, &node->rdatalist);
+	if (node != NULL)
 		MEM_PUT_AND_DETACH(node);
 		
 	return result;
