@@ -21,12 +21,15 @@
 #ifndef _LD_SETTINGS_H_
 #define _LD_SETTINGS_H_
 
+#include <isc/types.h>
+
 typedef struct setting	setting_t;
 
 typedef enum {
 	ST_LD_STRING,
 	ST_SIGNED_INTEGER,
 	ST_UNSIGNED_INTEGER,
+	ST_BOOLEAN,
 } setting_type_t;
 
 struct setting {
@@ -38,6 +41,7 @@ struct setting {
 		const char	*value_char;
 		signed int	value_sint;
 		unsigned int	value_uint;
+		isc_boolean_t	value_boolean;
 	} default_value;
 	void		*target;
 };
@@ -57,10 +61,12 @@ struct setting {
 #define default_string(val)	0, 1, ST_LD_STRING, { .value_char = (val) }, NULL
 #define default_sint(val)	0, 1, ST_SIGNED_INTEGER, { .value_sint = (val) }, NULL
 #define default_uint(val)	0, 1, ST_UNSIGNED_INTEGER, { .value_uint = (val) }, NULL
+#define default_boolean(val)	0, 1, ST_BOOLEAN, { .value_boolean = (val) }, NULL
 /* No defaults. */
 #define no_default_string	0, 0, ST_LD_STRING, { .value_char = NULL }, NULL
 #define no_default_sint		0, 0, ST_SIGNED_INTEGER, { .value_sint = 0 }, NULL
 #define no_default_uint		0, 0, ST_UNSIGNED_INTEGER, { .value_uint = 0 }, NULL
+#define no_default_boolean	0, 1, ST_BOOLEAN, { .value_boolean = ISC_FALSE }, NULL
 
 /* This is used in the end of setting_t arrays. */
 #define end_of_settings	{ NULL, default_sint(0) }

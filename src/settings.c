@@ -24,6 +24,7 @@
 
 #include <ctype.h>
 #include <stdlib.h>
+#include <strings.h>
 
 #include "log.h"
 #include "settings.h"
@@ -110,10 +111,12 @@ set_value(setting_t *setting, const char *value)
 	isc_result_t result;
 	int numeric_value;
 
-	if (setting->type == ST_LD_STRING) {
+	switch (setting->type) {
+	case ST_LD_STRING:
 		CHECK(str_init_char((ld_string_t *)setting->target, value));
-	} else if (setting->type == ST_SIGNED_INTEGER ||
-		   setting->type == ST_UNSIGNED_INTEGER) {
+		break;
+	case ST_SIGNED_INTEGER:
+	case ST_UNSIGNED_INTEGER:
 		if (*value == '\0') {
 			result = ISC_R_FAILURE;
 			goto cleanup;
@@ -130,7 +133,20 @@ set_value(setting_t *setting, const char *value)
 		} else {
 			(*(unsigned *)setting->target) = (unsigned)numeric_value;
 		}
-	} else {
+		break;
+	case ST_BOOLEAN:
+		if (strncasecmp(value, "yes", 3) == 0)
+			(*(isc_boolean_t *)setting->target) = ISC_TRUE;
+		else if (strncasecmp(value, "no", 2) == 0)
+			(*(isc_boolean_t *)setting->target) = ISC_FALSE;
+		else {
+			log_error("unknown boolean expression (%s: %s)",
+				  setting->name, value);
+			result = ISC_R_FAILURE;
+			goto cleanup;
+		}
+		break;
+	default:
 		fatal_error("unknown type in function set_value()");
 		result = ISC_R_FAILURE;
 		goto cleanup;
@@ -156,6 +172,10 @@ set_default_value(setting_t *setting)
 		break;
 	case ST_UNSIGNED_INTEGER:
 		*(unsigned *)setting->target = setting->default_value.value_uint;
+		break;
+	case ST_BOOLEAN:
+		*(isc_boolean_t *)setting->target =
+			setting->default_value.value_boolean;
 		break;
 	default:
 		fatal_error("unknown type in function set_default_value()");
