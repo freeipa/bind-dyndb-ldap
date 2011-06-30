@@ -89,12 +89,13 @@
  *
  * ldap_connection_t structure represents connection to the LDAP database and
  * per-connection specific data. Access is controlled via
- * ldap_connection_t->lock and ldap_instance_t->conn_semaphore. Each read
+ * ldap_connection_t->lock and ldap_pool_t->conn_semaphore. Each read
  * or write access to ldap_connection_t structure (except create/destroy)
  * must acquire the semaphore and the lock.
  */
 
 typedef struct ldap_connection  ldap_connection_t;
+typedef struct ldap_pool	ldap_pool_t;
 typedef struct ldap_auth_pair	ldap_auth_pair_t;
 typedef struct settings		settings_t;
 typedef struct ldap_attribute	ldap_attribute_t;
@@ -124,10 +125,8 @@ struct ldap_instance {
 	dns_view_t		*view;
 	dns_zonemgr_t		*zmgr;
 
-	/* List of LDAP connections. */
-	unsigned int		connections; /* number of connections */
-	semaphore_t		conn_semaphore;
-	ldap_connection_t	**conns;
+	/* Pool of LDAP connections */
+	ldap_pool_t		*pool;
 
 	/* RRs cache */
 	ldap_cache_t		*cache;
@@ -141,6 +140,7 @@ struct ldap_instance {
 	/* Settings. */
 	ld_string_t		*uri;
 	ld_string_t		*base;
+	unsigned int		connections;
 	unsigned int		reconnect_interval;
 	unsigned int		timeout;
 	ldap_auth_t		auth_method;
@@ -154,6 +154,15 @@ struct ldap_instance {
 	ld_string_t		*sasl_password;
 	ld_string_t		*krb5_keytab;
 	ld_string_t		*fake_mname;
+};
+
+struct ldap_pool {
+	isc_mem_t		*mctx;
+	/* List of LDAP connections. */
+	unsigned int		connections; /* number of connections */
+	semaphore_t		conn_semaphore;
+	ldap_connection_t	**conns;
+
 };
 
 struct ldap_connection {
@@ -220,9 +229,9 @@ const ldap_auth_pair_t supported_ldap_auth[] = {
  */
 
 /* TODO: reorganize this stuff & clean it up. */
-static isc_result_t new_ldap_connection(ldap_instance_t *ldap_inst,
+static isc_result_t new_ldap_connection(ldap_pool_t *pool,
 		ldap_connection_t **ldap_connp);
-static void destroy_ldap_connection(ldap_instance_t *ldap_inst,
+static void destroy_ldap_connection(ldap_pool_t *pool,
 		ldap_connection_t **ldap_connp);
 
 static isc_result_t findrdatatype_or_create(isc_mem_t *mctx,
@@ -265,9 +274,6 @@ static const LDAPMessage *next_entry(ldap_connection_t *inst);
 static const char *get_dn(ldap_connection_t *inst);
 #endif
 
-static ldap_connection_t * get_connection(ldap_instance_t *ldap_inst);
-static void put_connection(ldap_instance_t *ldap_inst,
-		ldap_connection_t *ldap_conn);
 static isc_result_t ldap_connect(ldap_instance_t *ldap_inst,
 		ldap_connection_t *ldap_conn);
 static isc_result_t ldap_reconnect(ldap_instance_t *ldap_inst,
@@ -291,6 +297,14 @@ static isc_result_t ldap_rdata_to_char_array(isc_mem_t *mctx,
 static void free_char_array(isc_mem_t *mctx, char ***valsp);
 static isc_result_t modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		dns_rdatalist_t *rdlist, int mod_op, isc_boolean_t delete_node);
+
+/* Functions for maintaining pool of LDAP connections */
+static isc_result_t ldap_pool_create(isc_mem_t *mctx, unsigned int connections,
+		ldap_pool_t **poolp);
+static void ldap_pool_destroy(ldap_pool_t **poolp);
+static ldap_connection_t * ldap_pool_getconnection(ldap_pool_t *pool);
+static void ldap_pool_putconnection(ldap_pool_t *pool,
+		ldap_connection_t *ldap_conn);
 
 isc_result_t
 new_ldap_instance(isc_mem_t *mctx, const char *db_name,
@@ -424,26 +438,25 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		}
 	}
 
-	CHECK(semaphore_init(&ldap_inst->conn_semaphore, ldap_inst->connections));
-	CHECKED_MEM_GET(mctx, ldap_inst->conns,
-			ldap_inst->connections * sizeof(ldap_connection_t *));
-	memset(ldap_inst->conns, 0, ldap_inst->connections * sizeof(ldap_connection_t *));
-
+	CHECK(ldap_pool_create(mctx, ldap_inst->connections, &ldap_inst->pool));
 	CHECK(new_ldap_cache(mctx, argv, &ldap_inst->cache));
+
+	/* TODO: statement below should be moved to ldap_pool_connect() */
 retry:
 	for (i = 0; i < ldap_inst->connections; i++) {
 		ldap_conn = NULL;
-		CHECK(new_ldap_connection(ldap_inst, &ldap_conn));
+		CHECK(new_ldap_connection(ldap_inst->pool, &ldap_conn));
 		result = ldap_connect(ldap_inst, ldap_conn);
 		/* If the credentials are invalid, try passwordless login. */
 		if (result == ISC_R_NOPERM
 		    && ldap_inst->auth_method != AUTH_NONE) {
-			destroy_ldap_connection(ldap_inst, &ldap_conn);
+			destroy_ldap_connection(ldap_inst->pool, &ldap_conn);
 			/* It's safe to reuse "i" here */
-			for (i = 0; i < ldap_inst->connections; i++) {
-				ldap_conn = ldap_inst->conns[i];
+			for (i = 0; i < ldap_inst->pool->connections; i++) {
+				ldap_conn = ldap_inst->pool->conns[i];
 				if (ldap_conn != NULL)
-					destroy_ldap_connection(ldap_inst, &ldap_conn);
+					destroy_ldap_connection(ldap_inst->pool,
+								&ldap_conn);
 			}
 			ldap_inst->auth_method = AUTH_NONE;
 			log_debug(2, "falling back to password-less login");
@@ -454,7 +467,7 @@ retry:
 		} else if (result != ISC_R_SUCCESS) {
 			goto cleanup;
 		}
-		ldap_inst->conns[i] = ldap_conn;
+		ldap_inst->pool->conns[i] = ldap_conn;
 	}
 
 cleanup:
@@ -472,21 +485,12 @@ void
 destroy_ldap_instance(ldap_instance_t **ldap_instp)
 {
 	ldap_instance_t *ldap_inst;
-	ldap_connection_t *ldap_conn;
-	unsigned int i;
 
 	REQUIRE(ldap_instp != NULL && *ldap_instp != NULL);
 
 	ldap_inst = *ldap_instp;
 
-	for (i = 0; i < ldap_inst->connections; i++) {
-		ldap_conn = ldap_inst->conns[i];
-		if (ldap_conn != NULL)
-			destroy_ldap_connection(ldap_inst, &ldap_conn);
-	}
-
-	SAFE_MEM_PUT(ldap_inst->mctx, ldap_inst->conns,
-		     ldap_inst->connections * sizeof(ldap_connection_t *));
+	ldap_pool_destroy(&ldap_inst->pool);
 
 	str_destroy(&ldap_inst->uri);
 	str_destroy(&ldap_inst->base);
@@ -501,7 +505,6 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	str_destroy(&ldap_inst->krb5_keytab);
 	str_destroy(&ldap_inst->fake_mname);
 
-	semaphore_destroy(&ldap_inst->conn_semaphore);
 	/* commented out for now, causes named to hang */
 	//dns_view_detach(&ldap_inst->view);
 
@@ -518,15 +521,15 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 }
 
 static isc_result_t
-new_ldap_connection(ldap_instance_t *ldap_inst, ldap_connection_t **ldap_connp)
+new_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
 {
 	isc_result_t result;
 	ldap_connection_t *ldap_conn;
 
-	REQUIRE(ldap_inst != NULL);
+	REQUIRE(pool != NULL);
 	REQUIRE(ldap_connp != NULL && *ldap_connp == NULL);
 
-	ldap_conn = isc_mem_get(ldap_inst->mctx, sizeof(ldap_connection_t));
+	ldap_conn = isc_mem_get(pool->mctx, sizeof(ldap_connection_t));
 	if (ldap_conn == NULL)
 		return ISC_R_NOMEMORY;
 
@@ -534,11 +537,11 @@ new_ldap_connection(ldap_instance_t *ldap_inst, ldap_connection_t **ldap_connp)
 
 	result = isc_mutex_init(&ldap_conn->lock);
 	if (result != ISC_R_SUCCESS) {
-		isc_mem_put(ldap_inst->mctx, ldap_inst, sizeof(ldap_connection_t));
+		isc_mem_put(pool->mctx, ldap_conn, sizeof(ldap_connection_t));
 		return result;
 	}
 
-	isc_mem_attach(ldap_inst->mctx, &ldap_conn->mctx);
+	isc_mem_attach(pool->mctx, &ldap_conn->mctx);
 
 	CHECK(str_new(ldap_conn->mctx, &ldap_conn->query_string));
 
@@ -550,13 +553,13 @@ new_ldap_connection(ldap_instance_t *ldap_inst, ldap_connection_t **ldap_connp)
 	return ISC_R_SUCCESS;
 
 cleanup:
-	destroy_ldap_connection(ldap_inst, &ldap_conn);
+	destroy_ldap_connection(pool, &ldap_conn);
 
 	return result;
 }
 
 static void
-destroy_ldap_connection(ldap_instance_t *ldap_inst, ldap_connection_t **ldap_connp)
+destroy_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
 {
 	ldap_connection_t *ldap_conn;
 
@@ -578,7 +581,7 @@ destroy_ldap_connection(ldap_instance_t *ldap_inst, ldap_connection_t **ldap_con
 
 	isc_mem_detach(&ldap_conn->mctx);
 
-	isc_mem_put(ldap_inst->mctx, *ldap_connp, sizeof(ldap_connection_t));
+	isc_mem_put(pool->mctx, *ldap_connp, sizeof(ldap_connection_t));
 	*ldap_connp = NULL;
 }
 
@@ -700,7 +703,7 @@ refresh_zones_from_ldap(isc_task_t *task, ldap_instance_t *ldap_inst,
 
 	log_debug(2, "refreshing list of zones for %s", ldap_inst->db_name);
 
-	ldap_conn = get_connection(ldap_inst);
+	ldap_conn = ldap_pool_getconnection(ldap_inst->pool);
 
 	CHECK(ldap_query(ldap_inst, ldap_conn, str_buf(ldap_inst->base),
 			 LDAP_SCOPE_SUBTREE, attrs, 0,
@@ -801,7 +804,7 @@ next:
 	}
 
 cleanup:
-	put_connection(ldap_inst, ldap_conn);
+	ldap_pool_putconnection(ldap_inst->pool, ldap_conn);
 
 	log_debug(2, "finished refreshing list of zones");
 
@@ -960,7 +963,7 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 	REQUIRE(name != NULL);
 	REQUIRE(rdatalist != NULL);
 
-	ldap_conn = get_connection(ldap_inst);
+	ldap_conn = ldap_pool_getconnection(ldap_inst->pool);
 
 	INIT_LIST(*rdatalist);
 	CHECK(str_new(mctx, &string));
@@ -1008,7 +1011,7 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 	result = ISC_R_SUCCESS;
 
 cleanup:
-	put_connection(ldap_inst, ldap_conn);
+	ldap_pool_putconnection(ldap_inst->pool, ldap_conn);
 	str_destroy(&string);
 
 	if (result != ISC_R_SUCCESS)
@@ -1292,62 +1295,6 @@ array_contains_nocase(const char **haystack, const char *needle)
 
 	return isc_boolean_false;
 }
-
-static ldap_connection_t *
-get_connection(ldap_instance_t *ldap_inst)
-{
-	ldap_connection_t *ldap_conn;
-	unsigned int i;
-
-	REQUIRE(ldap_inst != NULL);
-
-	semaphore_wait(&ldap_inst->conn_semaphore);
-	for (i = 0; i < ldap_inst->connections; i++) {
-		ldap_conn = ldap_inst->conns[i];
-		if (isc_mutex_trylock(&ldap_conn->lock) == ISC_R_SUCCESS)
-			break;
-	}
-
-	RUNTIME_CHECK(ldap_conn != NULL);
-
-	INIT_LIST(ldap_conn->ldap_entries);
-
-	return ldap_conn;
-}
-
-static void
-put_connection(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn)
-{
-	if (ldap_conn == NULL)
-		return;
-
-	if (ldap_conn->dn) {
-		ldap_memfree(ldap_conn->dn);
-		ldap_conn->dn = NULL;
-	}
-	if (ldap_conn->values) {
-		ldap_value_free(ldap_conn->values);
-		ldap_conn->values = NULL;
-	}
-	if (ldap_conn->attribute) {
-		ldap_memfree(ldap_conn->attribute);
-		ldap_conn->attribute = NULL;
-	}
-	if (ldap_conn->ber) {
-		ber_free(ldap_conn->ber, 0);
-		ldap_conn->ber = NULL;
-	}
-	if (ldap_conn->result) {
-		ldap_msgfree(ldap_conn->result);
-		ldap_conn->result = NULL;
-	}
-
-	free_query_cache(ldap_conn);
-
-	UNLOCK(&ldap_conn->lock);
-	semaphore_signal(&ldap_inst->conn_semaphore);
-}
-
 
 static isc_result_t
 ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
@@ -2093,7 +2040,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	if (rdlist->type == dns_rdatatype_soa && mod_op == LDAP_MOD_DELETE)
 		return ISC_R_SUCCESS;
 
-	ldap_conn = get_connection(ldap_inst);
+	ldap_conn = ldap_pool_getconnection(ldap_inst->pool);
 
 	CHECK(str_new(mctx, &owner_dn));
 	CHECK(dnsname_to_dn(ldap_inst->zone_register, owner, owner_dn));
@@ -2113,7 +2060,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	CHECK(ldap_modify_do(ldap_conn, str_buf(owner_dn), change, delete_node));
 
 cleanup:
-	put_connection(ldap_inst, ldap_conn);
+	ldap_pool_putconnection(ldap_inst->pool, ldap_conn);
 	str_destroy(&owner_dn);
 	free_ldapmod(mctx, &change[0]);
 	free_ldapmod(mctx, &change[1]);
@@ -2139,5 +2086,112 @@ ldap_cache_t *
 ldap_instance_getcache(ldap_instance_t *ldap_inst)
 {
 	return ldap_inst->cache;
+}
+
+static isc_result_t
+ldap_pool_create(isc_mem_t *mctx, unsigned int connections, ldap_pool_t **poolp)
+{
+	ldap_pool_t *pool;
+	isc_result_t result;
+
+	REQUIRE(poolp != NULL && *poolp == NULL);
+
+	CHECKED_MEM_GET(mctx, pool, sizeof(*pool));
+	ZERO_PTR(pool);
+	isc_mem_attach(mctx, &pool->mctx);
+	
+	CHECK(semaphore_init(&pool->conn_semaphore, connections));
+	CHECKED_MEM_GET(mctx, pool->conns,
+			connections * sizeof(ldap_connection_t *));
+	memset(pool->conns, 0, connections * sizeof(ldap_connection_t *));
+	pool->connections = connections;
+
+	*poolp = pool;
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	if (pool != NULL)
+		ldap_pool_destroy(&pool);
+	return result;
+}
+static void
+ldap_pool_destroy(ldap_pool_t **poolp)
+{
+	ldap_pool_t *pool;
+	ldap_connection_t *ldap_conn;
+	unsigned int i;
+
+	REQUIRE(poolp != NULL && *poolp != NULL);
+
+	pool = *poolp;
+
+	for (i = 0; i < pool->connections; i++) {
+		ldap_conn = pool->conns[i];
+		if (ldap_conn != NULL)
+			destroy_ldap_connection(pool, &ldap_conn);
+	}
+
+	SAFE_MEM_PUT(pool->mctx, pool->conns,
+		     pool->connections * sizeof(ldap_connection_t *));
+
+	semaphore_destroy(&pool->conn_semaphore);
+
+	MEM_PUT_AND_DETACH(pool);
+}
+
+static ldap_connection_t *
+ldap_pool_getconnection(ldap_pool_t *pool)
+{
+	ldap_connection_t *ldap_conn;
+	unsigned int i;
+
+	REQUIRE(pool != NULL);
+
+	semaphore_wait(&pool->conn_semaphore);
+	for (i = 0; i < pool->connections; i++) {
+		ldap_conn = pool->conns[i];
+		if (isc_mutex_trylock(&ldap_conn->lock) == ISC_R_SUCCESS)
+			break;
+	}
+
+	RUNTIME_CHECK(ldap_conn != NULL);
+
+	INIT_LIST(ldap_conn->ldap_entries);
+
+	return ldap_conn;
+}
+
+static void
+ldap_pool_putconnection(ldap_pool_t *pool, ldap_connection_t *ldap_conn)
+{
+	if (ldap_conn == NULL)
+		return;
+
+	if (ldap_conn->dn) {
+		ldap_memfree(ldap_conn->dn);
+		ldap_conn->dn = NULL;
+	}
+	if (ldap_conn->values) {
+		ldap_value_free(ldap_conn->values);
+		ldap_conn->values = NULL;
+	}
+	if (ldap_conn->attribute) {
+		ldap_memfree(ldap_conn->attribute);
+		ldap_conn->attribute = NULL;
+	}
+	if (ldap_conn->ber) {
+		ber_free(ldap_conn->ber, 0);
+		ldap_conn->ber = NULL;
+	}
+	if (ldap_conn->result) {
+		ldap_msgfree(ldap_conn->result);
+		ldap_conn->result = NULL;
+	}
+
+	free_query_cache(ldap_conn);
+
+	UNLOCK(&ldap_conn->lock);
+	semaphore_signal(&pool->conn_semaphore);
 }
 
