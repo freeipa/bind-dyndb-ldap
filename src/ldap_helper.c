@@ -305,6 +305,8 @@ static void ldap_pool_destroy(ldap_pool_t **poolp);
 static ldap_connection_t * ldap_pool_getconnection(ldap_pool_t *pool);
 static void ldap_pool_putconnection(ldap_pool_t *pool,
 		ldap_connection_t *ldap_conn);
+static isc_result_t ldap_pool_connect(ldap_pool_t *pool,
+		ldap_instance_t *ldap_inst);
 
 isc_result_t
 new_ldap_instance(isc_mem_t *mctx, const char *db_name,
@@ -314,7 +316,6 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	unsigned int i;
 	isc_result_t result;
 	ldap_instance_t *ldap_inst;
-	ldap_connection_t *ldap_conn;
 	ld_string_t *auth_method_str = NULL;
 	setting_t ldap_settings[] = {
 		{ "uri",	 no_default_string		},
@@ -438,37 +439,9 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		}
 	}
 
-	CHECK(ldap_pool_create(mctx, ldap_inst->connections, &ldap_inst->pool));
 	CHECK(new_ldap_cache(mctx, argv, &ldap_inst->cache));
-
-	/* TODO: statement below should be moved to ldap_pool_connect() */
-retry:
-	for (i = 0; i < ldap_inst->connections; i++) {
-		ldap_conn = NULL;
-		CHECK(new_ldap_connection(ldap_inst->pool, &ldap_conn));
-		result = ldap_connect(ldap_inst, ldap_conn);
-		/* If the credentials are invalid, try passwordless login. */
-		if (result == ISC_R_NOPERM
-		    && ldap_inst->auth_method != AUTH_NONE) {
-			destroy_ldap_connection(ldap_inst->pool, &ldap_conn);
-			/* It's safe to reuse "i" here */
-			for (i = 0; i < ldap_inst->pool->connections; i++) {
-				ldap_conn = ldap_inst->pool->conns[i];
-				if (ldap_conn != NULL)
-					destroy_ldap_connection(ldap_inst->pool,
-								&ldap_conn);
-			}
-			ldap_inst->auth_method = AUTH_NONE;
-			log_debug(2, "falling back to password-less login");
-			goto retry;
-		} else if (result == ISC_R_NOTCONNECTED) {
-			/* LDAP server is down which can happen, continue */
-			result = ISC_R_SUCCESS;
-		} else if (result != ISC_R_SUCCESS) {
-			goto cleanup;
-		}
-		ldap_inst->pool->conns[i] = ldap_conn;
-	}
+	CHECK(ldap_pool_create(mctx, ldap_inst->connections, &ldap_inst->pool));
+	CHECK(ldap_pool_connect(ldap_inst->pool, ldap_inst));
 
 cleanup:
 	if (result != ISC_R_SUCCESS)
@@ -2193,5 +2166,50 @@ ldap_pool_putconnection(ldap_pool_t *pool, ldap_connection_t *ldap_conn)
 
 	UNLOCK(&ldap_conn->lock);
 	semaphore_signal(&pool->conn_semaphore);
+}
+
+static isc_result_t
+ldap_pool_connect(ldap_pool_t *pool, ldap_instance_t *ldap_inst)
+{
+	isc_result_t result;
+	ldap_connection_t *ldap_conn;
+	unsigned int i;
+
+retry:
+	for (i = 0; i < pool->connections; i++) {
+		ldap_conn = NULL;
+		CHECK(new_ldap_connection(pool, &ldap_conn));
+		result = ldap_connect(ldap_inst, ldap_conn);
+		/* If the credentials are invalid, try passwordless login. */
+		if (result == ISC_R_NOPERM
+		    && ldap_inst->auth_method != AUTH_NONE) {
+			destroy_ldap_connection(pool, &ldap_conn);
+			/* It's safe to reuse "i" here */
+			for (i = 0; i < pool->connections; i++) {
+				ldap_conn = pool->conns[i];
+				if (ldap_conn != NULL)
+					destroy_ldap_connection(pool, &ldap_conn);
+			}
+			ldap_inst->auth_method = AUTH_NONE;
+			log_debug(2, "falling back to password-less login");
+			goto retry;
+		} else if (result == ISC_R_NOTCONNECTED) {
+			/* LDAP server is down which can happen, continue */
+			result = ISC_R_SUCCESS;
+		} else if (result != ISC_R_SUCCESS) {
+			goto cleanup;
+		}
+		pool->conns[i] = ldap_conn;
+	}
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	for (i = 0; i < pool->connections; i++) {
+		ldap_conn = pool->conns[i];
+		if (ldap_conn != NULL)
+			destroy_ldap_connection(pool, &ldap_conn);
+	}
+	return result;
 }
 
