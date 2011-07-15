@@ -925,6 +925,7 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 	ldap_entry_t *entry;
 	ldap_attribute_t *attr;
 	ld_string_t *string = NULL;
+	ldap_cache_t *cache;
 
 	dns_rdataclass_t rdclass;
 	dns_rdatatype_t rdtype;
@@ -936,6 +937,15 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 	REQUIRE(name != NULL);
 	REQUIRE(rdatalist != NULL);
 
+	/* Check if RRs are in the cache */
+	cache = ldap_instance_getcache(ldap_inst);
+	result = ldap_cache_getrdatalist(mctx, cache, name, rdatalist);
+	if (result == ISC_R_SUCCESS)
+		return ISC_R_SUCCESS;
+	else if (result != ISC_R_NOTFOUND)
+		return result;
+
+	/* RRs aren't in the cache, perform ordinary LDAP query */
 	ldap_conn = ldap_pool_getconnection(ldap_inst->pool);
 
 	INIT_LIST(*rdatalist);
@@ -981,7 +991,9 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 		}
 	}
 
-	result = ISC_R_SUCCESS;
+	/* Cache RRs */
+	CHECK(ldap_cache_addrdatalist(cache, name, rdatalist));
+	/* result = ISC_R_SUCCESS; - Performed by ldap_cache_addrdatalist call above */
 
 cleanup:
 	ldap_pool_putconnection(ldap_inst->pool, ldap_conn);
@@ -2009,6 +2021,11 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	ldap_connection_t *ldap_conn = NULL;
 	ld_string_t *owner_dn = NULL;
 	LDAPMod *change[3] = { NULL };
+	ldap_cache_t *cache;
+
+	/* Flush modified record from the cache */
+	cache = ldap_instance_getcache(ldap_inst);
+	CHECK(discard_from_cache(cache, owner));
 
 	if (rdlist->type == dns_rdatatype_soa && mod_op == LDAP_MOD_DELETE)
 		return ISC_R_SUCCESS;
