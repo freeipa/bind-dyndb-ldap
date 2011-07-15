@@ -1073,7 +1073,7 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 	CHECK(dns_name_dupwithoffsets(name, mctx, &ldapdb->common.origin));
 
 	CHECK(isc_refcount_init(&ldapdb->refs, 1));
-	CHECK(manager_get_ldap_instance_and_cache(argv[0], &ldapdb->ldap_inst));
+	CHECK(manager_get_ldap_instance(argv[0], &ldapdb->ldap_inst));
 
 	*dbp = (dns_db_t *)ldapdb;
 

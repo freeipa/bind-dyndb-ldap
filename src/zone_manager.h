@@ -24,7 +24,6 @@
 
 #include <dns/types.h>
 
-#include "cache.h"
 #include "ldap_helper.h"
 
 typedef struct db_instance db_instance_t;
@@ -37,7 +36,7 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 			   dns_dyndb_arguments_t *dyndb_args);
 
 isc_result_t
-manager_get_ldap_instance_and_cache(const char *name,
-				    ldap_instance_t **ldap_inst);
+manager_get_ldap_instance(const char *name,
+			  ldap_instance_t **ldap_inst);
 
 #endif /* !_LD_ZONE_MANAGER_H_ */

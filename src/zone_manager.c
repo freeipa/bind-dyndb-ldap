@@ -192,7 +192,7 @@ refresh_zones_action(isc_task_t *task, isc_event_t *event)
 }
 
 isc_result_t
-manager_get_ldap_instance_and_cache(const char *name, ldap_instance_t **ldap_inst)
+manager_get_ldap_instance(const char *name, ldap_instance_t **ldap_inst)
 {
 	isc_result_t result;
 	db_instance_t *db_inst;
