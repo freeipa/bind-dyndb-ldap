@@ -46,6 +46,7 @@
 #include <limits.h>
 #include <sasl/sasl.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
@@ -167,6 +168,7 @@ struct ldap_connection {
 
 	LDAP			*handle;
 	LDAPMessage		*result;
+	LDAPControl		*serverctrls[2]; /* psearch/NULL or NULL/NULL */
 
 	/* Parsing. */
 	isc_lex_t		*lex;
@@ -266,6 +268,10 @@ static void ldap_pool_putconnection(ldap_pool_t *pool,
 		ldap_connection_t *ldap_conn);
 static isc_result_t ldap_pool_connect(ldap_pool_t *pool,
 		ldap_instance_t *ldap_inst);
+
+/* Functions for manipulating LDAP persistent search control */
+static isc_result_t ldap_pscontrol_create(isc_mem_t *mctx, LDAPControl **ctrlp);
+static void ldap_pscontrol_destroy(isc_mem_t *mctx, LDAPControl **ctrlp);
 
 isc_result_t
 new_ldap_instance(isc_mem_t *mctx, const char *db_name,
@@ -479,6 +485,8 @@ new_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
 
 	CHECK(isc_lex_create(ldap_conn->mctx, TOKENSIZ, &ldap_conn->lex));
 	CHECKED_MEM_GET(ldap_conn->mctx, ldap_conn->rdata_target_mem, MINTSIZ);
+	CHECK(ldap_pscontrol_create(ldap_conn->mctx,
+				    &ldap_conn->serverctrls[0]));
 
 	*ldap_connp = ldap_conn;
 
@@ -509,6 +517,10 @@ destroy_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
 	if (ldap_conn->rdata_target_mem != NULL) {
 		isc_mem_put(ldap_conn->mctx,
 			    ldap_conn->rdata_target_mem, MINTSIZ);
+	}
+	if (ldap_conn->serverctrls[0] != NULL) {
+		ldap_pscontrol_destroy(ldap_conn->mctx,
+				       &ldap_conn->serverctrls[0]);
 	}
 
 	isc_mem_detach(&ldap_conn->mctx);
@@ -1845,3 +1857,69 @@ cleanup:
 	return result;
 }
 
+#define LDAP_CONTROL_PERSISTENTSEARCH "2.16.840.1.113730.3.4.3"
+/*
+ * Creates persistent search (aka psearch,
+ * http://tools.ietf.org/id/draft-ietf-ldapext-psearch-03.txt) control.
+ */
+static isc_result_t
+ldap_pscontrol_create(isc_mem_t *mctx, LDAPControl **ctrlp)
+{
+	BerElement *ber;
+	LDAPControl *ctrl = NULL;
+	isc_result_t result = ISC_R_FAILURE;
+
+	REQUIRE(ctrlp != NULL && *ctrlp == NULL);
+
+	ber = ber_alloc_t(LBER_USE_DER);
+	if (ber == NULL)
+		return ISC_R_NOMEMORY;
+
+	/*
+	 * Check the draft above, section 4 to get info about PS control
+	 * format.
+	 *
+	 * We are interested in all changes in DNS related DNs and we
+	 * want to get initial state of the "watched" LDAP subtree.
+	 */
+	if (ber_printf(ber, "{ibb}", 1 | 2 | 4 | 8, 0, 1) == -1)
+		goto cleanup;
+
+	CHECKED_MEM_GET(mctx, ctrl, sizeof(*ctrl));
+	ZERO_PTR(ctrl);
+	ctrl->ldctl_iscritical = 1;
+	ctrl->ldctl_oid = strdup(LDAP_CONTROL_PERSISTENTSEARCH);
+	if (ctrl->ldctl_oid == NULL)
+		goto cleanup;
+
+	if (ber_flatten2(ber, &ctrl->ldctl_value, 1) < 0)
+		goto cleanup;
+
+	ber_free(ber, 1);
+	*ctrlp = ctrl;
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	ber_free(ber, 1);
+	ldap_pscontrol_destroy(mctx, &ctrl);
+
+	return result;
+}
+
+static void
+ldap_pscontrol_destroy(isc_mem_t *mctx, LDAPControl **ctrlp)
+{
+	LDAPControl *ctrl;
+
+	REQUIRE(ctrlp != NULL);
+
+	if (*ctrlp == NULL)
+		return;
+
+	ctrl = *ctrlp;
+	if (ctrl->ldctl_oid != NULL)
+		free(ctrl->ldctl_oid);
+	SAFE_MEM_PUT(mctx, ctrl, sizeof(*ctrl));
+	*ctrlp = NULL;
+}
