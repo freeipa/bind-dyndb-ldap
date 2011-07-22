@@ -21,7 +21,7 @@
 #ifndef _LD_ACL_H_
 #define _LD_ACL_H_
 
-#include "ldap_helper.h"
+#include "ldap_entry.h"
 
 #include <dns/acl.h>
 
@@ -29,7 +29,7 @@ isc_result_t
 acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone);
 
 isc_result_t
-acl_from_ldap(isc_mem_t *mctx, const ldap_value_list_t *vals, dns_acl_t **aclp);
+acl_from_ldap(isc_mem_t *mctx, const ldap_valuelist_t *vals, dns_acl_t **aclp);
 /*
  * Converts multiple ACL elements to the zone ACL.
  *

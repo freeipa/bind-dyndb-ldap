@@ -29,13 +29,6 @@
 
 typedef struct ldap_instance	ldap_instance_t;
 
-typedef struct ldap_value	ldap_value_t;
-typedef LIST(ldap_value_t)	ldap_value_list_t;
-struct ldap_value {
-	char			*value;
-	LINK(ldap_value_t)	link;
-};
-
 isc_result_t ldapdb_rdatalist_findrdatatype(ldapdb_rdatalist_t *rdatalist,
 					    dns_rdatatype_t rdtype,
 					    dns_rdatalist_t **rdlistp);

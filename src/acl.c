@@ -414,7 +414,7 @@ in6addr_fromtext(const char *addr, struct in6_addr *in6)
 }
 
 isc_result_t
-acl_from_ldap(isc_mem_t *mctx, const ldap_value_list_t *vals, dns_acl_t **aclp)
+acl_from_ldap(isc_mem_t *mctx, const ldap_valuelist_t *vals, dns_acl_t **aclp)
 {
 	dns_acl_t *acl = NULL;
 	ldap_value_t *val;

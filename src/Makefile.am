@@ -7,6 +7,7 @@ HDRS =				\
 	compat.h		\
 	krb5_helper.h		\
 	ldap_convert.h		\
+	ldap_entry.h		\
 	ldap_helper.h		\
 	log.h			\
 	rdlist.h		\
@@ -25,6 +26,7 @@ ldap_la_SOURCES =		\
 	krb5_helper.c		\
 	ldap_convert.c		\
 	ldap_driver.c		\
+	ldap_entry.c		\
 	ldap_helper.c		\
 	log.c			\
 	rdlist.c		\
