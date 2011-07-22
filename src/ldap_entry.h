@@ -52,6 +52,12 @@ struct ldap_entry {
 	LINK(ldap_entry_t)	link;
 };
 
+#define LDAP_ENTRYCLASS_NONE	0x0
+#define LDAP_ENTRYCLASS_RR	0x1
+#define LDAP_ENTRYCLASS_ZONE	0x2
+
+typedef unsigned char		ldap_entryclass_t;
+
 isc_result_t
 ldap_entrylist_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 		      ldap_entrylist_t *entrylist);
@@ -88,6 +94,15 @@ ldap_entry_nextrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
 isc_result_t
 ldap_entry_getfakesoa(ldap_entry_t *entry, ld_string_t *fake_mname,
 		      ld_string_t *target);
+
+/*
+ * ldap_entry_getclass
+ *
+ * Get entry class (bitwise OR of the LDAP_ENTRYCLASS_*). Note that
+ * you must ldap_search for objectClass attribute!
+ */
+ldap_entryclass_t
+ldap_entry_getclass(ldap_entry_t *entry);
 
 /*
  * ldap_attr_nextvalue

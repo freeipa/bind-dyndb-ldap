@@ -348,6 +348,48 @@ cleanup:
 	return result;
 }
 
+ldap_entryclass_t
+ldap_entry_getclass(ldap_entry_t *entry)
+{
+	ldap_valuelist_t values;
+	ldap_value_t *val;
+	ldap_entryclass_t entryclass;
+
+	REQUIRE(entry != NULL);
+
+	entryclass = LDAP_ENTRYCLASS_NONE;
+
+	/* XXX Can this happen? */
+	if (ldap_entry_getvalues(entry, "objectClass", &values)
+	    != ISC_R_SUCCESS)
+		return entryclass;
+
+	for (val = HEAD(values); val != NULL; val = NEXT(val, link)) {
+		if (!strcasecmp(val->value, "idnsrecord"))
+			entryclass |= LDAP_ENTRYCLASS_RR;
+		else if (!strcasecmp(val->value, "idnszone"))
+			entryclass |= LDAP_ENTRYCLASS_ZONE;
+	}
+
+	return entryclass;
+
+#if 0
+	/* Preserve current attribute iterator */
+	lastattr = = entry->lastattr;
+	entry->lastattr = NULL;
+
+	while ((attr = ldap_entry_nextattr(entry, "objectClass")) != NULL) {
+		if (!strcasecmp(attr->ldap_values[0], "idnsrecord")) {
+			entryclass |= LDAP_ENTRYCLASS_RR;
+		} else if (!strcasecmp(attr->ldap_values[0], "idnszone")) {
+			entryclass |= LDAP_ENTRYCLASS_ZONE;
+		}
+	}
+
+	entry->lastattr = lastattr;
+#endif
+}
+
 ld_string_t*
 ldap_attr_nextvalue(ldap_attribute_t *attr, ld_string_t *str)
 {
