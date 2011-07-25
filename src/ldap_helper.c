@@ -225,9 +225,6 @@ static isc_result_t parse_rdata(isc_mem_t *mctx, ldap_connection_t *ldap_conn,
 		dns_name_t *origin, const char *rdata_text,
 		dns_rdata_t **rdatap);
 
-static isc_result_t cache_query_results(ldap_connection_t *inst);
-static void free_query_cache(ldap_connection_t *inst);
-
 static const char * get_dn(ldap_connection_t *ldap_conn, ldap_entry_t *entry);
 
 #if 0
@@ -652,7 +649,6 @@ refresh_zones_from_ldap(isc_task_t *task, ldap_instance_t *ldap_inst,
 	CHECK(ldap_query(ldap_inst, ldap_conn, str_buf(ldap_inst->base),
 			 LDAP_SCOPE_SUBTREE, attrs, 0,
 			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
-	CHECK(cache_query_results(ldap_conn));
 
 	for (entry = HEAD(ldap_conn->ldap_entries);
 	     entry != NULL;
@@ -922,7 +918,6 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 
 	CHECK(ldap_query(ldap_inst, ldap_conn, str_buf(string), LDAP_SCOPE_BASE,
 			 NULL, 0, "(objectClass=idnsRecord)"));
-	CHECK(cache_query_results(ldap_conn));
 
 	if (EMPTY(ldap_conn->ldap_entries)) {
 		result = ISC_R_NOTFOUND;
@@ -1098,25 +1093,20 @@ ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 			cnt = ldap_count_entries(ldap_conn->handle, ldap_conn->result);
 			log_debug(2, "entry count: %d", cnt);
 
+			result = ldap_entrylist_create(ldap_conn->mctx,
+						       ldap_conn->handle,
+						       ldap_conn->result,
+						       &ldap_conn->ldap_entries);
+			if (result != ISC_R_SUCCESS) {
+				log_error("failed to save LDAP query results");
+				return result;
+			}
+
 			return ISC_R_SUCCESS;
 		}
 	} while (handle_connection_error(ldap_inst, ldap_conn, &result));
 
 	return result;
-}
-
-static isc_result_t
-cache_query_results(ldap_connection_t *conn)
-{
-	free_query_cache(conn);
-	return ldap_entrylist_create(conn->mctx, conn->handle, conn->result,
-				     &conn->ldap_entries);
-}
-
-static void
-free_query_cache(ldap_connection_t *conn)
-{
-	ldap_entrylist_destroy(conn->mctx, &conn->ldap_entries);
 }
 
 #if 0
@@ -1806,7 +1796,7 @@ ldap_pool_putconnection(ldap_pool_t *pool, ldap_connection_t *ldap_conn)
 		ldap_conn->result = NULL;
 	}
 
-	free_query_cache(ldap_conn);
+	ldap_entrylist_destroy(ldap_conn->mctx, &ldap_conn->ldap_entries);
 
 	UNLOCK(&ldap_conn->lock);
 	semaphore_signal(&pool->conn_semaphore);
