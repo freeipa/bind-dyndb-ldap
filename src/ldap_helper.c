@@ -617,6 +617,104 @@ configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
 	return acl_configure_zone_ssutable(update_str, zone);
 }
 
+/* Parse the zone entry */
+static isc_result_t
+ldap_parse_zoneentry(isc_task_t *task, ldap_entry_t *entry,
+		     ldap_instance_t *inst, ldap_connection_t *conn,
+		     isc_boolean_t create)
+{
+	const char *dn;
+	ldap_valuelist_t values;
+	dns_name_t name;
+	dns_zone_t *zone;
+	isc_result_t result;
+	isc_boolean_t runtime_add = ISC_FALSE;
+
+	zone = NULL;
+	dns_name_init(&name, NULL);
+
+	/* Derive the dns name of the zone from the DN. */
+	dn = get_dn(conn, entry);
+	CHECK_NEXT(dn_to_dnsname(conn->mctx, dn, &name));
+
+	/* If we are in the configuration phase, create the zone,
+	 * otherwise we will just search for it in our zone register
+	 * and modify the zone we found. */
+	if (create) {
+		/* Configuration phase, make sure we are running exclusively */
+		RUNTIME_CHECK(isc_task_beginexclusive(task) == ISC_R_LOCKBUSY);
+newzone:
+		CHECK_NEXT(create_zone(inst, &name, &zone));
+		CHECK_NEXT(zr_add_zone(inst->zone_register, zone, dn));
+		log_debug(2, "created zone %p: %s", zone, dn);
+	} else {
+		/* Run exclusively */
+		RUNTIME_CHECK(isc_task_beginexclusive(task) == ISC_R_SUCCESS);
+
+		result = zr_get_zone_ptr(inst->zone_register,
+					 &name, &zone);
+		if (result != ISC_R_SUCCESS) {
+			dns_view_thaw(inst->view);
+			runtime_add = ISC_TRUE;
+			goto newzone;
+		}
+	}
+
+	log_debug(2, "Setting SSU table for %p: %s", zone, dn);
+	/* Get the update policy and update the zone with it. */
+	result = ldap_entry_getvalues(entry, "idnsUpdatePolicy", &values);
+	if (result == ISC_R_SUCCESS)
+		CHECK_NEXT(configure_zone_ssutable(zone, HEAD(values)->value));
+	else
+		CHECK_NEXT(configure_zone_ssutable(zone, NULL));
+
+	/* Fetch allow-query and allow-transfer ACLs */
+	log_debug(2, "Setting allow-query for %p: %s", zone, dn);
+	result = ldap_entry_getvalues(entry, "idnsAllowQuery", &values);
+	if (result == ISC_R_SUCCESS) {
+		dns_acl_t *queryacl = NULL;
+		CHECK_NEXT(acl_from_ldap(inst->mctx, &values, &queryacl));
+		dns_zone_setqueryacl(zone, queryacl);
+		dns_acl_detach(&queryacl);
+	} else
+		log_debug(2, "allow-query not set");
+
+	log_debug(2, "Setting allow-transfer for %p: %s", zone, dn);
+	result = ldap_entry_getvalues(entry, "idnsAllowTransfer", &values);
+	if (result == ISC_R_SUCCESS) {
+		dns_acl_t *transferacl = NULL;
+		CHECK_NEXT(acl_from_ldap(inst->mctx, &values, &transferacl));
+		dns_zone_setxfracl(zone, transferacl);
+		dns_acl_detach(&transferacl);
+	} else
+		log_debug(2, "allow-transfer not set");
+
+	if (create || runtime_add) {
+		/* Everything is set correctly, publish zone */
+		CHECK_NEXT(publish_zone(inst, zone));
+	}
+
+next:
+	if (runtime_add) {
+		/*
+		 * Don't bother if load fails, server will return
+		 * SERVFAIL for queries beneath this zone. This is
+		 * admin's problem.
+		 */
+		(void) dns_zone_load(zone);
+		dns_view_freeze(inst->view);
+		runtime_add = ISC_FALSE;
+	}
+	if (!create)
+		isc_task_endexclusive(task);
+	if (dns_name_dynamic(&name))
+		dns_name_free(&name, conn->mctx);
+	if (zone != NULL)
+		dns_zone_detach(&zone);
+
+	return ISC_R_SUCCESS;
+}
+
 /*
  * Search in LDAP for zones. If 'create' is true, create the zones. Otherwise,
  * we assume that we are past the configuration phase and no new zones can be
@@ -634,7 +732,6 @@ refresh_zones_from_ldap(isc_task_t *task, ldap_instance_t *ldap_inst,
 	ldap_connection_t *ldap_conn;
 	int zone_count = 0;
 	ldap_entry_t *entry;
-	isc_boolean_t runtime_add = ISC_FALSE;
 	char *attrs[] = {
 		"idnsName", "idnsUpdatePolicy", "idnsAllowQuery",
 		"idnsAllowTransfer", NULL
@@ -653,94 +750,9 @@ refresh_zones_from_ldap(isc_task_t *task, ldap_instance_t *ldap_inst,
 	for (entry = HEAD(ldap_conn->ldap_entries);
 	     entry != NULL;
 	     entry = NEXT(entry, link)) {
-		const char *dn;
-		ldap_valuelist_t values;
-		dns_name_t name;
-		dns_zone_t *zone;
-
-		zone = NULL;
-		dns_name_init(&name, NULL);
-
-		/* Derive the dns name of the zone from the DN. */
-		dn = get_dn(ldap_conn, entry);
-		CHECK_NEXT(dn_to_dnsname(ldap_inst->mctx, dn, &name));
-
-		/* If we are in the configuration phase, create the zone,
-		 * otherwise we will just search for it in our zone register
-		 * and modify the zone we found. */
-		if (create) {
-			/* Configuration phase, make sure we are running exclusively */
-			RUNTIME_CHECK(isc_task_beginexclusive(task) == ISC_R_LOCKBUSY);
-newzone:
-			CHECK_NEXT(create_zone(ldap_inst, &name, &zone));
-			CHECK_NEXT(zr_add_zone(ldap_inst->zone_register, zone,
-					       dn));
-			log_debug(2, "created zone %p: %s", zone, dn);
-		} else {
-			/* Run exclusively */
-			RUNTIME_CHECK(isc_task_beginexclusive(task) == ISC_R_SUCCESS);
-
-			result = zr_get_zone_ptr(ldap_inst->zone_register,
-						 &name, &zone);
-			if (result != ISC_R_SUCCESS) {
-				dns_view_thaw(ldap_inst->view);
-				runtime_add = ISC_TRUE;
-				goto newzone;
-			}
-		}
-
-		log_debug(2, "Setting SSU table for %p: %s", zone, dn);
-		/* Get the update policy and update the zone with it. */
-		result = ldap_entry_getvalues(entry, "idnsUpdatePolicy", &values);
-		if (result == ISC_R_SUCCESS)
-			CHECK_NEXT(configure_zone_ssutable(zone, HEAD(values)->value));
-		else
-			CHECK_NEXT(configure_zone_ssutable(zone, NULL));
-
-		/* Fetch allow-query and allow-transfer ACLs */
-		log_debug(2, "Setting allow-query for %p: %s", zone, dn);
-		result = ldap_entry_getvalues(entry, "idnsAllowQuery", &values);
-		if (result == ISC_R_SUCCESS) {
-			dns_acl_t *queryacl = NULL;
-			CHECK_NEXT(acl_from_ldap(ldap_inst->mctx, &values, &queryacl));
-			dns_zone_setqueryacl(zone, queryacl);
-			dns_acl_detach(&queryacl);
-		} else
-			log_debug(2, "allow-query not set");
-
-		log_debug(2, "Setting allow-transfer for %p: %s", zone, dn);
-		result = ldap_entry_getvalues(entry, "idnsAllowTransfer", &values);
-		if (result == ISC_R_SUCCESS) {
-			dns_acl_t *transferacl = NULL;
-			CHECK_NEXT(acl_from_ldap(ldap_inst->mctx, &values, &transferacl));
-			dns_zone_setxfracl(zone, transferacl);
-			dns_acl_detach(&transferacl);
-		} else
-			log_debug(2, "allow-transfer not set");
-
-		if (create || runtime_add) {
-			/* Everything is set correctly, publish zone */
-			CHECK_NEXT(publish_zone(ldap_inst, zone));
-		}
-
+		CHECK(ldap_parse_zoneentry(task, entry, ldap_inst, ldap_conn,
+					   create));
 		zone_count++;
-next:
-		if (runtime_add) {
-			/*
-			 * Don't bother if load fails, server will return
-			 * SERVFAIL for queries beneath this zone. This is
-			 * admin's problem.
-			 */
-			(void) dns_zone_load(zone);
-			dns_view_freeze(ldap_inst->view);
-			runtime_add = ISC_FALSE;
-		}
-		if (!create)
-			isc_task_endexclusive(task);
-		if (dns_name_dynamic(&name))
-			dns_name_free(&name, ldap_inst->mctx);
-		if (zone != NULL)
-			dns_zone_detach(&zone);
 	}
 
 cleanup:
