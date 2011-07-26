@@ -316,7 +316,7 @@ ldap_entry_nextrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
 }
 
 isc_result_t
-ldap_entry_getfakesoa(ldap_entry_t *entry, ld_string_t *fake_mname,
+ldap_entry_getfakesoa(ldap_entry_t *entry, const ld_string_t *fake_mname,
 		      ld_string_t *target)
 {
 	isc_result_t result = ISC_R_NOTFOUND;
