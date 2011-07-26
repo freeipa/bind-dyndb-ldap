@@ -191,6 +191,8 @@ ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 		APPEND(entry->attrs, attr, link);
 	}
 
+	entry->dn = ldap_get_dn(ld, ldap_entry);
+
 	if (ber != NULL)
 		ber_free(ber, 0);
 

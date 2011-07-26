@@ -225,11 +225,8 @@ static isc_result_t parse_rdata(isc_mem_t *mctx, ldap_connection_t *ldap_conn,
 		dns_name_t *origin, const char *rdata_text,
 		dns_rdata_t **rdatap);
 
-static const char * get_dn(ldap_connection_t *ldap_conn, ldap_entry_t *entry);
-
 #if 0
 static const LDAPMessage *next_entry(ldap_connection_t *inst);
-static const char *get_dn(ldap_connection_t *inst);
 #endif
 
 static isc_result_t ldap_connect(ldap_instance_t *ldap_inst,
@@ -634,7 +631,7 @@ ldap_parse_zoneentry(isc_task_t *task, ldap_entry_t *entry,
 	dns_name_init(&name, NULL);
 
 	/* Derive the dns name of the zone from the DN. */
-	dn = get_dn(conn, entry);
+	dn = entry->dn;
 	CHECK_NEXT(dn_to_dnsname(conn->mctx, dn, &name));
 
 	/* If we are in the configuration phase, create the zone,
@@ -765,36 +762,6 @@ cleanup:
 	else
 		return ISC_R_FAILURE;
 }
-
-static const char *
-get_dn(ldap_connection_t *ldap_conn, ldap_entry_t *entry)
-{
-	if (entry->dn) {
-		ldap_memfree(entry->dn);
-		entry->dn = NULL;
-	}
-	if (ldap_conn->handle)
-		entry->dn = ldap_get_dn(ldap_conn->handle, entry->ldap_entry);
-
-	return entry->dn;
-}
-
-#if 0
-static const char *
-get_dn(ldap_connection_t *inst)
-{
-	if (inst->dn) {
-		ldap_memfree(inst->dn);
-		inst->dn = NULL;
-	}
-
-	if (inst->handle && inst->entry)
-		inst->dn = ldap_get_dn(inst->handle, inst->entry);
-
-	return inst->dn;
-
-}
-#endif
 
 static isc_result_t
 findrdatatype_or_create(isc_mem_t *mctx, ldapdb_rdatalist_t *rdatalist,
