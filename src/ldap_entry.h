@@ -59,11 +59,15 @@ struct ldap_entry {
 typedef unsigned char		ldap_entryclass_t;
 
 isc_result_t
-ldap_entrylist_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
+ldap_entrylist_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *msg,
 		      ldap_entrylist_t *entrylist);
 
 void
 ldap_entrylist_destroy(isc_mem_t *mctx, ldap_entrylist_t *entrylist);
+
+isc_result_t
+ldap_entrylist_append(isc_mem_t *mctx, LDAP *ld, LDAPMessage *msg,
+		      ldap_entrylist_t *entrylist);
 
 /*
  * ldap_entry_create

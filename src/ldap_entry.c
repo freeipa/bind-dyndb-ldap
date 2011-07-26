@@ -88,6 +88,38 @@ ldap_entrylist_destroy(isc_mem_t *mctx, ldap_entrylist_t *entrylist)
 	}
 }
 
+isc_result_t
+ldap_entrylist_append(isc_mem_t *mctx, LDAP *ld, LDAPMessage *msg,
+		      ldap_entrylist_t *entrylist)
+{
+	isc_result_t result;
+	LDAPMessage *ldap_entry;
+	ldap_entry_t *entry;
+	ldap_entrylist_t list;
+
+	REQUIRE(ld != NULL);
+	REQUIRE(msg != NULL);
+	REQUIRE(entrylist != NULL);
+
+	INIT_LIST(list);
+
+	for (ldap_entry = ldap_first_entry(ld, msg);
+	     ldap_entry != NULL;
+	     ldap_entry = ldap_next_entry(ld, ldap_entry)) {
+		entry = NULL;
+		CHECK(ldap_entry_create(mctx, ld, msg, &entry));
+		APPEND(list, entry, link);
+	}
+
+	APPENDLIST(*entrylist, list, link);
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	ldap_entrylist_destroy(mctx, &list);
+	return result;
+}
+
 static void
 ldap_valuelist_destroy(isc_mem_t *mctx, ldap_valuelist_t *values)
 {
