@@ -75,7 +75,7 @@ isc_result_t ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
 isc_result_t
 new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		  const char * const *argv, dns_dyndb_arguments_t *dyndb_args,
-		  ldap_instance_t **ldap_instp);
+		  isc_task_t *task, ldap_instance_t **ldap_instp);
 void destroy_ldap_instance(ldap_instance_t **ldap_inst);
 isc_result_t
 refresh_zones_from_ldap(isc_task_t *task, ldap_instance_t *ldap_inst);

@@ -37,6 +37,7 @@
 #include <isc/region.h>
 #include <isc/rwlock.h>
 #include <isc/task.h>
+#include <isc/thread.h>
 #include <isc/time.h>
 #include <isc/util.h>
 
@@ -45,6 +46,7 @@
 #include <ldap.h>
 #include <limits.h>
 #include <sasl/sasl.h>
+#include <signal.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -61,6 +63,7 @@
 #include "settings.h"
 #include "str.h"
 #include "util.h"
+#include "zone_manager.h"
 #include "zone_register.h"
 
 
@@ -150,6 +153,10 @@ struct ldap_instance {
 	ld_string_t		*sasl_password;
 	ld_string_t		*krb5_keytab;
 	ld_string_t		*fake_mname;
+	isc_boolean_t		psearch;
+	isc_task_t		*task;
+	isc_thread_t		watcher;
+	isc_boolean_t		exiting;
 };
 
 struct ldap_pool {
@@ -169,6 +176,7 @@ struct ldap_connection {
 	LDAP			*handle;
 	LDAPMessage		*result;
 	LDAPControl		*serverctrls[2]; /* psearch/NULL or NULL/NULL */
+	int			msgid;
 
 	/* Parsing. */
 	isc_lex_t		*lex;
@@ -204,6 +212,16 @@ const ldap_auth_pair_t supported_ldap_auth[] = {
 	{ AUTH_INVALID, NULL		},
 };
 
+#define LDAPDB_EVENTCLASS 	ISC_EVENTCLASS(0xDDDD)
+#define LDAPDB_EVENT_PSEARCH	(LDAPDB_EVENTCLASS + 0)
+
+typedef struct ldap_psearchevent ldap_psearchevent_t;
+struct ldap_psearchevent {
+	ISC_EVENT_COMMON(ldap_psearchevent_t);
+	char *dbname;
+	char *dn;	
+};
+
 /*
  * Forward declarations.
  */
@@ -224,6 +242,10 @@ static isc_result_t parse_rdata(isc_mem_t *mctx, ldap_connection_t *ldap_conn,
 		dns_rdataclass_t rdclass, dns_rdatatype_t rdtype,
 		dns_name_t *origin, const char *rdata_text,
 		dns_rdata_t **rdatap);
+static isc_result_t ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry,
+		ldap_connection_t *conn, dns_name_t *origin,
+		const ld_string_t *fake_mname, ld_string_t *buf,
+		ldapdb_rdatalist_t *rdatalist);
 
 #if 0
 static const LDAPMessage *next_entry(ldap_connection_t *inst);
@@ -267,10 +289,16 @@ static isc_result_t ldap_pool_connect(ldap_pool_t *pool,
 static isc_result_t ldap_pscontrol_create(isc_mem_t *mctx, LDAPControl **ctrlp);
 static void ldap_pscontrol_destroy(isc_mem_t *mctx, LDAPControl **ctrlp);
 
+static isc_threadresult_t ldap_psearch_watcher(isc_threadarg_t arg);
+
+/* Persistent updates watcher */
+static isc_threadresult_t
+ldap_psearch_watcher(isc_threadarg_t arg);
+
 isc_result_t
 new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		  const char * const *argv, dns_dyndb_arguments_t *dyndb_args,
-		  ldap_instance_t **ldap_instp)
+		  isc_task_t *task, ldap_instance_t **ldap_instp)
 {
 	unsigned int i;
 	isc_result_t result;
@@ -293,6 +321,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		{ "sasl_password", default_string("")		},
 		{ "krb5_keytab", default_string("")		},
 		{ "fake_mname",	 default_string("")		},
+		{ "psearch",	 default_boolean(ISC_FALSE)	},
 		end_of_settings
 	};
 
@@ -347,7 +376,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	ldap_settings[i++].target = ldap_inst->sasl_password;
 	ldap_settings[i++].target = ldap_inst->krb5_keytab;
 	ldap_settings[i++].target = ldap_inst->fake_mname;
-
+	ldap_settings[i++].target = &ldap_inst->psearch; 
 	CHECK(set_settings(ldap_settings, argv));
 
 	/* Validate and check settings. */
@@ -398,9 +427,28 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		}
 	}
 
+	ldap_inst->task = task;
+
+	if (ldap_inst->psearch && ldap_inst->connections < 3) {
+		/* watcher needs one and update_action() can acquire two */
+		log_debug(1, "psearch needs at least 3 connections, "
+			  "increasing limit");
+		ldap_inst->connections = 3;
+	}
+
 	CHECK(new_ldap_cache(mctx, argv, &ldap_inst->cache));
 	CHECK(ldap_pool_create(mctx, ldap_inst->connections, &ldap_inst->pool));
 	CHECK(ldap_pool_connect(ldap_inst->pool, ldap_inst));
+
+	if (ldap_inst->psearch) {
+		/* Start the watcher thread */
+		result = isc_thread_create(ldap_psearch_watcher, ldap_inst,
+					   &ldap_inst->watcher);
+		if (result != ISC_R_SUCCESS) {
+			log_error("Failed to create psearch watcher thread");
+			goto cleanup;
+		}
+	}
 
 cleanup:
 	if (result != ISC_R_SUCCESS)
@@ -421,6 +469,18 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	REQUIRE(ldap_instp != NULL && *ldap_instp != NULL);
 
 	ldap_inst = *ldap_instp;
+
+	if (ldap_inst->psearch) {
+		ldap_inst->exiting = ISC_TRUE;
+		/*
+		 * Wake up the watcher thread. This might look like a hack
+		 * but isc_thread_t is actually pthread_t and libisc don't
+		 * have any isc_thread_kill() func.
+		 */
+		REQUIRE(pthread_kill(ldap_inst->watcher, SIGTERM) == 0);
+		RUNTIME_CHECK(isc_thread_join(ldap_inst->watcher, NULL)
+			      == ISC_R_SUCCESS);
+	}
 
 	ldap_pool_destroy(&ldap_inst->pool);
 
@@ -617,7 +677,7 @@ configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
 /* Parse the zone entry */
 static isc_result_t
 ldap_parse_zoneentry(isc_task_t *task, ldap_entry_t *entry,
-		     ldap_instance_t *inst, ldap_connection_t *conn)
+		     ldap_instance_t *inst)
 {
 	const char *dn;
 	ldap_valuelist_t values;
@@ -633,7 +693,7 @@ ldap_parse_zoneentry(isc_task_t *task, ldap_entry_t *entry,
 
 	/* Derive the dns name of the zone from the DN. */
 	dn = entry->dn;
-	CHECK(dn_to_dnsname(conn->mctx, dn, &name));
+	CHECK(dn_to_dnsname(inst->mctx, dn, &name));
 
 	result = isc_task_beginexclusive(task);
 	RUNTIME_CHECK(result == ISC_R_SUCCESS || result == ISC_R_LOCKBUSY);
@@ -703,7 +763,7 @@ cleanup:
 	if (unlock)
 		isc_task_endexclusive(task);
 	if (dns_name_dynamic(&name))
-		dns_name_free(&name, conn->mctx);
+		dns_name_free(&name, inst->mctx);
 	if (zone != NULL)
 		dns_zone_detach(&zone);
 
@@ -733,6 +793,11 @@ refresh_zones_from_ldap(isc_task_t *task, ldap_instance_t *ldap_inst)
 
 	REQUIRE(ldap_inst != NULL);
 
+	if (ldap_inst->psearch) {
+		/* Watcher does the work for us */
+		return ISC_R_SUCCESS;
+	}
+
 	log_debug(2, "refreshing list of zones for %s", ldap_inst->db_name);
 
 	ldap_conn = ldap_pool_getconnection(ldap_inst->pool);
@@ -744,7 +809,7 @@ refresh_zones_from_ldap(isc_task_t *task, ldap_instance_t *ldap_inst)
 	for (entry = HEAD(ldap_conn->ldap_entries);
 	     entry != NULL;
 	     entry = NEXT(entry, link)) {
-		CHECK(ldap_parse_zoneentry(task, entry, ldap_inst, ldap_conn));
+		CHECK(ldap_parse_zoneentry(task, entry, ldap_inst));
 		zone_count++;
 	}
 
@@ -928,8 +993,8 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 	CHECK(str_new(mctx, &string));
 	CHECK(dnsname_to_dn(ldap_inst->zone_register, name, string));
 
-	CHECK(ldap_query(ldap_inst, ldap_conn, str_buf(string), LDAP_SCOPE_BASE,
-			 NULL, 0, "(objectClass=idnsRecord)"));
+	CHECK(ldap_query(ldap_inst, ldap_conn, str_buf(string),
+			 LDAP_SCOPE_BASE, NULL, 0, "(objectClass=idnsRecord)"));
 
 	if (EMPTY(ldap_conn->ldap_entries)) {
 		result = ISC_R_NOTFOUND;
@@ -1054,6 +1119,7 @@ ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 {
 	va_list ap;
 	isc_result_t result;
+	int cnt;
 
 	REQUIRE(ldap_conn != NULL);
 
@@ -1076,10 +1142,7 @@ ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 					str_buf(ldap_conn->query_string),
 					attrs, attrsonly, NULL, NULL, NULL,
 					LDAP_NO_LIMIT, &ldap_conn->result);
-
 		if (ret == 0) {
-			int cnt;
-
 			ldap_conn->tries = 0;
 			cnt = ldap_count_entries(ldap_conn->handle, ldap_conn->result);
 			log_debug(2, "entry count: %d", cnt);
@@ -1904,3 +1967,221 @@ ldap_pscontrol_destroy(isc_mem_t *mctx, LDAPControl **ctrlp)
 	SAFE_MEM_PUT(mctx, ctrl, sizeof(*ctrl));
 	*ctrlp = NULL;
 }
+
+/*
+ * update_action routine is processed asynchronously so it cannot assume
+ * anything about state of ldap_inst from where it was sent. The ldap_inst
+ * could have been already destroyed due server reload. The safest
+ * way how to handle zone update is to refetch ldap_inst,
+ * perform query to LDAP and delete&add the zone. This is expensive
+ * operation but zones don't change often.
+ */
+static void
+update_action(isc_task_t *task, isc_event_t *event)
+{
+	ldap_psearchevent_t *pevent = (ldap_psearchevent_t *)event;
+	isc_result_t result ;
+	ldap_instance_t *inst = NULL;
+	ldap_connection_t *conn;
+	ldap_entry_t *entry;
+	char *attrs[] = {
+		"idnsName", "idnsUpdatePolicy", "idnsAllowQuery",
+		"idnsAllowTransfer", NULL
+	};
+
+	UNUSED(task);
+
+	result = manager_get_ldap_instance(pevent->dbname, &inst);
+	if (result != ISC_R_SUCCESS)
+		goto cleanup;
+
+	conn = ldap_pool_getconnection(inst->pool);
+
+	CHECK(ldap_query(inst, conn, pevent->dn,
+			 LDAP_SCOPE_BASE, attrs, 0,
+			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
+
+        for (entry = HEAD(conn->ldap_entries);
+             entry != NULL;
+             entry = NEXT(entry, link)) {
+                result = ldap_parse_zoneentry(inst->task, entry, inst);
+		if (result != ISC_R_SUCCESS)
+			goto cleanup;
+        }
+
+        ldap_pool_putconnection(inst->pool, conn);
+
+cleanup:
+	if (result != ISC_R_SUCCESS)
+		log_error("update_action (psearch) failed for %s. "
+			  "Zones can be outdated, run `rndc reload`",
+			  pevent->dn);
+
+	free(pevent->dbname);
+	free(pevent->dn);
+	isc_event_free(&event);
+}
+
+static void
+psearch_update(ldap_instance_t *inst, ldap_entry_t *entry)
+{
+	ldap_entryclass_t class;
+	isc_result_t result = ISC_R_SUCCESS;
+	ldap_psearchevent_t *pevent;
+	char *dn = NULL;
+	char *dbname = NULL;
+
+	class = ldap_entry_getclass(entry);
+	if (class == LDAP_ENTRYCLASS_NONE) {
+		log_error("psearch_update: ignoring unknown entry [dn %s]",
+			  entry->dn);
+		return; /* ignore it, it's OK */
+	}
+
+	dn = strdup(entry->dn); /* TODO: isc_mem_strdup will be better... */
+	if (dn == NULL) {
+		result = ISC_R_NOMEMORY;
+		goto cleanup;
+	}
+	dbname = strdup(inst->db_name);
+	if (dbname == NULL) {
+		result = ISC_R_NOMEMORY;
+		goto cleanup;
+	}
+
+	pevent = (ldap_psearchevent_t *)isc_event_allocate(inst->mctx,
+				    inst, LDAPDB_EVENT_PSEARCH,
+				    update_action, NULL,
+				    sizeof(ldap_psearchevent_t));
+	if (pevent == NULL) {
+		result = ISC_R_NOMEMORY;
+		goto cleanup;
+	}
+
+	if ((class & LDAP_ENTRYCLASS_ZONE) != 0) {
+		pevent->dbname = dbname;
+		pevent->dn = dn;
+		isc_task_send(inst->task, (isc_event_t **)&pevent);
+	}
+#if 0
+	/*
+	 * In future we might want to support also psearch for RRs
+	 */
+	if ((class & LDAP_ENTRYCLASS_RR) != 0) {
+	}
+#endif
+
+cleanup:
+	if (result != ISC_R_SUCCESS) {
+		if (dbname != NULL)
+			free(dbname);
+		if (dn != NULL)
+			free(dn);
+		log_error("psearch_update failed for %s zone. "
+			  "Zone can be outdated, run `rndc reload`",
+			  entry->dn);
+	}
+}
+
+static isc_threadresult_t
+ldap_psearch_watcher(isc_threadarg_t arg)
+{
+	ldap_instance_t *inst = (ldap_instance_t *)arg;
+	ldap_connection_t *conn;
+	struct timeval tv;
+	int ret, cnt;
+	isc_result_t result;
+	sigset_t sigset;
+
+	log_debug(1, "Entering ldap_psearch_watcher");
+
+	/*
+	 * By default, BIND sets threads to accept signals only via
+	 * sigwait(). However we need to use SIGTERM to interrupt
+	 * watcher from waiting inside ldap_result so enable
+	 * asynchronous delivering of SIGTERM.
+	 */
+	sigemptyset(&sigset);
+	sigaddset(&sigset, SIGTERM);
+	ret = pthread_sigmask(SIG_UNBLOCK, &sigset, NULL);
+	/* pthread_sigmask fails only due invalid args */
+	RUNTIME_CHECK(ret == 0);
+
+	/* Wait indefinitely */
+	tv.tv_sec = -1;
+	tv.tv_usec = 0;
+
+	/* Pick connection, one is reserved purely for this thread */
+	conn = ldap_pool_getconnection(inst->pool);
+
+	/* Perform initial lookup */
+	if (inst->psearch) {
+		log_debug(1, "Sending initial psearch lookup");
+		ret = ldap_search_ext(conn->handle,
+				      str_buf(inst->base),
+				      LDAP_SCOPE_SUBTREE,
+				      "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))",
+				      NULL, 0, conn->serverctrls, NULL, NULL,
+				      LDAP_NO_LIMIT, &conn->msgid);
+		if (ret != LDAP_SUCCESS) {
+			log_error("failed to send initial psearch request");
+			ldap_unbind_ext_s(conn->handle, NULL, NULL);
+			goto cleanup;
+		}
+	}
+
+	while (!inst->exiting) {
+		ret = ldap_result(conn->handle, conn->msgid, 0, &tv,
+				  &conn->result);
+
+		if (ret <= 0) {
+			/* TODO: Handle errors */
+		}
+
+		switch (ret) {
+		case LDAP_RES_SEARCH_ENTRY:
+			break;
+		default:
+			log_debug(3, "Ignoring psearch msg with retcode %x",
+				  ret);
+		}
+
+		conn->tries = 0;
+		cnt = ldap_count_entries(conn->handle, conn->result);
+	
+		if (cnt > 0) {
+			log_debug(3, "Got psearch updates (%d)", cnt);
+			result = ldap_entrylist_append(conn->mctx,
+						       conn->handle,
+						       conn->result,
+						       &conn->ldap_entries);
+			if (result != ISC_R_SUCCESS) {
+				/*
+				 * Error means inconsistency of our zones
+				 * data.
+				 */
+				log_error("ldap_psearch_watcher failed, zones "
+					  "might be outdated. Run `rndc reload`");
+			}
+
+			ldap_entry_t *entry;
+			for (entry = HEAD(conn->ldap_entries);
+			     entry != NULL;
+			     entry = NEXT(entry, link)) {
+				psearch_update(inst, entry);
+			}
+
+			ldap_msgfree(conn->result);
+			ldap_entrylist_destroy(conn->mctx,
+					       &conn->ldap_entries);
+		}
+	}
+
+	log_debug(1, "Ending ldap_psearch_watcher");
+
+cleanup:
+	ldap_pool_putconnection(inst->pool, conn);
+
+	return (isc_threadresult_t)0;
+}
+
