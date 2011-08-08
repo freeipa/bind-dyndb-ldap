@@ -236,14 +236,25 @@ get_fixed_name(const cfg_obj_t *obj, const char *name, dns_fixedname_t *fname)
 	isc_result_t result;
 	isc_buffer_t buf;
 	const char *str;
+	size_t len;
 
 	REQUIRE(fname != NULL);
 
 	obj = cfg_tuple_get(obj, name);
 	str = cfg_obj_asstring(obj);
+	len = strlen(str);
+	isc_buffer_init(&buf, str, len);
 
-	isc_buffer_init(&buf, str, strlen(str));
-	isc_buffer_add(&buf, strlen(str));
+	/*
+	 * Workaround for https://bugzilla.redhat.com/show_bug.cgi?id=728925
+	 *
+	 * ipa-server-install script could create SSU rules with
+	 * double-dot-ending FQDNs. Silently "adjust" such wrong FQDNs.
+	 */
+	if (str[len - 1] == '.' && str[len - 2] == '.')
+		isc_buffer_add(&buf, len - 1);
+	else
+		isc_buffer_add(&buf, len);
 
 	dns_fixedname_init(fname);
 
