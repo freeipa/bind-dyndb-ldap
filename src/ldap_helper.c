@@ -676,8 +676,7 @@ configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
 
 /* Parse the zone entry */
 static isc_result_t
-ldap_parse_zoneentry(isc_task_t *task, ldap_entry_t *entry,
-		     ldap_instance_t *inst)
+ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 {
 	const char *dn;
 	ldap_valuelist_t values;
@@ -687,6 +686,7 @@ ldap_parse_zoneentry(isc_task_t *task, ldap_entry_t *entry,
 	isc_boolean_t freeze = ISC_FALSE;
 	isc_boolean_t unlock = ISC_FALSE;
 	isc_boolean_t publish = ISC_FALSE;
+	isc_task_t *task = inst->task;
 
 	zone = NULL;
 	dns_name_init(&name, NULL);
@@ -780,7 +780,7 @@ cleanup:
  * Returns ISC_R_FAILURE otherwise.
  */
 isc_result_t
-refresh_zones_from_ldap(isc_task_t *task, ldap_instance_t *ldap_inst)
+refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 {
 	isc_result_t result = ISC_R_SUCCESS;
 	ldap_connection_t *ldap_conn;
@@ -809,7 +809,7 @@ refresh_zones_from_ldap(isc_task_t *task, ldap_instance_t *ldap_inst)
 	for (entry = HEAD(ldap_conn->ldap_entries);
 	     entry != NULL;
 	     entry = NEXT(entry, link)) {
-		CHECK(ldap_parse_zoneentry(task, entry, ldap_inst));
+		CHECK(ldap_parse_zoneentry(entry, ldap_inst));
 		zone_count++;
 	}
 
@@ -2004,7 +2004,7 @@ update_action(isc_task_t *task, isc_event_t *event)
         for (entry = HEAD(conn->ldap_entries);
              entry != NULL;
              entry = NEXT(entry, link)) {
-                result = ldap_parse_zoneentry(inst->task, entry, inst);
+                result = ldap_parse_zoneentry(entry, inst);
 		if (result != ISC_R_SUCCESS)
 			goto cleanup;
         }
