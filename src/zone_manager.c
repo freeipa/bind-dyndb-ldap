@@ -146,7 +146,7 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 	CHECK(new_ldap_instance(mctx, db_inst->name, argv, dyndb_args, &db_inst->ldap_inst));
 
 	task = dns_dyndb_get_task(dyndb_args);
-	result = refresh_zones_from_ldap(task, db_inst->ldap_inst, ISC_TRUE);
+	result = refresh_zones_from_ldap(task, db_inst->ldap_inst);
 	if (result != ISC_R_SUCCESS) {
 		/* In case we don't find any zones, we at least return
 		 * ISC_R_SUCCESS so BIND won't exit because of this. */
@@ -186,7 +186,7 @@ refresh_zones_action(isc_task_t *task, isc_event_t *event)
 {
 	db_instance_t *db_inst = event->ev_arg;
 
-	refresh_zones_from_ldap(task, db_inst->ldap_inst, ISC_FALSE);
+	refresh_zones_from_ldap(task, db_inst->ldap_inst);
 
 	isc_event_free(&event);
 }
