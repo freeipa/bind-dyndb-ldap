@@ -1902,6 +1902,18 @@ cleanup:
 }
 
 #define LDAP_CONTROL_PERSISTENTSEARCH "2.16.840.1.113730.3.4.3"
+#define LDAP_CONTROL_ENTRYCHANGE "2.16.840.1.113730.3.4.7"
+
+#define LDAP_ENTRYCHANGE_ADD	1
+#define LDAP_ENTRYCHANGE_DEL	2
+#define LDAP_ENTRYCHANGE_MOD	4
+#define LDAP_ENTRYCHANGE_MODDN	8
+#define LDAP_ENTRYCHANGE_ALL	(1 | 2 | 4 | 8)
+
+#define PSEARCH_ADD(chgtype) ((chgtype & LDAP_ENTRYCHANGE_ADD) != 0)
+#define PSEARCH_DEL(chgtype) ((chgtype & LDAP_ENTRYCHANGE_DEL) != 0)
+#define PSEARCH_MOD(chgtype) ((chgtype & LDAP_ENTRYCHANGE_MOD) != 0)
+#define PSEARCH_MODDN(chgtype) ((chgtype & LDAP_ENTRYCHANGE_MODDN) != 0)
 /*
  * Creates persistent search (aka psearch,
  * http://tools.ietf.org/id/draft-ietf-ldapext-psearch-03.txt) control.
@@ -1926,7 +1938,7 @@ ldap_pscontrol_create(isc_mem_t *mctx, LDAPControl **ctrlp)
 	 * We are interested in all changes in DNS related DNs and we
 	 * want to get initial state of the "watched" LDAP subtree.
 	 */
-	if (ber_printf(ber, "{ibb}", 1 | 2 | 4 | 8, 0, 1) == -1)
+	if (ber_printf(ber, "{ibb}", LDAP_ENTRYCHANGE_ALL, 0, 1) == -1)
 		goto cleanup;
 
 	CHECKED_MEM_GET(mctx, ctrl, sizeof(*ctrl));
@@ -2020,6 +2032,64 @@ cleanup:
 	free(pevent->dbname);
 	free(pevent->dn);
 	isc_event_free(&event);
+}
+
+/*
+ * Parses persistent search entrychange control.
+ *
+ * This entry says if particular entry was added/modified/deleted.
+ * Details are in http://tools.ietf.org/id/draft-ietf-ldapext-psearch-03.txt
+ */
+static isc_result_t
+ldap_parse_entrychangectrl(LDAPControl **ctrls, int *chgtypep, char **prevdnp)
+{
+	int i;
+	isc_result_t result = ISC_R_SUCCESS;
+	BerElement *ber = NULL;
+	ber_int_t chgtype;
+	ber_tag_t berret;
+	char *prevdn = NULL;
+
+	REQUIRE(ctrls != NULL);
+	REQUIRE(chgtypep != NULL);
+	REQUIRE(prevdnp != NULL && *prevdnp == NULL);
+
+	/* Find entrycontrol OID */
+	for (i = 0; ctrls[i] != NULL; i++) {
+		if (strcmp(ctrls[i]->ldctl_oid,
+		    LDAP_CONTROL_ENTRYCHANGE) == 0)
+			break;
+	}
+
+	if (ctrls[i] == NULL)
+		return ISC_R_NOTFOUND;
+
+	ber = ber_init(&(ctrls[i]->ldctl_value));
+	if (ber == NULL)
+		return ISC_R_NOMEMORY;
+
+	berret = ber_scanf(ber, "{e", &chgtype);
+	if (berret == LBER_ERROR) {
+		result = ISC_R_FAILURE;
+		goto cleanup;
+	}
+
+	if (chgtype == LDAP_ENTRYCHANGE_MODDN) {
+		berret = ber_scanf(ber, "a", &prevdn);
+		if (berret == LBER_ERROR) {
+			result = ISC_R_FAILURE;
+			goto cleanup;
+		}
+	}
+
+	*chgtypep = chgtype;
+	*prevdnp = prevdn;
+
+cleanup:
+	if (ber != NULL)
+		ber_free(ber, 1);
+
+	return result;
 }
 
 static void
