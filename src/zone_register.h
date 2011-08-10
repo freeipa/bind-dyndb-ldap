@@ -33,6 +33,9 @@ isc_result_t
 zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn);
 
 isc_result_t
+zr_del_zone(zone_register_t *zr, dns_name_t *origin);
+
+isc_result_t
 zr_get_zone_dn(zone_register_t *zr, dns_name_t *name, const char **dn,
 	       dns_name_t *matched_name);
 

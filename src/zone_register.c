@@ -206,6 +206,34 @@ cleanup:
 	return result;
 }
 
+isc_result_t
+zr_del_zone(zone_register_t *zr, dns_name_t *origin)
+{
+	isc_result_t result;
+	zone_info_t *zinfo = NULL;
+
+	REQUIRE(zr != NULL);
+	REQUIRE(origin != NULL);
+
+	RWLOCK(&zr->rwlock, isc_rwlocktype_write);
+
+	result = dns_rbt_findname(zr->rbt, origin, 0, NULL, (void **)&zinfo);
+	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
+		/* We are done */
+		result = ISC_R_SUCCESS;
+		goto cleanup;
+	} else if (result != ISC_R_SUCCESS) {
+		goto cleanup;
+	}
+
+	CHECK(dns_rbt_deletename(zr->rbt, origin, ISC_FALSE));
+
+cleanup:
+	RWUNLOCK(&zr->rwlock, isc_rwlocktype_write);
+
+	return result;
+}
+
 /*
  * Find the closest match to zone with origin 'name' in the zone register 'zr'.
  * The 'matched_name' will be set to the name that was matched while finding

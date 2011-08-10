@@ -29,6 +29,7 @@
 #include <dns/ttl.h>
 #include <dns/view.h>
 #include <dns/zone.h>
+#include <dns/zt.h>
 
 #include <isc/buffer.h>
 #include <isc/lex.h>
@@ -674,21 +675,78 @@ configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
 	return acl_configure_zone_ssutable(update_str, zone);
 }
 
+/* Delete zone */
+static isc_result_t
+ldap_delete_zone(ldap_instance_t *inst, const char *dn, isc_boolean_t lock)
+{
+	dns_name_t name;
+	isc_result_t result;
+	isc_boolean_t unlock = ISC_FALSE;
+	isc_boolean_t freeze = ISC_FALSE;
+	dns_zone_t *zone = NULL;
+	dns_zone_t *foundzone = NULL;
+
+	dns_name_init(&name, NULL);
+	CHECK(dn_to_dnsname(inst->mctx, dn, &name));
+
+	if (lock) {
+		result = isc_task_beginexclusive(inst->task);
+		RUNTIME_CHECK(result == ISC_R_SUCCESS ||
+			      result == ISC_R_LOCKBUSY);
+		if (result == ISC_R_SUCCESS)
+			unlock = ISC_TRUE;
+	}
+
+	result = zr_get_zone_ptr(inst->zone_register, &name, &zone);
+	if (result == ISC_R_NOTFOUND) {
+		result = ISC_R_SUCCESS;
+		goto cleanup;
+	} else if (result != ISC_R_SUCCESS)
+		goto cleanup;
+
+	CHECK(dns_view_findzone(inst->view, &name, &foundzone));
+	/* foundzone != zone indicates a bug */
+	RUNTIME_CHECK(foundzone == zone);
+	dns_zone_detach(&foundzone);
+
+	if (lock) {
+		dns_view_thaw(inst->view);
+		freeze = ISC_TRUE;
+	}
+
+	dns_zone_unload(zone);
+	CHECK(dns_zt_unmount(inst->view->zonetable, zone));
+	CHECK(zr_del_zone(inst->zone_register, &name));
+	dns_zonemgr_releasezone(inst->zmgr, zone);
+	dns_zone_detach(&zone);
+
+cleanup:
+	if (freeze)
+		dns_view_freeze(inst->view);
+	if (unlock)
+		isc_task_endexclusive(inst->task);
+	if (dns_name_dynamic(&name))
+		dns_name_free(&name, inst->mctx);
+
+	return result;
+}
+
 /* Parse the zone entry */
 static isc_result_t
-ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
+ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
+		     isc_boolean_t replace)
 {
 	const char *dn;
 	ldap_valuelist_t values;
 	dns_name_t name;
-	dns_zone_t *zone;
+	dns_zone_t *zone = NULL;
 	isc_result_t result;
 	isc_boolean_t freeze = ISC_FALSE;
 	isc_boolean_t unlock = ISC_FALSE;
 	isc_boolean_t publish = ISC_FALSE;
+	isc_boolean_t load = ISC_FALSE;
 	isc_task_t *task = inst->task;
 
-	zone = NULL;
 	dns_name_init(&name, NULL);
 
 	/* Derive the dns name of the zone from the DN. */
@@ -700,6 +758,7 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	if (result == ISC_R_SUCCESS)
 		unlock = ISC_TRUE;
 
+create:
 	/*
 	 * Check if we are already serving given zone.
 	 */
@@ -708,12 +767,20 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 		CHECK(create_zone(inst, &name, &zone));
 		CHECK(zr_add_zone(inst->zone_register, zone, dn));
 		publish = ISC_TRUE;
+		replace = ISC_FALSE;
 		log_debug(2, "created zone %p: %s", zone, dn);
 	}
 
 	if (inst->view->frozen) {
 		freeze = ISC_TRUE;
 		dns_view_thaw(inst->view);
+	}
+
+	if (replace && zone != NULL) {
+		CHECK(ldap_delete_zone(inst, dn, ISC_FALSE));
+		dns_zone_detach(&zone);
+		replace = ISC_FALSE;
+		goto create;
 	}
 
 	log_debug(2, "Setting SSU table for %p: %s", zone, dn);
@@ -749,17 +816,19 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 		/* Everything is set correctly, publish zone */
 		CHECK(publish_zone(inst, zone));
 	}
+	load = ISC_TRUE;
 
 cleanup:
-	if (freeze) {
+	if (load) {
 		/*
 		 * Don't bother if load fails, server will return
 		 * SERVFAIL for queries beneath this zone. This is
 		 * admin's problem.
 		 */
 		(void) dns_zone_load(zone);
-		dns_view_freeze(inst->view);
 	}
+	if (freeze)
+		dns_view_freeze(inst->view);
 	if (unlock)
 		isc_task_endexclusive(task);
 	if (dns_name_dynamic(&name))
@@ -809,7 +878,7 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 	for (entry = HEAD(ldap_conn->ldap_entries);
 	     entry != NULL;
 	     entry = NEXT(entry, link)) {
-		CHECK(ldap_parse_zoneentry(entry, ldap_inst));
+		CHECK(ldap_parse_zoneentry(entry, ldap_inst, ISC_FALSE));
 		zone_count++;
 	}
 
@@ -1996,6 +2065,7 @@ update_action(isc_task_t *task, isc_event_t *event)
 	ldap_instance_t *inst = NULL;
 	ldap_connection_t *conn;
 	ldap_entry_t *entry;
+	isc_boolean_t delete = ISC_TRUE;
 	char *attrs[] = {
 		"idnsName", "idnsUpdatePolicy", "idnsAllowQuery",
 		"idnsAllowTransfer", NULL
@@ -2016,10 +2086,14 @@ update_action(isc_task_t *task, isc_event_t *event)
         for (entry = HEAD(conn->ldap_entries);
              entry != NULL;
              entry = NEXT(entry, link)) {
-                result = ldap_parse_zoneentry(entry, inst);
+		delete = ISC_FALSE;
+                result = ldap_parse_zoneentry(entry, inst, ISC_TRUE);
 		if (result != ISC_R_SUCCESS)
 			goto cleanup;
         }
+
+	if (delete)
+		CHECK(ldap_delete_zone(inst, pevent->dn, ISC_TRUE));
 
         ldap_pool_putconnection(inst->pool, conn);
 
@@ -2093,11 +2167,13 @@ cleanup:
 }
 
 static void
-psearch_update(ldap_instance_t *inst, ldap_entry_t *entry)
+psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 {
 	ldap_entryclass_t class;
 	isc_result_t result = ISC_R_SUCCESS;
 	ldap_psearchevent_t *pevent;
+	int chgtype = LDAP_ENTRYCHANGE_ADD;
+	char *moddn = NULL;
 	char *dn = NULL;
 	char *dbname = NULL;
 
@@ -2107,6 +2183,9 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry)
 			  entry->dn);
 		return; /* ignore it, it's OK */
 	}
+
+	if (ctrls != NULL)
+		CHECK(ldap_parse_entrychangectrl(ctrls, &chgtype, &moddn));
 
 	dn = strdup(entry->dn); /* TODO: isc_mem_strdup will be better... */
 	if (dn == NULL) {
@@ -2118,6 +2197,20 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry)
 		result = ISC_R_NOMEMORY;
 		goto cleanup;
 	}
+
+	/* TODO: Handle moddn case. */
+	if (PSEARCH_MODDN(chgtype)) {
+		log_error("psearch moddn change is not implemented");
+		result = ISC_R_FAILURE;
+		goto cleanup;
+	}
+
+	/*
+	 * We are very simple. Every update (add/mod/del) means that
+	 * we remove the zone, fetch it's control entry from LDAP
+	 * and then add it again. This is definitely place for improvement
+	 * but zones aren't changed often so this is should be enough for now.
+	 */
 
 	pevent = (ldap_psearchevent_t *)isc_event_allocate(inst->mctx,
 				    inst, LDAPDB_EVENT_PSEARCH,
@@ -2147,6 +2240,9 @@ cleanup:
 			free(dbname);
 		if (dn != NULL)
 			free(dn);
+		if (moddn != NULL)
+			ldap_memfree(moddn);
+
 		log_error("psearch_update failed for %s zone. "
 			  "Zone can be outdated, run `rndc reload`",
 			  entry->dn);
@@ -2232,14 +2328,28 @@ ldap_psearch_watcher(isc_threadarg_t arg)
 				 */
 				log_error("ldap_psearch_watcher failed, zones "
 					  "might be outdated. Run `rndc reload`");
+				goto soft_err;
 			}
 
 			ldap_entry_t *entry;
 			for (entry = HEAD(conn->ldap_entries);
 			     entry != NULL;
 			     entry = NEXT(entry, link)) {
-				psearch_update(inst, entry);
+				LDAPControl **ctrls = NULL;
+				ret = ldap_get_entry_controls(conn->handle,
+							      entry->ldap_entry,
+							      &ctrls);
+				if (ret != LDAP_SUCCESS) {
+					log_error("failed to extract controls "
+						  "from psearch update. Zones "
+						  "might be outdated, run "
+						  "`rndc reload");
+					goto soft_err;
+				}
+
+				psearch_update(inst, entry, ctrls);
 			}
+soft_err:
 
 			ldap_msgfree(conn->result);
 			ldap_entrylist_destroy(conn->mctx,
