@@ -695,6 +695,8 @@ ldap_delete_zone(ldap_instance_t *inst, const char *dn, isc_boolean_t lock)
 			      result == ISC_R_LOCKBUSY);
 		if (result == ISC_R_SUCCESS)
 			unlock = ISC_TRUE;
+
+		CHECK(discard_from_cache(inst->cache, &name));
 	}
 
 	result = zr_get_zone_ptr(inst->zone_register, &name, &zone);
@@ -757,6 +759,8 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	RUNTIME_CHECK(result == ISC_R_SUCCESS || result == ISC_R_LOCKBUSY);
 	if (result == ISC_R_SUCCESS)
 		unlock = ISC_TRUE;
+
+	CHECK(discard_from_cache(inst->cache, &name));
 
 create:
 	/*

@@ -59,6 +59,12 @@ ldap_cache_addrdatalist(ldap_cache_t *cache, dns_name_t *name,
 			ldapdb_rdatalist_t *rdatalist);
 
 /*
+ * Delete matching "name" from the cache.
+ */
+isc_result_t
+ldap_cache_deletename(ldap_cache_t *cache, dns_name_t *name);
+
+/*
  * Returns ISC_TRUE when cache is enabled.
  */
 isc_boolean_t
