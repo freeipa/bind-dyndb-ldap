@@ -178,6 +178,11 @@ fake_mname (default "")
 	one LDAP database and every BIND reports itself as a primary master in
 	SOA record, for example.
 
+psearch (default no)
+	Set this option to "yes" if you would like to use persistent search
+	query for zone records. When server supports persistent search
+	your zones will be automatically update when they change in LDAP.
+
 
 5.2 Sample configuration
 ------------------------
