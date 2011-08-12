@@ -13,6 +13,7 @@ HDRS =				\
 	semaphore.h		\
 	settings.h		\
 	str.h			\
+	types.h			\
 	util.h			\
 	zone_manager.h		\
 	zone_register.h
