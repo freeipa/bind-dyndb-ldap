@@ -83,9 +83,9 @@ semaphore_wait(semaphore_t *sem)
 
 	LOCK(&sem->mutex);
 
-	sem->value--;
-	if (sem->value < 0)
+	while (sem->value <= 0)
 		WAIT(&sem->cond, &sem->mutex);
+	sem->value--;
 
 	UNLOCK(&sem->mutex);
 }

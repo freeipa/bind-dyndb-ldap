@@ -12,4 +12,6 @@ has to support the psearch as well.
 [3] The FreeIPA CLI could have created update-policy attributes which contained
 FQDNs ending with double-dot. Added a workaround to parse such crippled FQDNs.
 
-[4] Major changes in the plugin code to make it more maintainable and readable.
+[4] Race condition in semaphore_wait() could have caused server to hang.
+
+[5] Major changes in the plugin code to make it more maintainable and readable.
