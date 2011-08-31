@@ -253,11 +253,12 @@ static const LDAPMessage *next_entry(ldap_connection_t *inst);
 #endif
 
 static isc_result_t ldap_connect(ldap_instance_t *ldap_inst,
-		ldap_connection_t *ldap_conn);
+		ldap_connection_t *ldap_conn, isc_boolean_t force);
 static isc_result_t ldap_reconnect(ldap_instance_t *ldap_inst,
-		ldap_connection_t *ldap_conn);
+		ldap_connection_t *ldap_conn, isc_boolean_t force);
 static int handle_connection_error(ldap_instance_t *ldap_inst,
-		ldap_connection_t *ldap_conn, isc_result_t *result);
+		ldap_connection_t *ldap_conn, isc_boolean_t force,
+		isc_result_t *result);
 static isc_result_t ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 		const char *base,
 		int scope, char **attrs, int attrsonly, const char *filter, ...);
@@ -1231,7 +1232,7 @@ ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 
 			return ISC_R_SUCCESS;
 		}
-	} while (handle_connection_error(ldap_inst, ldap_conn, &result));
+	} while (handle_connection_error(ldap_inst, ldap_conn, ISC_FALSE, &result));
 
 	return result;
 }
@@ -1313,7 +1314,8 @@ ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
  * credentials and settings are available from the ldap_inst.
  */
 static isc_result_t
-ldap_connect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn)
+ldap_connect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
+	     isc_boolean_t force)
 {
 	LDAP *ld;
 	int ret;
@@ -1343,7 +1345,7 @@ ldap_connect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn)
 		ldap_unbind_ext_s(ldap_conn->handle, NULL, NULL);
 	ldap_conn->handle = ld;
 
-	return ldap_reconnect(ldap_inst, ldap_conn);
+	return ldap_reconnect(ldap_inst, ldap_conn, force);
 
 cleanup:
 
@@ -1354,11 +1356,15 @@ cleanup:
 }
 
 static isc_result_t
-ldap_reconnect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn)
+ldap_reconnect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
+	       isc_boolean_t force)
 {
 	int ret = 0;
 	const char *bind_dn = NULL;
 	const char *password = NULL;
+
+	if (force)
+		goto force_reconnect;
 
 	if (ldap_conn->tries > 0) {
 		isc_time_t now;
@@ -1393,6 +1399,7 @@ ldap_reconnect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn)
 	}
 
 	ldap_conn->tries++;
+force_reconnect:
 	log_debug(2, "trying to establish LDAP connection to %s",
 		  str_buf(ldap_inst->uri));
 
@@ -1451,7 +1458,7 @@ ldap_reconnect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn)
 
 static int
 handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
-			isc_result_t *result)
+			isc_boolean_t force, isc_result_t *result)
 {
 	int ret;
 	int err_code;
@@ -1471,7 +1478,7 @@ handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn
 	} else if (err_code == LDAP_SERVER_DOWN || err_code == LDAP_CONNECT_ERROR) {
 		if (ldap_conn->tries == 0)
 			log_error("connection to the LDAP server was lost");
-		if (ldap_connect(ldap_inst, ldap_conn) == ISC_R_SUCCESS)
+		if (ldap_connect(ldap_inst, ldap_conn, force) == ISC_R_SUCCESS)
 			return 1;
 	} else if (err_code == LDAP_TIMEOUT) {
 		log_error("LDAP query timed out. Try to adjust \"timeout\" parameter");
@@ -1940,7 +1947,7 @@ retry:
 	for (i = 0; i < pool->connections; i++) {
 		ldap_conn = NULL;
 		CHECK(new_ldap_connection(pool, &ldap_conn));
-		result = ldap_connect(ldap_inst, ldap_conn);
+		result = ldap_connect(ldap_inst, ldap_conn, ISC_FALSE);
 		/* If the credentials are invalid, try passwordless login. */
 		if (result == ISC_R_NOPERM
 		    && ldap_inst->auth_method != AUTH_NONE) {
@@ -2284,6 +2291,7 @@ ldap_psearch_watcher(isc_threadarg_t arg)
 	/* Pick connection, one is reserved purely for this thread */
 	conn = ldap_pool_getconnection(inst->pool);
 
+restart:
 	/* Perform initial lookup */
 	if (inst->psearch) {
 		log_debug(1, "Sending initial psearch lookup");
@@ -2305,7 +2313,16 @@ ldap_psearch_watcher(isc_threadarg_t arg)
 				  &conn->result);
 
 		if (ret <= 0) {
-			/* TODO: Handle errors */
+			int ok;
+			while (!(ok = handle_connection_error(inst, conn, ISC_TRUE,
+							&result))) {
+				log_error("ldap_psearch_watcher failed to handle "
+					  "LDAP connection error. Reconnection "
+					  "in %ds", inst->reconnect_interval);
+				sleep(inst->reconnect_interval);
+			}
+			if (ok)
+				goto restart;
 		}
 
 		switch (ret) {
