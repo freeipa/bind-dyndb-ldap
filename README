@@ -179,6 +179,10 @@ psearch (default no)
 	query for zone records. When server supports persistent search
 	your zones will be automatically update when they change in LDAP.
 
+reconnect_interval (default 60)
+	Time (in seconds) after that the plugin should try to connect to LDAP server
+	again in case connection is lost and immediate reconnection fails.
+
 
 5.2 Sample configuration
 ------------------------
