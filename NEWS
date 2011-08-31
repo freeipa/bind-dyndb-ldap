@@ -1,0 +1,15 @@
+1.0.0b1
+======
+
+[1] Added new boolean option called "psearch". When this option is set to "yes"
+then plugin will use advantage of psearch
+(http://tools.ietf.org/id/draft-ietf-ldapext-psearch-03.txt) to immediately
+fetch new/modified/deleted zones from LDAP database. Note that the LDAP server
+has to support the psearch as well.
+
+[2] The plugin failed to set update ACLs for zones correctly.
+
+[3] The FreeIPA CLI could have created update-policy attributes which contained
+FQDNs ending with double-dot. Added a workaround to parse such crippled FQDNs.
+
+[4] Major changes in the plugin code to make it more maintainable and readable.
