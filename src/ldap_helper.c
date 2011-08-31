@@ -471,7 +471,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 
 	ldap_inst = *ldap_instp;
 
-	if (ldap_inst->psearch) {
+	if (ldap_inst->psearch && ldap_inst->watcher != 0) {
 		ldap_inst->exiting = ISC_TRUE;
 		/*
 		 * Wake up the watcher thread. This might look like a hack
