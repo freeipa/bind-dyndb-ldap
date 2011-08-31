@@ -15,11 +15,7 @@ Hopefully, the patch will once be included in the official BIND release.
 ===========
 * support for dynamic updates
 * SASL authentication
-
-
-2.1 Planned features
---------------------
-* persistent search
+* persistent search for zones
 
 
 3. Installation
