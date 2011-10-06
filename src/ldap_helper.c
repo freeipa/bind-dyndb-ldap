@@ -1478,24 +1478,16 @@ handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn
 		*result = ISC_R_SUCCESS;
 		ldap_conn->tries = 0;
 		return 0;
-	case LDAP_SERVER_DOWN:
-	case LDAP_CONNECT_ERROR:
-	/*
-	 * 389 DS returns LDAP_INAPPROPRIATE_AUTH when we lost connection and
-	 * then we perform ldap_search.
-	 * https://bugzilla.redhat.com/show_bug.cgi?id=742368
-	 */
-	case LDAP_INAPPROPRIATE_AUTH:
-		if (ldap_conn->tries == 0)
-			log_error("connection to the LDAP server was lost");
-		if (ldap_connect(ldap_inst, ldap_conn, force) == ISC_R_SUCCESS)
-			return 1;
-		break;
 	case LDAP_TIMEOUT:
 		log_error("LDAP query timed out. Try to adjust \"timeout\" parameter");
 		break;
 	default:
+		/* Try to reconnect on other errors. */
 		log_error("LDAP error: %s", ldap_err2string(err_code));
+		if (ldap_conn->tries == 0)
+			log_error("connection to the LDAP server was lost");
+		if (ldap_connect(ldap_inst, ldap_conn, force) == ISC_R_SUCCESS)
+			return 1;
 	}
 
 	return 0;
