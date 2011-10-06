@@ -1952,7 +1952,6 @@ ldap_pool_connect(ldap_pool_t *pool, ldap_instance_t *ldap_inst)
 	ldap_connection_t *ldap_conn;
 	unsigned int i;
 
-retry:
 	for (i = 0; i < pool->connections; i++) {
 		ldap_conn = NULL;
 		CHECK(new_ldap_connection(pool, &ldap_conn));
