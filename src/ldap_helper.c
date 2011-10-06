@@ -1462,7 +1462,6 @@ handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn
 {
 	int ret;
 	int err_code;
-	const char *err_string = NULL;
 
 	*result = ISC_R_FAILURE;
 
@@ -1470,24 +1469,34 @@ handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn
 			      (void *)&err_code);
 
 	if (ret != LDAP_OPT_SUCCESS) {
-		err_string = "failed to get error code";
-	} else if (err_code == LDAP_NO_SUCH_OBJECT) {
+		log_error("handle_connection_error failed to obtain ldap error code");
+		return 0;
+	}
+
+	switch (err_code) {
+	case LDAP_NO_SUCH_OBJECT:
 		*result = ISC_R_SUCCESS;
 		ldap_conn->tries = 0;
 		return 0;
-	} else if (err_code == LDAP_SERVER_DOWN || err_code == LDAP_CONNECT_ERROR) {
+	case LDAP_SERVER_DOWN:
+	case LDAP_CONNECT_ERROR:
+	/*
+	 * 389 DS returns LDAP_INAPPROPRIATE_AUTH when we lost connection and
+	 * then we perform ldap_search.
+	 * https://bugzilla.redhat.com/show_bug.cgi?id=742368
+	 */
+	case LDAP_INAPPROPRIATE_AUTH:
 		if (ldap_conn->tries == 0)
 			log_error("connection to the LDAP server was lost");
 		if (ldap_connect(ldap_inst, ldap_conn, force) == ISC_R_SUCCESS)
 			return 1;
-	} else if (err_code == LDAP_TIMEOUT) {
+		break;
+	case LDAP_TIMEOUT:
 		log_error("LDAP query timed out. Try to adjust \"timeout\" parameter");
-	} else {
-		err_string = ldap_err2string(err_code);
+		break;
+	default:
+		log_error("LDAP error: %s", ldap_err2string(err_code));
 	}
-
-	if (err_string != NULL)
-		log_error("LDAP error: %s", err_string);
 
 	return 0;
 }
