@@ -183,6 +183,13 @@ reconnect_interval (default 60)
 	Time (in seconds) after that the plugin should try to connect to LDAP server
 	again in case connection is lost and immediate reconnection fails.
 
+ldap_hostname (default "")
+	Sets hostname of the LDAP server. When it is set to "", actual
+	/bin/hostname is used. Please prefer "uri" option, this option should be
+	used only in special cases, for example when GSSAPI authentication
+	is used and named service has Kerberos principal different from
+	/bin/hostname output.
+
 
 5.2 Sample configuration
 ------------------------

@@ -1,6 +1,10 @@
 [1] When connection to the LDAP was lost, the plugin didn't call the ldap_bind
 during reconnection.
 
+[2] Added new option "ldap_hostname" which allows to set LDAP server hostname
+when it is different from actual /bin/hostname. This option sets the
+LDAP_OPT_HOST_NAME option.
+
 1.0.0b1
 ======
 

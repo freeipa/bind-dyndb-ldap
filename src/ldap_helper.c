@@ -155,6 +155,7 @@ struct ldap_instance {
 	ld_string_t		*krb5_keytab;
 	ld_string_t		*fake_mname;
 	isc_boolean_t		psearch;
+	ld_string_t		*ldap_hostname;
 	isc_task_t		*task;
 	isc_thread_t		watcher;
 	isc_boolean_t		exiting;
@@ -324,6 +325,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		{ "krb5_keytab", default_string("")		},
 		{ "fake_mname",	 default_string("")		},
 		{ "psearch",	 default_boolean(ISC_FALSE)	},
+		{ "ldap_hostname", default_string("")		},
 		end_of_settings
 	};
 
@@ -360,6 +362,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	CHECK(str_new(mctx, &ldap_inst->sasl_password));
 	CHECK(str_new(mctx, &ldap_inst->krb5_keytab));
 	CHECK(str_new(mctx, &ldap_inst->fake_mname));
+	CHECK(str_new(mctx, &ldap_inst->ldap_hostname));
 
 	i = 0;
 	ldap_settings[i++].target = ldap_inst->uri;
@@ -379,6 +382,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	ldap_settings[i++].target = ldap_inst->krb5_keytab;
 	ldap_settings[i++].target = ldap_inst->fake_mname;
 	ldap_settings[i++].target = &ldap_inst->psearch; 
+	ldap_settings[i++].target = ldap_inst->ldap_hostname;
 	CHECK(set_settings(ldap_settings, argv));
 
 	/* Validate and check settings. */
@@ -498,6 +502,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	str_destroy(&ldap_inst->sasl_password);
 	str_destroy(&ldap_inst->krb5_keytab);
 	str_destroy(&ldap_inst->fake_mname);
+	str_destroy(&ldap_inst->ldap_hostname);
 
 	/* commented out for now, causes named to hang */
 	//dns_view_detach(&ldap_inst->view);
@@ -1340,6 +1345,12 @@ ldap_connect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 
 	ret = ldap_set_option(ld, LDAP_OPT_TIMEOUT, &timeout);
 	LDAP_OPT_CHECK(ret, "failed to set timeout");
+
+	if (str_len(ldap_inst->ldap_hostname) > 0) {
+		ret = ldap_set_option(ld, LDAP_OPT_HOST_NAME,
+				      str_buf(ldap_inst->ldap_hostname));
+		LDAP_OPT_CHECK(ret, "failed to set LDAP_OPT_HOST_NAME");
+	}
 
 	if (ldap_conn->handle != NULL)
 		ldap_unbind_ext_s(ldap_conn->handle, NULL, NULL);
