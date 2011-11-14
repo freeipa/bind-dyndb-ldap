@@ -1,3 +1,6 @@
+1.0.0rc1
+=======
+
 [1] When connection to the LDAP was lost, the plugin didn't call the ldap_bind
 during reconnection.
 
