@@ -220,6 +220,7 @@ const ldap_auth_pair_t supported_ldap_auth[] = {
 typedef struct ldap_psearchevent ldap_psearchevent_t;
 struct ldap_psearchevent {
 	ISC_EVENT_COMMON(ldap_psearchevent_t);
+	isc_mem_t *mctx;
 	char *dbname;
 	char *dn;	
 };
@@ -2075,12 +2076,15 @@ update_action(isc_task_t *task, isc_event_t *event)
 	ldap_connection_t *conn;
 	ldap_entry_t *entry;
 	isc_boolean_t delete = ISC_TRUE;
+	isc_mem_t *mctx;
 	char *attrs[] = {
 		"idnsName", "idnsUpdatePolicy", "idnsAllowQuery",
 		"idnsAllowTransfer", NULL
 	};
 
 	UNUSED(task);
+
+	mctx = pevent->mctx;
 
 	result = manager_get_ldap_instance(pevent->dbname, &inst);
 	if (result != ISC_R_SUCCESS)
@@ -2112,8 +2116,9 @@ cleanup:
 			  "Zones can be outdated, run `rndc reload`",
 			  pevent->dn);
 
-	free(pevent->dbname);
-	free(pevent->dn);
+	isc_mem_free(mctx, pevent->dbname);
+	isc_mem_free(mctx, pevent->dn);
+	isc_mem_detach(&mctx);
 	isc_event_free(&event);
 }
 
@@ -2185,6 +2190,7 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 	char *moddn = NULL;
 	char *dn = NULL;
 	char *dbname = NULL;
+	isc_mem_t *mctx = NULL;
 
 	class = ldap_entry_getclass(entry);
 	if (class == LDAP_ENTRYCLASS_NONE) {
@@ -2196,12 +2202,14 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 	if (ctrls != NULL)
 		CHECK(ldap_parse_entrychangectrl(ctrls, &chgtype, &moddn));
 
-	dn = strdup(entry->dn); /* TODO: isc_mem_strdup will be better... */
+	isc_mem_attach(inst->mctx, &mctx);
+
+	dn = isc_mem_strdup(mctx, entry->dn);
 	if (dn == NULL) {
 		result = ISC_R_NOMEMORY;
 		goto cleanup;
 	}
-	dbname = strdup(inst->db_name);
+	dbname = isc_mem_strdup(mctx, inst->db_name);
 	if (dbname == NULL) {
 		result = ISC_R_NOMEMORY;
 		goto cleanup;
@@ -2231,6 +2239,7 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 	}
 
 	if ((class & LDAP_ENTRYCLASS_ZONE) != 0) {
+		pevent->mctx = mctx;
 		pevent->dbname = dbname;
 		pevent->dn = dn;
 		isc_task_send(inst->task, (isc_event_t **)&pevent);
@@ -2246,9 +2255,11 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 cleanup:
 	if (result != ISC_R_SUCCESS) {
 		if (dbname != NULL)
-			free(dbname);
+			isc_mem_free(mctx, dbname);
 		if (dn != NULL)
-			free(dn);
+			isc_mem_free(mctx, dn);
+		if (mctx != NULL)
+			isc_mem_detach(&mctx);
 		if (moddn != NULL)
 			ldap_memfree(moddn);
 
