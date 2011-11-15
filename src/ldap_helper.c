@@ -250,10 +250,6 @@ static isc_result_t ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry,
 		const ld_string_t *fake_mname, ld_string_t *buf,
 		ldapdb_rdatalist_t *rdatalist);
 
-#if 0
-static const LDAPMessage *next_entry(ldap_connection_t *inst);
-#endif
-
 static isc_result_t ldap_connect(ldap_instance_t *ldap_inst,
 		ldap_connection_t *ldap_conn, isc_boolean_t force);
 static isc_result_t ldap_reconnect(ldap_instance_t *ldap_inst,
@@ -1242,27 +1238,6 @@ ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 
 	return result;
 }
-
-#if 0
-/* FIXME: this function is obsolete, remove. */
-static const LDAPMessage *
-next_entry(ldap_connection_t *inst)
-{
-	if (inst->ber) {
-		ber_free(inst->ber, 0);
-		inst->ber = NULL;
-	}
-
-	if (inst->handle && inst->entry)
-		inst->entry = ldap_next_entry(inst->handle, inst->entry);
-	else if (inst->handle && inst->result)
-		inst->entry = ldap_first_entry(inst->handle, inst->result);
-	else
-		inst->entry = NULL;
-
-	return inst->entry;
-}
-#endif
 
 /* FIXME: Tested with SASL/GSSAPI/KRB5 only */
 static int
