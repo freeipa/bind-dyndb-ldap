@@ -1080,9 +1080,11 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 	for (entry = HEAD(ldap_conn->ldap_entries);
 	     entry != NULL;
 	     entry = NEXT(entry, link)) {
-		CHECK(ldap_parse_rrentry(mctx, entry, ldap_conn,
-					 origin, ldap_inst->fake_mname,
-					 string, rdatalist));
+	     if (ldap_parse_rrentry(mctx, entry, ldap_conn,
+                                origin, ldap_inst->fake_mname,
+                                string, rdatalist) != ISC_R_SUCCESS ) {
+             log_error("Failed to parse RR entry (%s)", str_buf(string));
+         }
 	}
 
 	/* Cache RRs */
