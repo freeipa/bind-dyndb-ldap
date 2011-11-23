@@ -180,8 +180,9 @@ psearch (default no)
 	your zones will be automatically update when they change in LDAP.
 
 reconnect_interval (default 60)
-	Time (in seconds) after that the plugin should try to connect to LDAP server
-	again in case connection is lost and immediate reconnection fails.
+	Time (in seconds) after that the plugin should try to connect to LDAP 
+	server again in case connection is lost and immediate reconnection 
+	fails.
 
 ldap_hostname (default "")
 	Sets hostname of the LDAP server. When it is set to "", actual
@@ -190,6 +191,10 @@ ldap_hostname (default "")
 	is used and named service has Kerberos principal different from
 	/bin/hostname output.
 
+sync_ptr (default no)
+	Keeps PTR record synchronized with coresponding A/AAAA record.
+	When an A/AAAA record is deleted the PTR record is also deleted
+	however it can point to different hostname.
 
 5.2 Sample configuration
 ------------------------

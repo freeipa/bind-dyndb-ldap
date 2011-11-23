@@ -61,7 +61,6 @@ const char *dns_records[] = {
 	"RRSIG", "NSEC",  NULL
 };
 
-static isc_result_t dn_to_text(const char *dn, ld_string_t *target);
 static isc_result_t explode_dn(const char *dn, char ***explodedp, int notypes);
 static isc_result_t explode_rdn(const char *rdn, char ***explodedp,
 				int notypes);
@@ -105,7 +104,7 @@ cleanup:
  *
  * The resulting string will be "foo.bar.example.org."
  */
-static isc_result_t
+isc_result_t
 dn_to_text(const char *dn, ld_string_t *target)
 {
 	isc_result_t result;

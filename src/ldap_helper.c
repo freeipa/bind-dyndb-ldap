@@ -30,6 +30,7 @@
 #include <dns/view.h>
 #include <dns/zone.h>
 #include <dns/zt.h>
+#include <dns/byaddr.h>
 
 #include <isc/buffer.h>
 #include <isc/lex.h>
@@ -41,6 +42,7 @@
 #include <isc/thread.h>
 #include <isc/time.h>
 #include <isc/util.h>
+#include <isc/netaddr.h>
 
 #include <alloca.h>
 #define LDAP_DEPRECATED 1
@@ -159,6 +161,7 @@ struct ldap_instance {
 	isc_task_t		*task;
 	isc_thread_t		watcher;
 	isc_boolean_t		exiting;
+	isc_boolean_t		sync_ptr;
 };
 
 struct ldap_pool {
@@ -323,6 +326,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		{ "fake_mname",	 default_string("")		},
 		{ "psearch",	 default_boolean(ISC_FALSE)	},
 		{ "ldap_hostname", default_string("")		},
+		{ "sync_ptr",	 default_boolean(ISC_FALSE) },
 		end_of_settings
 	};
 
@@ -380,6 +384,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	ldap_settings[i++].target = ldap_inst->fake_mname;
 	ldap_settings[i++].target = &ldap_inst->psearch; 
 	ldap_settings[i++].target = ldap_inst->ldap_hostname;
+	ldap_settings[i++].target = &ldap_inst->sync_ptr;
 	CHECK(set_settings(ldap_settings, argv));
 
 	/* Validate and check settings. */
@@ -663,7 +668,7 @@ configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
 	 * This is meant only for debugging.
 	 * DANGEROUS: Do not leave uncommented!
 	 */
-#if 0
+#if 0 
 	{
 		dns_acl_t *any;
 		dns_acl_any(dns_zone_getmctx(zone), &any);
@@ -1078,13 +1083,13 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 	}
 
 	for (entry = HEAD(ldap_conn->ldap_entries);
-	     entry != NULL;
-	     entry = NEXT(entry, link)) {
-	     if (ldap_parse_rrentry(mctx, entry, ldap_conn,
-                                origin, ldap_inst->fake_mname,
-                                string, rdatalist) != ISC_R_SUCCESS ) {
-             log_error("Failed to parse RR entry (%s)", str_buf(string));
-         }
+		entry != NULL;
+		entry = NEXT(entry, link)) {
+		if (ldap_parse_rrentry(mctx, entry, ldap_conn,
+		                       origin, ldap_inst->fake_mname,
+		                       string, rdatalist) != ISC_R_SUCCESS ) {
+			log_error("Failed to parse RR entry (%s)", str_buf(string));
+		}
 	}
 
 	/* Cache RRs */
@@ -1096,6 +1101,7 @@ cleanup:
 	str_destroy(&string);
 
 	if (result != ISC_R_SUCCESS)
+
 		ldapdb_rdatalist_destroy(mctx, rdatalist);
 
 	return result;
@@ -1646,7 +1652,7 @@ ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
 		CHECKED_MEM_ALLOCATE(mctx, vals[i], region.length + 1);
 		memcpy(vals[i], region.base, region.length);
 		vals[i][region.length] = '\0';
-
+		
 		rdata = NEXT(rdata, link);
 	}
 
@@ -1762,6 +1768,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	ldap_connection_t *ldap_conn = NULL;
 	ld_string_t *owner_dn = NULL;
 	LDAPMod *change[3] = { NULL };
+	LDAPMod *change_ptr = NULL;
 	ldap_cache_t *cache;
 
 	/* Flush modified record from the cache */
@@ -1787,14 +1794,115 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		/* for now always replace the ttl on add */
 		CHECK(ldap_rdttl_to_ldapmod(mctx, rdlist, &change[1]));
 	}
-
+	
 	CHECK(ldap_modify_do(ldap_conn, str_buf(owner_dn), change, delete_node));
 
+	/* Keep the PTR of corresponding A/AAAA record synchronized. */
+	if (ldap_inst->sync_ptr == ISC_TRUE && 
+	    (rdlist->type == dns_rdatatype_a || rdlist->type == dns_rdatatype_aaaa)) {
+		
+		/* Get string with IP address from change request
+		 * and convert it to in_addr structure. */
+		in_addr_t ip;
+		if ((ip = inet_addr(change[0]->mod_values[0])) == 0) {
+			log_bug("Could not convert IP address from string '%s'.", change[0]->mod_values[0]);
+		}
+		
+		/* Use internal net address representation. */
+		isc_netaddr_t isc_ip;
+		isc_netaddr_fromin(&isc_ip,(struct in_addr *) &ip); /* Only copy data to isc_ip stucture. */
+		
+		/*
+		 * Convert IP address to PTR record.
+		 *
+		 * @example
+		 * 192.168.0.1 -> 1.0.168.192.in-addr.arpa
+		 *
+		 * @todo Check if it works for IPv6 correctly.
+		 */ 
+		struct dns_fixedname name;
+		dns_fixedname_init(&name);
+		CHECK(dns_byaddr_createptrname2(&isc_ip, 0, dns_fixedname_name(&name)));
+	   
+		/* Find PTR entry in LDAP. */
+		ldapdb_rdatalist_t rdlist_ptr;
+		result = ldapdb_rdatalist_get(mctx, ldap_inst, dns_fixedname_name(&name), 
+									  NULL, &rdlist_ptr); 
+		
+		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {
+			log_error("Can not synchronize PTR record, ldapdb_rdatalist_get = %d", 
+			          result);
+			result = ISC_R_SUCCESS; /* Problem only with PTR synchronization. */
+			goto cleanup;
+		}
+
+		/*
+		 * Do not overwrite old record and delete only existing record.
+		 *
+		 * @todo Check if PTR value == dns name.
+		 */
+		if ((result == ISC_R_SUCCESS && mod_op == LDAP_MOD_ADD) ||
+			(result == ISC_R_NOTFOUND && mod_op == LDAP_MOD_DELETE)) {
+			log_bug("Can not synchronize PTR record for A/AAAA one (%s) - %s.", 
+			        str_buf(owner_dn), 
+			        ((mod_op == LDAP_MOD_ADD)?"already exists":"not found"));
+			result = ISC_R_SUCCESS;
+			goto cleanup;
+		}
+
+		/* Get LDAP entry indentifier. */ 
+		ld_string_t *owner_dn_ptr = NULL;
+		CHECK(str_new(mctx, &owner_dn_ptr));   
+		CHECK(dnsname_to_dn(ldap_inst->zone_register, dns_fixedname_name(&name),
+		      owner_dn_ptr));
+		
+		/* 
+		 * Get string representation of PTR record value.
+		 * 
+		 * @example str_ptr = "host.example.com." 
+		 */
+		ld_string_t *str_ptr = NULL;
+		CHECK(str_new(mctx, &str_ptr));
+		CHECK(dn_to_text(str_buf(owner_dn), str_ptr));
+		 
+		
+		/* Fill the LDAPMod change structure up. */
+		char **vals = NULL;
+		CHECKED_MEM_GET_PTR(mctx, change_ptr);
+		ZERO_PTR(change_ptr);
+
+		/* Do the same action what has been done with A/AAAA record. */	
+		change_ptr->mod_op = mod_op;
+		char *attr_name;
+		const char *attr_name_c;
+		CHECK(rdatatype_to_ldap_attribute(dns_rdatatype_ptr, &attr_name_c));
+		
+		DE_CONST(attr_name_c, attr_name);
+		change_ptr->mod_type = attr_name;  
+
+		CHECKED_MEM_ALLOCATE(mctx, vals, 2 * sizeof(char *));
+		memset(vals, 0, 2 * sizeof(char *));
+		change_ptr->mod_values = vals;
+
+		CHECKED_MEM_ALLOCATE(mctx, vals[0], str_len(str_ptr) + 1);
+		memcpy(vals[0], str_buf(str_ptr), str_len(str_ptr) + 1);
+	   
+		/* Switch pointers and free the old memory. */ 
+		free_ldapmod(mctx, &change[0]);
+		change[0] = change_ptr;
+		change_ptr = NULL;
+
+		/* Modify PTR record. */
+		CHECK(ldap_modify_do(ldap_conn, str_buf(owner_dn_ptr), change, delete_node));
+		(void) discard_from_cache(ldap_instance_getcache(ldap_inst), dns_fixedname_name(&name)); 
+	}
+	
 cleanup:
 	ldap_pool_putconnection(ldap_inst->pool, ldap_conn);
 	str_destroy(&owner_dn);
 	free_ldapmod(mctx, &change[0]);
 	free_ldapmod(mctx, &change[1]);
+	if (change_ptr != NULL) free_ldapmod(mctx, &change_ptr);
 
 	return result;
 }
@@ -1874,7 +1982,7 @@ ldap_pool_destroy(ldap_pool_t **poolp)
 static ldap_connection_t *
 ldap_pool_getconnection(ldap_pool_t *pool)
 {
-	ldap_connection_t *ldap_conn;
+	ldap_connection_t *ldap_conn = NULL;
 	unsigned int i;
 
 	REQUIRE(pool != NULL);

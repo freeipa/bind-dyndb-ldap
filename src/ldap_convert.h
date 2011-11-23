@@ -43,4 +43,6 @@ isc_result_t ldap_attribute_to_rdatatype(const char *ldap_record,
 isc_result_t rdatatype_to_ldap_attribute(dns_rdatatype_t rdtype,
 					 const char **target);
 
+isc_result_t dn_to_text(const char *dn, ld_string_t *target);
+
 #endif /* !_LD_LDAP_CONVERT_H_ */
