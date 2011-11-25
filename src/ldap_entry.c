@@ -36,15 +36,6 @@
 
 /* Represents values associated with LDAP attribute */
 
-/* Represents LDAP attribute and it's values */
-struct ldap_attribute {
-	char			*name;
-	char			**ldap_values;
-	ldap_value_t		*lastval;
-	ldap_valuelist_t	values;
-	LINK(ldap_attribute_t)	link;
-};
-
 isc_result_t
 ldap_entrylist_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *msg,
 		      ldap_entrylist_t *entrylist)

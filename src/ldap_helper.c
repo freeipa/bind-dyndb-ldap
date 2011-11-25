@@ -228,7 +228,8 @@ struct ldap_psearchevent {
 	ISC_EVENT_COMMON(ldap_psearchevent_t);
 	isc_mem_t *mctx;
 	char *dbname;
-	char *dn;	
+	char *dn;
+	int chgtype;
 };
 
 /*
@@ -2486,6 +2487,76 @@ cleanup:
 	isc_event_free(&event);
 }
 
+/**
+ * @brief Update record in cache.
+ *
+ * If it exists it is replaced with newer version.
+ *
+ * @param task Task indentifier.
+ * @param event Internal data of type ldap_psearchevent_t.
+ */
+static void
+update_record(isc_task_t *task, isc_event_t *event)
+{
+	/* Psearch event */
+	ldap_psearchevent_t *pevent = (ldap_psearchevent_t *)event;
+	isc_result_t result;
+	ldap_instance_t *inst = NULL;
+	ldap_cache_t *cache;
+	isc_mem_t *mctx;
+	mctx = pevent->mctx;
+
+	UNUSED(task);
+	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
+	
+	/* Structure to be stored in the cache. */
+	ldapdb_rdatalist_t rdatalist;
+
+	/* Convert domain name from text to struct dns_name_t. */
+	dns_name_t name;
+	dns_name_init(&name, NULL);
+	CHECK(dn_to_dnsname(mctx, pevent->dn, &name));
+	
+	/* Get cache instance. */
+	cache = ldap_instance_getcache(inst);
+	
+	if (PSEARCH_DEL(pevent->chgtype)) {
+		/* Discards entry from cache indentified by name. */
+		log_debug(5, "psearch_update: Removing item from cache (%s)", 
+		          pevent->dn);
+		CHECK(discard_from_cache(cache, &name));
+	} 
+	
+	if (PSEARCH_ADD(pevent->chgtype) || PSEARCH_MOD(pevent->chgtype)) {
+		/* 
+		 * Find new data in LDAP. 
+		 *
+		 * @todo Change this to convert ldap_entry_t to ldapdb_rdatalist_t.
+		 */
+		log_debug(5, "psearch_update: Updating item in cache (%s)", 
+		          pevent->dn);
+		CHECK(ldapdb_rdatalist_get(mctx, inst, &name,
+								   NULL, &rdatalist));
+	
+		/* 
+		 * The cache is updated in ldapdb_rdatalist_get(...):
+		 * CHECK(ldap_cache_addrdatalist(cache, &name, &rdatalist);
+		 */
+	}
+cleanup:
+	if (result != ISC_R_SUCCESS)
+		log_error("update_record (psearch) failed for %s. "
+			  "Records can be outdated, run `rndc reload`",
+			  pevent->dn);
+
+	if (dns_name_dynamic(&name))
+		dns_name_free(&name, inst->mctx);
+	isc_mem_free(mctx, pevent->dbname);
+	isc_mem_free(mctx, pevent->dn);
+	isc_mem_detach(&mctx);
+	isc_event_free(&event);
+}
+
 /*
  * Parses persistent search entrychange control.
  *
@@ -2593,26 +2664,43 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 	 * but zones aren't changed often so this is should be enough for now.
 	 */
 
-	pevent = (ldap_psearchevent_t *)isc_event_allocate(inst->mctx,
-				    inst, LDAPDB_EVENT_PSEARCH,
-				    update_action, NULL,
-				    sizeof(ldap_psearchevent_t));
-	if (pevent == NULL) {
-		result = ISC_R_NOMEMORY;
-		goto cleanup;
-	}
-
 	if ((class & LDAP_ENTRYCLASS_ZONE) != 0) {
+		pevent = (ldap_psearchevent_t *)isc_event_allocate(inst->mctx,
+		            inst, LDAPDB_EVENT_PSEARCH,
+		            update_action, NULL,
+		            sizeof(ldap_psearchevent_t));
+		if (pevent == NULL) {
+			result = ISC_R_NOMEMORY;
+			goto cleanup;
+		}
+
 		pevent->mctx = mctx;
 		pevent->dbname = dbname;
 		pevent->dn = dn;
 		isc_task_send(inst->task, (isc_event_t **)&pevent);
+		/* Do not update records when the zone has been reloaded. */
+		class = LDAP_ENTRYCLASS_NONE; 
 	}
-#if 0
+#if 1 
 	/*
 	 * In future we might want to support also psearch for RRs
 	 */
 	if ((class & LDAP_ENTRYCLASS_RR) != 0) {
+		pevent = (ldap_psearchevent_t *)isc_event_allocate(inst->mctx,
+				inst, LDAPDB_EVENT_PSEARCH,
+				update_record, NULL,
+				sizeof(ldap_psearchevent_t));
+
+		if (pevent == NULL) {
+			result = ISC_R_NOMEMORY;
+			goto cleanup;
+		}
+
+		pevent->mctx = mctx;
+		pevent->dbname = dbname;
+		pevent->dn = dn;
+		pevent->chgtype = chgtype;
+		isc_task_send(inst->task, (isc_event_t **)&pevent);
 	}
 #endif
 
@@ -2671,7 +2759,12 @@ restart:
 		ret = ldap_search_ext(conn->handle,
 				      str_buf(inst->base),
 				      LDAP_SCOPE_SUBTREE,
-				      "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))",
+					  /*
+					   * (objectClass==idnsZone AND idnsZoneActive==TRUE) 
+					   * OR (objectClass == idnsRecord) 
+					   */
+				      "(|(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"
+					  "(objectClass=idnsRecord))",
 				      NULL, 0, conn->serverctrls, NULL, NULL,
 				      LDAP_NO_LIMIT, &conn->msgid);
 		if (ret != LDAP_SUCCESS) {

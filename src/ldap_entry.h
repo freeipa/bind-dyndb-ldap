@@ -52,6 +52,15 @@ struct ldap_entry {
 	LINK(ldap_entry_t)	link;
 };
 
+/* Represents LDAP attribute and it's values */
+struct ldap_attribute {
+	char			*name;
+	char			**ldap_values;
+	ldap_value_t		*lastval;
+	ldap_valuelist_t	values;
+	LINK(ldap_attribute_t)	link;
+};
+
 #define LDAP_ENTRYCLASS_NONE	0x0
 #define LDAP_ENTRYCLASS_RR	0x1
 #define LDAP_ENTRYCLASS_ZONE	0x2

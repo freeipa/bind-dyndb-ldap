@@ -146,6 +146,18 @@ destroy_ldap_cache(ldap_cache_t **cachep)
 	*cachep = NULL;
 }
 
+/**
+* @brief Get record from cache.
+*
+* @param mctx Memory.
+* @param cache Internal LDAP cache structure. 
+* @param name DNS name (key). 
+* @param rdatalist Found value or NULL.
+*
+* @return ISC_R_SUCCESS when found,
+*         ISC_R_NOTFOUND not in cache,
+*         ISC_R_FAILURE other error.
+*/
 isc_result_t
 ldap_cache_getrdatalist(isc_mem_t *mctx, ldap_cache_t *cache,
 			dns_name_t *name, ldapdb_rdatalist_t *rdatalist)
@@ -197,6 +209,18 @@ ldap_cache_enabled(ldap_cache_t *cache)
 	return (cache->rbt != NULL) ? ISC_TRUE : ISC_FALSE;
 }
 
+/**
+* @brief Insert rdatalist to the cache.
+*
+* If a record with the name exists in the cache,
+* it is replaced by newer version.
+*
+* @param cache Internal LDAP cache structure.
+* @param name DNS name (key).
+* @param rdatalist Value to be stored in cache. 
+*
+* @return ISC_R_SUCCESS or error ISC_R_*
+*/
 isc_result_t
 ldap_cache_addrdatalist(ldap_cache_t *cache, dns_name_t *name,
 			ldapdb_rdatalist_t *rdatalist)
