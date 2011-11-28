@@ -1825,10 +1825,16 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		CHECK(dns_byaddr_createptrname2(&isc_ip, 0, dns_fixedname_name(&name)));
 	   
 		/* Find PTR entry in LDAP. */
-		ldapdb_rdatalist_t rdlist_ptr;
+		ldapdb_rdatalist_t rdlist_search;
+		dns_rdatalist_t *rdlist_ptr = NULL;
 		result = ldapdb_rdatalist_get(mctx, ldap_inst, dns_fixedname_name(&name), 
-									  NULL, &rdlist_ptr); 
-		
+									  NULL, &rdlist_search); 
+	
+		/* Check the value of PTR entry. */	
+		if (mod_op == LDAP_MOD_DELETE && result == ISC_R_SUCCESS) {
+			result = ldapdb_rdatalist_findrdatatype(&rdlist_search, dns_rdatatype_ptr, &rdlist_ptr);
+		}
+
 		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {
 			log_error("Can not synchronize PTR record, ldapdb_rdatalist_get = %d", 
 			          result);
@@ -1836,10 +1842,8 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 			goto cleanup;
 		}
 
-		/*
-		 * Do not overwrite old record and delete only existing record.
-		 *
-		 * @todo Check if PTR value == dns name.
+		/* 
+		 * Do not overwrite old record and delete only existing record. 
 		 */
 		if ((result == ISC_R_SUCCESS && mod_op == LDAP_MOD_ADD) ||
 			(result == ISC_R_NOTFOUND && mod_op == LDAP_MOD_DELETE)) {
@@ -1865,6 +1869,26 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		CHECK(str_new(mctx, &str_ptr));
 		CHECK(dn_to_text(str_buf(owner_dn), str_ptr));
 		 
+		/*
+		 * Delete only when PTR record's value == A/AAAA record's key.
+		 *
+		 * @example
+		 *
+		 * www.example.com. 			A 		192.168.0.100
+		 * ; PTR record can be synchronized.
+		 * 100.0.168.192.in-addr.arpa. 	PTR		www.example.com.
+		 * ; PTR record can NOT be synchronized.
+		 * 100.0.168.192.in-addr.arpa.	PTR		not.valid.com.
+		 *
+		 */ 
+		if (mod_op == LDAP_MOD_DELETE) {
+			char **vals = NULL;
+			CHECK(ldap_rdata_to_char_array(mctx, HEAD(rdlist_ptr->rdata), &vals));
+			if (vals != NULL && vals[0] != NULL && strcmp(vals[0], str_buf(str_ptr)) != 0) {
+				log_bug("Can not delete PTR record, needed value %s\n", str_buf(str_ptr));
+				goto cleanup;
+			}
+		}
 		
 		/* Fill the LDAPMod change structure up. */
 		char **vals = NULL;

@@ -193,8 +193,8 @@ ldap_hostname (default "")
 
 sync_ptr (default no)
 	Keeps PTR record synchronized with coresponding A/AAAA record.
-	When an A/AAAA record is deleted the PTR record is also deleted
-	however it can point to different hostname.
+	When an A/AAAA record is deleted the PTR record must point 
+	to the same hostname.
 
 5.2 Sample configuration
 ------------------------
