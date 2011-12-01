@@ -1,6 +1,7 @@
 /*
  * Authors: Martin Nagy <mnagy@redhat.com>
  *          Adam Tkac <atkac@redhat.com>
+ *          Jiri Kuncar <jkuncar@redhat.com>
  *
  * Copyright (C) 2008, 2009  Red Hat
  * see file 'COPYING' for use and warranty information
@@ -1798,19 +1799,58 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	CHECK(ldap_modify_do(ldap_conn, str_buf(owner_dn), change, delete_node));
 
 	/* Keep the PTR of corresponding A/AAAA record synchronized. */
-	if (ldap_inst->sync_ptr == ISC_TRUE && 
-	    (rdlist->type == dns_rdatatype_a || rdlist->type == dns_rdatatype_aaaa)) {
+	if (rdlist->type == dns_rdatatype_a || rdlist->type == dns_rdatatype_aaaa) {
 		
+		/* Look for zone "idnsAllowSyncPTR" attribute when plugin 
+		 * option "sync_ptr" is set to "no" otherwise the synchronization
+		 * is always enabled for all zones. */
+		if (ldap_inst->sync_ptr == ISC_FALSE) {
+			/* 
+			 * Find parent zone entry.
+			 * @todo Try the cache first and improve split.
+			 */
+			char *zone_dn = strstr(str_buf(owner_dn),", ") + 1;
+			ldap_entry_t *entry;
+			ldap_valuelist_t values;
+			char *attrs[] = {"idnsAllowSyncPTR", NULL};
+			
+			CHECK(ldap_query(ldap_inst, ldap_conn, zone_dn,
+							 LDAP_SCOPE_BASE, attrs, 0,
+							 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
+			
+			/* Search for zone entry with 'idnsAllowSyncPTR == "TRUE"'. */
+			for (entry = HEAD(ldap_conn->ldap_entries);
+				 entry != NULL;
+				 entry = NEXT(entry, link)) {
+				result = ldap_entry_getvalues(entry, "idnsAllowSyncPTR", &values);
+				if (result != ISC_R_SUCCESS) 
+					continue;
+
+				if (strcmp(HEAD(values)->value, "TRUE") != 0) {
+					entry = NULL;
+				}
+				break;
+			}
+			/* Any valid zone was found. */
+			if (entry == NULL) {
+				log_debug(3, "Sync PTR is not allowed in zone %s", zone_dn);
+				goto cleanup;
+			}
+			log_debug(3, "Sync PTR is allowed for zone %s", zone_dn);
+		}
+
 		/* Get string with IP address from change request
 		 * and convert it to in_addr structure. */
 		in_addr_t ip;
 		if ((ip = inet_addr(change[0]->mod_values[0])) == 0) {
-			log_bug("Could not convert IP address from string '%s'.", change[0]->mod_values[0]);
+			log_bug("Could not convert IP address from string '%s'.",
+			        change[0]->mod_values[0]);
 		}
 		
 		/* Use internal net address representation. */
 		isc_netaddr_t isc_ip;
-		isc_netaddr_fromin(&isc_ip,(struct in_addr *) &ip); /* Only copy data to isc_ip stucture. */
+		/* Only copy data to isc_ip stucture. */
+		isc_netaddr_fromin(&isc_ip,(struct in_addr *) &ip);
 		
 		/*
 		 * Convert IP address to PTR record.
@@ -1832,7 +1872,8 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	
 		/* Check the value of PTR entry. */	
 		if (mod_op == LDAP_MOD_DELETE && result == ISC_R_SUCCESS) {
-			result = ldapdb_rdatalist_findrdatatype(&rdlist_search, dns_rdatatype_ptr, &rdlist_ptr);
+			result = ldapdb_rdatalist_findrdatatype(&rdlist_search, 
+			                                        dns_rdatatype_ptr, &rdlist_ptr);
 		}
 
 		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {

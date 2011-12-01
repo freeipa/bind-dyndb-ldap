@@ -192,9 +192,12 @@ ldap_hostname (default "")
 	/bin/hostname output.
 
 sync_ptr (default no)
-	Keeps PTR record synchronized with coresponding A/AAAA record.
-	When an A/AAAA record is deleted the PTR record must point 
-	to the same hostname.
+	Set this option to "yes" if you would like to keep PTR record 
+	synchronized with coresponding A/AAAA record for all zones.
+	If this option is set to "no", the LDAP driver will check
+	the idnsAllowSyncPTR attribute which specifies the synchronization
+	policy for PTR records in a zone. When an A/AAAA record is deleted 
+	the PTR record must point to the same hostname. 
 
 5.2 Sample configuration
 ------------------------

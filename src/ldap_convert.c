@@ -227,6 +227,10 @@ dnsname_to_dn(zone_register_t *zr, dns_name_t *name, ld_string_t *target)
 
 		CHECK(str_cat_char(target, "idnsName="));
 		CHECK(str_cat_isc_buffer(target, &buffer));
+		/* 
+		 * Modification of following line can affect modify_ldap_common().
+		 * See line with: char *zone_dn = strstr(str_buf(owner_dn),", ") + 1;  
+		 */
 		CHECK(str_cat_char(target, ", "));
 	}
 	CHECK(str_cat_char(target, zone_dn));
