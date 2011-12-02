@@ -30,7 +30,7 @@ typedef struct ldap_cache ldap_cache_t;
  * Create a new cache.
  */
 isc_result_t
-new_ldap_cache(isc_mem_t *mctx, const char * const *argv, ldap_cache_t **cachep);
+new_ldap_cache(isc_mem_t *mctx, const char * const *argv, ldap_cache_t **cachep, isc_boolean_t psearch);
 
 /*
  * Free all resources used up by the cache.

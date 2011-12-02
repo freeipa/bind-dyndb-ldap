@@ -41,6 +41,7 @@ struct ldap_cache {
 	isc_mem_t	*mctx;
 	dns_rbt_t	*rbt;
 	isc_interval_t	cache_ttl;
+	isc_boolean_t	psearch;
 };
 
 typedef struct {
@@ -75,7 +76,9 @@ cache_node_create(ldap_cache_t *cache, cache_node_t **nodep)
 	ZERO_PTR(node);
 	isc_mem_attach(cache->mctx, &node->mctx);
 	ZERO_PTR(&node->rdatalist);
-	CHECK(isc_time_nowplusinterval(&node->valid_until, &cache->cache_ttl));
+	/* Do not set the ttl when psearch is enabled. */
+	if (!cache->psearch)
+		CHECK(isc_time_nowplusinterval(&node->valid_until, &cache->cache_ttl));
 
 	*nodep = node;
 	return ISC_R_SUCCESS;
@@ -87,7 +90,7 @@ cleanup:
 }
 
 isc_result_t
-new_ldap_cache(isc_mem_t *mctx, const char *const *argv, ldap_cache_t **cachep)
+new_ldap_cache(isc_mem_t *mctx, const char *const *argv, ldap_cache_t **cachep, isc_boolean_t psearch)
 {
 	isc_result_t result;
 	ldap_cache_t *cache = NULL;
@@ -107,13 +110,14 @@ new_ldap_cache(isc_mem_t *mctx, const char *const *argv, ldap_cache_t **cachep)
 	isc_mem_attach(mctx, &cache->mctx);
 
 	isc_interval_set(&cache->cache_ttl, cache_ttl, 0);
-
+	
 	if (cache_ttl) {
 		CHECK(dns_rbt_create(mctx, cache_node_deleter, NULL,
 				     &cache->rbt));
 		CHECK(isc_mutex_init(&cache->mutex));
 	}
 
+	cache->psearch = psearch;
 	*cachep = cache;
 	return ISC_R_SUCCESS;
 
@@ -177,16 +181,19 @@ ldap_cache_getrdatalist(isc_mem_t *mctx, ldap_cache_t *cache,
 	result = dns_rbt_findname(cache->rbt, name, 0, NULL, (void *)&node);
 	switch (result) {
 	case ISC_R_SUCCESS:
-		CHECK(isc_time_now(&now));
-		if (isc_time_compare(&now, &node->valid_until) > 0) {
-			/* Delete expired records and treat them as NOTFOUND */
-			CHECK(dns_rbt_deletename(cache->rbt, name, ISC_FALSE));
-			result = ISC_R_NOTFOUND;
-		} else {
-			rdlist = node->rdatalist;
-			CHECK(ldap_rdatalist_copy(mctx, rdlist, rdatalist));
-			INSIST(!EMPTY(*rdatalist)); /* Empty rdatalist indicates a bug */
+		/* Check cache TTL only when psearch is disabled. */
+		if (!cache->psearch) {
+			CHECK(isc_time_now(&now));
+			if (isc_time_compare(&now, &node->valid_until) > 0) {
+				/* Delete expired records and treat them as NOTFOUND */
+				CHECK(dns_rbt_deletename(cache->rbt, name, ISC_FALSE));
+				result = ISC_R_NOTFOUND;
+				goto cleanup;
+			}
 		}
+		rdlist = node->rdatalist;
+		CHECK(ldap_rdatalist_copy(mctx, rdlist, rdatalist));
+		INSIST(!EMPTY(*rdatalist)); /* Empty rdatalist indicates a bug */
 		break;
 	case DNS_R_PARTIALMATCH:
 		result = ISC_R_NOTFOUND;

@@ -448,7 +448,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		ldap_inst->connections = 3;
 	}
 
-	CHECK(new_ldap_cache(mctx, argv, &ldap_inst->cache));
+	CHECK(new_ldap_cache(mctx, argv, &ldap_inst->cache, ldap_inst->psearch));
 	CHECK(ldap_pool_create(mctx, ldap_inst->connections, &ldap_inst->pool));
 	CHECK(ldap_pool_connect(ldap_inst->pool, ldap_inst));
 
@@ -2681,7 +2681,7 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 		/* Do not update records when the zone has been reloaded. */
 		class = LDAP_ENTRYCLASS_NONE; 
 	}
-#if 1 
+
 	/*
 	 * In future we might want to support also psearch for RRs
 	 */
@@ -2702,7 +2702,6 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 		pevent->chgtype = chgtype;
 		isc_task_send(inst->task, (isc_event_t **)&pevent);
 	}
-#endif
 
 cleanup:
 	if (result != ISC_R_SUCCESS) {
