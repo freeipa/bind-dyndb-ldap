@@ -32,6 +32,7 @@
 #include <dns/zone.h>
 #include <dns/zt.h>
 #include <dns/byaddr.h>
+#include <dns/forward.h>
 
 #include <isc/buffer.h>
 #include <isc/lex.h>
@@ -56,6 +57,7 @@
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
+#include <netdb.h>
 
 #include "acl.h"
 #include "krb5_helper.h"
@@ -742,6 +744,167 @@ cleanup:
 	return result;
 }
 
+
+/**
+ * @brief 
+ *
+ * @param nameserver
+ * @param sa
+ *
+ * @return 
+ */
+static isc_result_t
+sockaddr_fromchar(char *nameserver, struct sockaddr *sa)
+{
+	isc_result_t result = ISC_R_FAILURE;
+	struct addrinfo	*ai;
+	struct addrinfo	hints;
+	int res;
+
+	REQUIRE(sa != NULL);
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_flags = AI_NUMERICHOST;
+
+	res = getaddrinfo(nameserver, NULL, &hints, &ai);
+	if (res == 0) {
+		if ((ai->ai_family == AF_INET) || (ai->ai_family == AF_INET6)) {
+			memcpy(sa, ai->ai_addr, ai->ai_addrlen);
+			result = ISC_R_SUCCESS;
+		}
+		freeaddrinfo(ai);
+	}
+	return result;
+}
+
+/**
+ * Parse nameserver IP address with or without
+ * port separated with a dot.
+ *
+ * @example
+ * "192.168.0.100.53" -> { address:192.168.0.100,  port:53 }
+ *
+ * @param token 
+ * @param sa Socket address structure.
+ */
+static isc_result_t
+parse_nameserver(char *token, struct sockaddr *sa)
+{
+	isc_result_t result = ISC_R_FAILURE;
+	char *dot;
+	long number;
+
+	REQUIRE(token != NULL);
+	REQUIRE(sa != NULL);
+
+	result = sockaddr_fromchar(token, sa);
+	if (result == ISC_R_SUCCESS)
+		return result;
+
+	dot = strrchr(token, '.');
+	if (dot == NULL)
+		return ISC_R_FAILURE;
+	
+	number = strtol(dot + 1, NULL, 10);
+	if ((number < 0) || (number > UINT16_MAX))
+		return ISC_R_FAILURE;
+	
+	*dot = '\0';
+	result = sockaddr_fromchar(token, sa);
+	*dot = '.'; /* restore value */
+	if (result == ISC_R_SUCCESS) {
+		in_port_t port = htons(number);
+		switch (sa->sa_family) {
+		case AF_INET :
+			((struct sockaddr_in *)sa)->sin_port = port;
+			break;
+		case AF_INET6 :
+			((struct sockaddr_in6 *)sa)->sin6_port = port;
+			break;
+		default:
+			log_bug("Unknown sa_family type");
+			return ISC_R_FAILURE;
+		}
+	}
+	return result;
+}
+
+void *
+get_in_addr(struct sockaddr *sa) {
+	if (sa->sa_family == AF_INET) {
+		return &(((struct sockaddr_in*)sa)->sin_addr);
+	}
+    return &(((struct sockaddr_in6*)sa)->sin6_addr);
+}
+
+in_port_t
+get_in_port(struct sockaddr *sa) {
+    if (sa->sa_family == AF_INET) {
+        return (((struct sockaddr_in*)sa)->sin_port);
+    }
+    return (((struct sockaddr_in6*)sa)->sin6_port);
+}
+
+static isc_result_t
+configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst, 
+                          dns_name_t *name, ldap_valuelist_t *values) {
+		const char *dn = entry->dn;
+		isc_result_t result;
+		ldap_value_t *value;
+		isc_sockaddrlist_t addrs;
+
+		REQUIRE(entry !=NULL && inst !=NULL && name != NULL && values != NULL);
+
+		/* Clean old fwdtable. */
+		result = dns_fwdtable_delete(inst->view->fwdtable, name);
+		if (result != ISC_R_SUCCESS) {
+			log_error("Failed to update forwarders");
+			return ISC_R_FAILURE;
+		}
+		
+		ISC_LIST_INIT(addrs);
+		for (value = HEAD(*values);
+		     value != NULL;
+		     value = NEXT(value, link)) {
+			isc_sockaddr_t address;
+			struct sockaddr sa;
+
+			result = parse_nameserver(value->value, &sa);
+			if (result != ISC_R_SUCCESS) {
+				log_bug("Could not convert IP address from string '%s'.", value->value);
+			}
+
+			/* Convert port from network byte order. */
+			in_port_t port = ntohs(get_in_port(&sa));
+			port = (port != 0)?port:53; /* use well known port */			
+
+			isc_sockaddr_fromin(&address, get_in_addr(&sa), port);
+			ISC_LINK_INIT(&address, link);
+			ISC_LIST_APPEND(addrs, &address, link);
+			log_debug(5, "Adding forwarder %s (:%d) for %s", value->value, port, dn);
+		}
+
+		/*
+		 * Fetch forward policy.
+		 */
+		dns_fwdpolicy_t fwdpolicy = dns_fwdpolicy_first; /* "first" is default option. */
+		result = ldap_entry_getvalues(entry, "idnsForwardPolicy", values);
+		if (result == ISC_R_SUCCESS) {
+			value = HEAD(*values);
+			/*
+			 * fwdpolicy: "only" or "first" (default)
+			 */
+			if (value != NULL && value->value != NULL && strcmp(value->value, "only") == 0) {
+				fwdpolicy = dns_fwdpolicy_only;
+			}
+		}
+		log_debug(5, "Forward policy: %d", fwdpolicy);
+		
+		/* Set forward table up. */
+		return dns_fwdtable_add(inst->view->fwdtable, name, &addrs, fwdpolicy);
+	
+}
+
 /* Parse the zone entry */
 static isc_result_t
 ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
@@ -772,6 +935,20 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	CHECK(discard_from_cache(inst->cache, &name));
 
 create:
+	
+	/* 
+	 * Fetch forwarders. 
+	 * Forwarding has top priority hence when the forwarders are properly
+	 * set up all others attributes are ignored.
+	 */ 
+	result = ldap_entry_getvalues(entry, "idnsForwarders", &values);
+	if (result == ISC_R_SUCCESS) {
+		log_debug(2, "Setting forwarders for %s", dn);
+		CHECK(configure_zone_forwarders(entry, inst, &name, &values));		
+		/* DO NOT CHANGE ANYTHING ELSE after forwarders are set up! */
+		goto cleanup;
+	}
+
 	/*
 	 * Check if we are already serving given zone.
 	 */
@@ -870,7 +1047,8 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 	ldap_entry_t *entry;
 	char *attrs[] = {
 		"idnsName", "idnsUpdatePolicy", "idnsAllowQuery",
-		"idnsAllowTransfer", NULL
+		"idnsAllowTransfer", "idnsForwardPolicy", 
+		"idnsForwarders", NULL
 	};
 
 	REQUIRE(ldap_inst != NULL);
@@ -2265,7 +2443,7 @@ update_action(isc_task_t *task, isc_event_t *event)
 	isc_mem_t *mctx;
 	char *attrs[] = {
 		"idnsName", "idnsUpdatePolicy", "idnsAllowQuery",
-		"idnsAllowTransfer", NULL
+		"idnsAllowTransfer", "idnsForwardPolicy", "idnsForwarders", NULL
 	};
 
 	UNUSED(task);

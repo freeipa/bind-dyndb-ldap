@@ -70,6 +70,16 @@ example zone ldif is available in the doc directory.
 
 	If not set then zone inherits global allow-transfer from named.conf.
 
+* idnsAllowSyncPTR
+	Allow synchronization of PTR records in zone with A/AAAA records.
+
+* idnsForwardPolicy
+	Specifies BIND9 zone forward policy. Only relevant in conjunction 
+	with a valid idnsForwarders attribute.
+
+* idnsForwarders
+	Defines multiple IP addresses (TODO: optional port numbers) to which
+	queries will be forwarded.
 
 5. Configuration
 ================

@@ -250,6 +250,22 @@ attributetype ( 2.16.840.1.113730.3.8.5.13
 	SYNTAX 1.3.6.1.4.1.1466.115.121.1.7 
 	SINGLE-VALUE )
 
+attributetype ( 2.16.840.1.113730.3.8.5.14 
+	NAME 'idnsForwardPolicy'
+	DESC 'forward policy: only or first'
+	EQUALITY caseIgnoreIA5Match
+	SUBSTR caseIgnoreIA5SubstringsMatch
+	SYNTAX 1.3.6.1.4.1.1466.115.121.1.26
+	SINGLE-VALUE )
+
+attributetype ( 2.16.840.1.113730.3.8.5.15
+	NAME 'idnsForwarders'
+	DESC 'list of forwarders'
+	EQUALITY caseIgnoreIA5Match
+	SUBSTR caseIgnoreIA5SubstringsMatch
+	SYNTAX 1.3.6.1.4.1.1466.115.121.1.26
+	MULTI-VALUE )
+
 objectclass ( 2.16.840.1.113730.3.8.6.0
 	NAME 'idnsRecord'
 	DESC 'dns Record, usually a host'
@@ -274,5 +290,5 @@ objectclass ( 2.16.840.1.113730.3.8.6.1
 		idnsSOAminimum
 	)
 	MAY ( idnsUpdatePolicy $ idnsAllowQuery $ idnsAllowTransfer $
-		idnsAllowSyncPTR
+		idnsAllowSyncPTR $ idnsForwardPolicy $ idnsForwarders
 	) )
