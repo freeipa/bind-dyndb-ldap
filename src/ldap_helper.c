@@ -1801,6 +1801,10 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	/* Keep the PTR of corresponding A/AAAA record synchronized. */
 	if (rdlist->type == dns_rdatatype_a || rdlist->type == dns_rdatatype_aaaa) {
 		
+		ldap_entry_t *entry;
+		ldap_valuelist_t values;
+		char *attrs[] = {"idnsAllowSyncPTR", "idnsAllowDynUpdate", NULL};
+
 		/* Look for zone "idnsAllowSyncPTR" attribute when plugin 
 		 * option "sync_ptr" is set to "no" otherwise the synchronization
 		 * is always enabled for all zones. */
@@ -1810,10 +1814,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 			 * @todo Try the cache first and improve split.
 			 */
 			char *zone_dn = strstr(str_buf(owner_dn),", ") + 1;
-			ldap_entry_t *entry;
-			ldap_valuelist_t values;
-			char *attrs[] = {"idnsAllowSyncPTR", NULL};
-			
+						
 			CHECK(ldap_query(ldap_inst, ldap_conn, zone_dn,
 							 LDAP_SCOPE_BASE, attrs, 0,
 							 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
@@ -1900,6 +1901,41 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		CHECK(str_new(mctx, &owner_dn_ptr));   
 		CHECK(dnsname_to_dn(ldap_inst->zone_register, dns_fixedname_name(&name),
 		      owner_dn_ptr));
+	
+		/*
+		 * @example 
+		 * owner_dn_ptr = "idnsName=100.0.168, idnsname=192.in-addr.arpa,cn=dns,$SUFFIX"
+		 * owner_zone_dn_ptr = "idnsname=192.in-addr.arpa,cn=dns,$SUFFIX"
+		 */
+		char *owner_zone_dn_ptr = strstr(str_buf(owner_dn_ptr),", ") + 1;
+		
+		/* Get attribute "idnsAllowDynUpdate" for reverse zone. */
+		ldap_pool_putconnection(ldap_inst->pool, ldap_conn);
+		ldap_conn = ldap_pool_getconnection(ldap_inst->pool);	
+		CHECK(ldap_query(ldap_inst, ldap_conn, owner_zone_dn_ptr,
+						 LDAP_SCOPE_BASE, attrs, 0,
+						 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
+			
+		for (entry = HEAD(ldap_conn->ldap_entries);
+			 entry != NULL;
+			 entry = NEXT(entry, link)) {
+			result = ldap_entry_getvalues(entry, "idnsAllowDynUpdate", &values);
+			if (result != ISC_R_SUCCESS) 
+				continue;
+
+			if (strcmp(HEAD(values)->value, "TRUE") != 0) {
+				entry = NULL;
+			}
+			break;
+		}
+
+		/* Any valid reverse zone was found. */
+		if (entry == NULL) {
+			log_debug(3, "Dynamic Update is not allowed in zone %s", owner_zone_dn_ptr);
+			goto cleanup;
+		}
+		log_debug(3, "Dynamic Update  is allowed for zone %s", owner_zone_dn_ptr);
+
 		
 		/* 
 		 * Get string representation of PTR record value.
