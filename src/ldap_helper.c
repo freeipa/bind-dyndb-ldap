@@ -267,6 +267,7 @@ static int handle_connection_error(ldap_instance_t *ldap_inst,
 static isc_result_t ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 		const char *base,
 		int scope, char **attrs, int attrsonly, const char *filter, ...);
+static void ldap_query_free(ldap_connection_t *ldap_conn);
 
 /* Functions for writing to LDAP. */
 static isc_result_t ldap_modify_do(ldap_connection_t *ldap_conn, const char *dn,
@@ -1427,6 +1428,36 @@ ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 	return result;
 }
 
+static void
+ldap_query_free(ldap_connection_t *ldap_conn)
+{
+	if (ldap_conn == NULL)
+		return;
+
+	if (ldap_conn->dn) {
+		ldap_memfree(ldap_conn->dn);
+		ldap_conn->dn = NULL;
+	}
+	if (ldap_conn->values) {
+		ldap_value_free(ldap_conn->values);
+		ldap_conn->values = NULL;
+	}
+	if (ldap_conn->attribute) {
+		ldap_memfree(ldap_conn->attribute);
+		ldap_conn->attribute = NULL;
+	}
+	if (ldap_conn->ber) {
+		ber_free(ldap_conn->ber, 0);
+		ldap_conn->ber = NULL;
+	}
+	if (ldap_conn->result) {
+		ldap_msgfree(ldap_conn->result);
+		ldap_conn->result = NULL;
+	}
+
+	ldap_entrylist_destroy(ldap_conn->mctx, &ldap_conn->ldap_entries);
+}
+
 /* FIXME: Tested with SASL/GSSAPI/KRB5 only */
 static int
 ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
@@ -2089,8 +2120,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		char *owner_zone_dn_ptr = strstr(str_buf(owner_dn_ptr),", ") + 1;
 		
 		/* Get attribute "idnsAllowDynUpdate" for reverse zone. */
-		ldap_pool_putconnection(ldap_inst->pool, ldap_conn);
-		ldap_conn = ldap_pool_getconnection(ldap_inst->pool);	
+		ldap_query_free(ldap_conn);
 		CHECK(ldap_query(ldap_inst, ldap_conn, owner_zone_dn_ptr,
 						 LDAP_SCOPE_BASE, attrs, 0,
 						 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
@@ -2284,32 +2314,7 @@ ldap_pool_getconnection(ldap_pool_t *pool)
 static void
 ldap_pool_putconnection(ldap_pool_t *pool, ldap_connection_t *ldap_conn)
 {
-	if (ldap_conn == NULL)
-		return;
-
-	if (ldap_conn->dn) {
-		ldap_memfree(ldap_conn->dn);
-		ldap_conn->dn = NULL;
-	}
-	if (ldap_conn->values) {
-		ldap_value_free(ldap_conn->values);
-		ldap_conn->values = NULL;
-	}
-	if (ldap_conn->attribute) {
-		ldap_memfree(ldap_conn->attribute);
-		ldap_conn->attribute = NULL;
-	}
-	if (ldap_conn->ber) {
-		ber_free(ldap_conn->ber, 0);
-		ldap_conn->ber = NULL;
-	}
-	if (ldap_conn->result) {
-		ldap_msgfree(ldap_conn->result);
-		ldap_conn->result = NULL;
-	}
-
-	ldap_entrylist_destroy(ldap_conn->mctx, &ldap_conn->ldap_entries);
-
+	ldap_query_free(ldap_conn);
 	UNLOCK(&ldap_conn->lock);
 	semaphore_signal(&pool->conn_semaphore);
 }
