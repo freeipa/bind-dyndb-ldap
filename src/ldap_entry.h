@@ -22,6 +22,7 @@
 #ifndef _LD_LDAP_ENTRY_H_
 #define _LD_LDAP_ENTRY_H_
 
+#include <isc/util.h>
 #include <dns/types.h>
 
 #include "str.h"
