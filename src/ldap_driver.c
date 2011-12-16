@@ -32,6 +32,7 @@
 
 #include <dns/db.h>
 #include <dns/dynamic_db.h>
+#include <dns/dbiterator.h>
 #include <dns/rdata.h>
 #include <dns/rdataclass.h>
 #include <dns/rdatalist.h>
@@ -45,6 +46,7 @@
 
 #include "compat.h"
 #include "ldap_helper.h"
+#include "ldap_convert.h"
 #include "log.h"
 #include "rdlist.h"
 #include "util.h"
@@ -57,6 +59,38 @@
 #define LDAPDBNODE_MAGIC		ISC_MAGIC('L', 'D', 'P', 'N')
 #define VALID_LDAPDBNODE(ldapdbnode)	ISC_MAGIC_VALID(ldapdbnode, \
 							LDAPDBNODE_MAGIC)
+
+static void dbiterator_destroy(dns_dbiterator_t **iteratorp);
+static isc_result_t	dbiterator_first(dns_dbiterator_t *iterator);
+static isc_result_t	dbiterator_last(dns_dbiterator_t *iterator);
+static isc_result_t	dbiterator_seek(dns_dbiterator_t *iterator,
+					dns_name_t *name);
+static isc_result_t	dbiterator_prev(dns_dbiterator_t *iterator);
+static isc_result_t	dbiterator_next(dns_dbiterator_t *iterator);
+static isc_result_t	dbiterator_current(dns_dbiterator_t *iterator,
+					   dns_dbnode_t **nodep,
+					   					   dns_name_t *name);
+static isc_result_t	dbiterator_pause(dns_dbiterator_t *iterator);
+static isc_result_t	dbiterator_origin(dns_dbiterator_t *iterator,
+					  dns_name_t *name);
+
+static dns_dbiteratormethods_t dbiterator_methods = {
+	dbiterator_destroy,
+	dbiterator_first,
+	dbiterator_last,
+	dbiterator_seek,
+	dbiterator_prev,
+	dbiterator_next,
+	dbiterator_current,
+	dbiterator_pause,
+	dbiterator_origin
+};
+
+typedef struct {
+	dns_dbiterator_t		common;
+	ldapdb_node_t		*current;
+	ldapdb_nodelist_t		nodelist;
+} ldap_dbiterator_t;
 
 static dns_rdatasetmethods_t rdataset_methods;
 
@@ -133,7 +167,7 @@ static dns_rdatasetitermethods_t rdatasetiter_methods = {
 };
 
 /* ldapdb_node_t functions */
-static isc_result_t
+isc_result_t
 ldapdbnode_create(isc_mem_t *mctx, dns_name_t *owner, ldapdb_node_t **nodep)
 {
 	ldapdb_node_t *node = NULL;
@@ -554,16 +588,144 @@ createiterator(dns_db_t *db,
 #endif
 	       dns_dbiterator_t **iteratorp)
 {
-	UNUSED(db);
+	isc_result_t result;
+	ldap_dbiterator_t *ldapiter;
+	dns_dbiterator_t *iterator = NULL;
+	
+	CHECKED_MEM_GET_PTR(db->mctx, ldapiter);
+	iterator = &ldapiter->common;
+	iterator->magic = DNS_DBITERATOR_MAGIC;
+	iterator->methods = &dbiterator_methods;
+	iterator->db = NULL;
+	attach(db, &iterator->db);
 #if LIBDNS_VERSION_MAJOR >= 50
 	UNUSED(options);
 #else
-	UNUSED(relative_names);
+	iterator->relative_names = relative_names;
 #endif
-	UNUSED(iteratorp);
 
-	return ISC_R_NOTIMPLEMENTED;
+	ldapdb_t *ldapdb = (ldapdb_t *) db;
+	result = ldapdb_nodelist_get(ldapdb->common.mctx, ldapdb->ldap_inst,
+	                             &ldapdb->common.origin, NULL,
+	                             &ldapiter->nodelist);
+
+	*iteratorp = (dns_dbiterator_t *) ldapiter;
+
+	/* 
+	 * ISC_R_NOTFOUND is OK, because SOA record is stored in zone entry.
+	 */
+	if (result == ISC_R_SUCCESS || result == ISC_R_NOTFOUND)
+		return (ISC_R_SUCCESS);
+
+cleanup:
+	dbiterator_destroy(iteratorp);
+	return result;
 }
+
+/*
+ * Implementation of DB Iterator methods.
+ * @{
+ */
+
+static void
+dbiterator_destroy(dns_dbiterator_t **iteratorp) {
+	dns_dbiterator_t *iterator = *iteratorp;
+	ldap_dbiterator_t *ldapiter = (ldap_dbiterator_t *) iterator;
+	
+	ldapiter->current = HEAD(ldapiter->nodelist);
+	while (ldapiter->current != NULL) {
+		dns_dbnode_t *node = (dns_dbnode_t *) ldapiter->current;
+		ldapiter->current = NEXT(ldapiter->current, link);
+		detachnode(iterator->db, &node);
+	}
+	dns_db_t *db = iterator->db;
+	if (iterator != NULL && iterator->db != NULL)
+		detach(&db);
+	SAFE_MEM_PUT_PTR(iterator->db->mctx, *iteratorp);
+}
+
+static isc_result_t
+dbiterator_first(dns_dbiterator_t *iterator) {
+	ldap_dbiterator_t *ldapiter = (ldap_dbiterator_t *) iterator;
+	
+	if (EMPTY(ldapiter->nodelist))
+		return (ISC_R_NOMORE);
+	
+	ldapiter->current = HEAD(ldapiter->nodelist);
+	return (ISC_R_SUCCESS);
+}
+
+static isc_result_t
+dbiterator_last(dns_dbiterator_t *iterator) {
+	ldap_dbiterator_t *ldapiter = (ldap_dbiterator_t *) iterator;
+
+	if (EMPTY(ldapiter->nodelist))
+		return (ISC_R_NOMORE);
+	
+	ldapiter->current = TAIL(ldapiter->nodelist);
+	return (ISC_R_NOMORE);
+}
+
+static isc_result_t
+dbiterator_seek(dns_dbiterator_t *iterator,
+                dns_name_t *name) {
+	UNUSED(iterator);
+	UNUSED(name);
+	log_bug("%s: not implemented", __FUNCTION__);
+	return (ISC_R_NOTIMPLEMENTED);
+}
+
+static isc_result_t
+dbiterator_prev(dns_dbiterator_t *iterator) {
+	ldap_dbiterator_t *ldapiter = (ldap_dbiterator_t *) iterator;
+	ldapiter->current = PREV(ldapiter->current, link);
+	if (ldapiter->current == NULL)
+		return (ISC_R_NOMORE);
+	return (ISC_R_NOMORE);
+}
+
+static isc_result_t
+dbiterator_next(dns_dbiterator_t *iterator) {
+	ldap_dbiterator_t *ldapiter = (ldap_dbiterator_t *) iterator;
+	ldapiter->current = NEXT(ldapiter->current, link);
+	if (ldapiter->current == NULL)
+		return (ISC_R_NOMORE);
+	
+	return (ISC_R_SUCCESS);
+}
+
+static isc_result_t
+dbiterator_current(dns_dbiterator_t *iterator,
+                   dns_dbnode_t **nodep,
+                   dns_name_t *name) {
+	
+	REQUIRE(nodep != NULL && *nodep == NULL);
+	
+	ldap_dbiterator_t *ldapiter = (ldap_dbiterator_t *) iterator;
+	attachnode(iterator->db, ldapiter->current, nodep);
+	
+	if (name != NULL)
+		return (dns_name_copy(&ldapiter->current->owner, name, NULL));
+	
+	return (ISC_R_SUCCESS);
+}
+
+static isc_result_t
+dbiterator_pause(dns_dbiterator_t *iterator) {
+	UNUSED(iterator);
+	return (ISC_R_SUCCESS);
+}
+
+static isc_result_t
+dbiterator_origin(dns_dbiterator_t *iterator,
+                  dns_name_t *name) {
+	UNUSED(iterator);
+	return (dns_name_copy(dns_rootname, name, NULL));
+}
+
+/*
+ * @}
+ */
 
 static isc_result_t
 findrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,

@@ -49,4 +49,6 @@ struct ldapdb_node {
 	ISC_LINK(ldapdb_node_t)	link;
 };
 
+isc_result_t
+ldapdbnode_create(isc_mem_t *mctx, dns_name_t *owner, ldapdb_node_t **nodep);
 #endif /* !_LD_TYPES_H_ */

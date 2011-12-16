@@ -1227,6 +1227,77 @@ cleanup:
 }
 
 isc_result_t
+ldapdb_nodelist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *name,
+		     dns_name_t *origin, ldapdb_nodelist_t *nodelist)
+{
+	isc_result_t result;
+	ldap_connection_t *ldap_conn;
+	ldap_entry_t *entry;
+	ld_string_t *string = NULL;
+	ldap_cache_t *cache;
+	ldapdb_node_t *node;
+
+	REQUIRE(mctx != NULL);
+	REQUIRE(ldap_inst != NULL);
+	REQUIRE(name != NULL);
+	REQUIRE(nodelist != NULL);
+
+	/* RRs aren't in the cache, perform ordinary LDAP query */
+	ldap_conn = ldap_pool_getconnection(ldap_inst->pool);
+
+	INIT_LIST(*nodelist);
+	CHECK(str_new(mctx, &string));
+	CHECK(dnsname_to_dn(ldap_inst->zone_register, name, string));
+
+	CHECK(ldap_query(ldap_inst, ldap_conn, str_buf(string),
+			 LDAP_SCOPE_SUBTREE, NULL, 0, "(objectClass=idnsRecord)"));
+
+	if (EMPTY(ldap_conn->ldap_entries)) {
+		result = ISC_R_NOTFOUND;
+		goto cleanup;
+	}
+
+	for (entry = HEAD(ldap_conn->ldap_entries);
+		entry != NULL;
+		entry = NEXT(entry, link)) {
+		node = NULL;	
+		dns_name_t node_name;
+		dns_name_init(&node_name, NULL);
+		if (dn_to_dnsname(mctx, entry->dn, 
+			              &node_name) != ISC_R_SUCCESS) {
+			log_error("Failed to parse dn %s", entry->dn);
+			continue;
+		}
+
+		result = ldapdbnode_create(mctx, &node_name, &node);
+		//dns_name_reset(&node_name);
+		if (result == ISC_R_SUCCESS) {
+			result = ldap_parse_rrentry(mctx, entry, ldap_conn,
+		                       origin, ldap_inst->fake_mname,
+		                       string, &node->rdatalist);
+		}
+		if (result != ISC_R_SUCCESS) {
+			log_error("Failed to parse RR entry (%s)", str_buf(string));
+			/* node cleaning */	
+			dns_name_reset(&node->owner);
+			ldapdb_rdatalist_destroy(mctx, &node->rdatalist);
+			SAFE_MEM_PUT_PTR(mctx, node);
+			continue;
+		}
+		INIT_LINK(node, link);
+		APPEND(*nodelist, node, link);
+	}
+
+	result = ISC_R_SUCCESS;
+
+cleanup:
+	ldap_pool_putconnection(ldap_inst->pool, ldap_conn);
+	str_destroy(&string);
+
+	return result;
+}
+
+isc_result_t
 ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *name,
 		     dns_name_t *origin, ldapdb_rdatalist_t *rdatalist)
 {
