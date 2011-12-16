@@ -67,13 +67,6 @@ typedef struct {
 } ldapdb_t;
 
 typedef struct {
-	unsigned int			magic;
-	isc_refcount_t			refs;
-	dns_name_t			owner;
-	ldapdb_rdatalist_t		rdatalist;
-} ldapdbnode_t;
-
-typedef struct {
 	dns_rdatasetiter_t		common;
 	dns_rdatalist_t			*current;
 } ldapdb_rdatasetiter_t;
@@ -103,7 +96,7 @@ static isc_result_t
 rdatasetiter_first(dns_rdatasetiter_t *iter)
 {
 	ldapdb_rdatasetiter_t *ldapdbiter = (ldapdb_rdatasetiter_t *)iter;
-	ldapdbnode_t *node = (ldapdbnode_t *)iter->node;
+	ldapdb_node_t *node = (ldapdb_node_t *)iter->node;
 
 	if (EMPTY(node->rdatalist))
 		return ISC_R_NOMORE;
@@ -139,11 +132,11 @@ static dns_rdatasetitermethods_t rdatasetiter_methods = {
 	rdatasetiter_current
 };
 
-/* ldapdbnode_t functions */
+/* ldapdb_node_t functions */
 static isc_result_t
-ldapdbnode_create(isc_mem_t *mctx, dns_name_t *owner, ldapdbnode_t **nodep)
+ldapdbnode_create(isc_mem_t *mctx, dns_name_t *owner, ldapdb_node_t **nodep)
 {
-	ldapdbnode_t *node = NULL;
+	ldapdb_node_t *node = NULL;
 	isc_result_t result;
 
 	REQUIRE(nodep != NULL && *nodep == NULL);
@@ -367,7 +360,7 @@ findnode(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
 	isc_result_t result;
 	ldapdb_rdatalist_t rdatalist;
-	ldapdbnode_t *node = NULL;
+	ldapdb_node_t *node = NULL;
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
 
@@ -405,7 +398,7 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
 	isc_result_t result;
-	ldapdbnode_t *node = NULL;
+	ldapdb_node_t *node = NULL;
 	dns_rdatalist_t *rdlist = NULL;
 	isc_boolean_t is_cname = ISC_FALSE;
 	ldapdb_rdatalist_t rdatalist;
@@ -501,7 +494,7 @@ findzonecut(dns_db_t *db, dns_name_t *name, unsigned int options,
 static void
 attachnode(dns_db_t *db, dns_dbnode_t *source, dns_dbnode_t **targetp)
 {
-	ldapdbnode_t *node = (ldapdbnode_t *) source;
+	ldapdb_node_t *node = (ldapdb_node_t *) source;
 
 	REQUIRE(VALID_LDAPDBNODE(node));
 
@@ -514,7 +507,7 @@ attachnode(dns_db_t *db, dns_dbnode_t *source, dns_dbnode_t **targetp)
 static void
 detachnode(dns_db_t *db, dns_dbnode_t **targetp)
 {
-	ldapdbnode_t *node = (ldapdbnode_t *)(*targetp);
+	ldapdb_node_t *node = (ldapdb_node_t *)(*targetp);
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
 	unsigned int refs;
 
@@ -578,7 +571,7 @@ findrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	     dns_rdataset_t *rdataset, dns_rdataset_t *sigrdataset)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
-	ldapdbnode_t *ldapdbnode = (ldapdbnode_t *) node;
+	ldapdb_node_t *ldapdbnode = (ldapdb_node_t *) node;
 	dns_rdatalist_t *rdlist = NULL;
 	isc_result_t result;
 
@@ -669,7 +662,7 @@ addrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	    isc_stdtime_t now, dns_rdataset_t *rdataset, unsigned int options,
 	    dns_rdataset_t *addedrdataset)
 {
-	ldapdbnode_t *ldapdbnode = (ldapdbnode_t *) node;
+	ldapdb_node_t *ldapdbnode = (ldapdb_node_t *) node;
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
 	dns_rdatalist_t *rdlist = NULL, *new_rdlist = NULL;
 	dns_rdatalist_t *found_rdlist = NULL;
@@ -775,7 +768,7 @@ subtractrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 		 dns_rdataset_t *newrdataset)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
-	ldapdbnode_t *ldapdbnode = (ldapdbnode_t *) node;
+	ldapdb_node_t *ldapdbnode = (ldapdb_node_t *) node;
 	dns_rdatalist_t *found_rdlist = NULL;
 	dns_rdatalist_t *rdlist;
 	dns_rdatalist_t diff;
