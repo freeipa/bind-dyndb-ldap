@@ -1558,6 +1558,12 @@ cleanup:
 
 	if (ld != NULL)
 		ldap_unbind_ext_s(ld, NULL, NULL);
+	
+	/* Make sure handle is NULL. */
+	if (ldap_conn->handle != NULL) {
+		ldap_unbind_ext_s(ldap_conn->handle, NULL, NULL);
+		ldap_conn->handle = NULL;
+	}
 
 	return ISC_R_FAILURE;
 }
@@ -1647,6 +1653,14 @@ force_reconnect:
 		log_error("bind to LDAP server failed: %s",
 			  ldap_err2string(ret));
 
+		/*
+		 * Clean the connection handle.
+		 */
+		if (ldap_conn->handle != NULL) {
+			ldap_unbind_ext_s(ldap_conn->handle, NULL, NULL);
+			ldap_conn->handle = NULL;
+		}
+
 		switch (ret) {
 		case LDAP_INVALID_CREDENTIALS:
 			return ISC_R_NOPERM;
@@ -1677,7 +1691,7 @@ handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn
 
 	if (ret != LDAP_OPT_SUCCESS) {
 		log_error("handle_connection_error failed to obtain ldap error code");
-		return 0;
+		goto reconnect;
 	}
 
 	switch (err_code) {
@@ -1691,6 +1705,7 @@ handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn
 	default:
 		/* Try to reconnect on other errors. */
 		log_error("LDAP error: %s", ldap_err2string(err_code));
+reconnect:
 		if (ldap_conn->tries == 0)
 			log_error("connection to the LDAP server was lost");
 		if (ldap_connect(ldap_inst, ldap_conn, force) == ISC_R_SUCCESS)
