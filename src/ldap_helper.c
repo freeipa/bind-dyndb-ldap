@@ -493,6 +493,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 		REQUIRE(pthread_kill(ldap_inst->watcher, SIGTERM) == 0);
 		RUNTIME_CHECK(isc_thread_join(ldap_inst->watcher, NULL)
 			      == ISC_R_SUCCESS);
+		ldap_inst->watcher = 0;
 	}
 
 	ldap_pool_destroy(&ldap_inst->pool);
