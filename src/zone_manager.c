@@ -153,7 +153,13 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 		 * ISC_R_SUCCESS so BIND won't exit because of this. */
 		result = ISC_R_SUCCESS;
 		log_error("no valid zones found");
-		goto cleanup;
+		/*
+		 * Do not jump to cleanup. Rather create timer for zone refresh.
+		 * This is just a workaround when the LDAP server is not available
+		 * during the initialization process.
+		 *
+		 * goto cleanup;
+		 */
 	}
 
 	/* Add a timer to periodically refresh the zones. */
