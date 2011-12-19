@@ -689,19 +689,15 @@ configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
 	return acl_configure_zone_ssutable(update_str, zone);
 }
 
-/* Delete zone */
+/* Delete zone by dns zone name */
 static isc_result_t
-ldap_delete_zone(ldap_instance_t *inst, const char *dn, isc_boolean_t lock)
+ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock)
 {
-	dns_name_t name;
 	isc_result_t result;
 	isc_boolean_t unlock = ISC_FALSE;
 	isc_boolean_t freeze = ISC_FALSE;
 	dns_zone_t *zone = NULL;
 	dns_zone_t *foundzone = NULL;
-
-	dns_name_init(&name, NULL);
-	CHECK(dn_to_dnsname(inst->mctx, dn, &name));
 
 	if (lock) {
 		result = isc_task_beginexclusive(inst->task);
@@ -710,17 +706,17 @@ ldap_delete_zone(ldap_instance_t *inst, const char *dn, isc_boolean_t lock)
 		if (result == ISC_R_SUCCESS)
 			unlock = ISC_TRUE;
 
-		CHECK(discard_from_cache(inst->cache, &name));
+		CHECK(discard_from_cache(inst->cache, name));
 	}
 
-	result = zr_get_zone_ptr(inst->zone_register, &name, &zone);
+	result = zr_get_zone_ptr(inst->zone_register, name, &zone);
 	if (result == ISC_R_NOTFOUND) {
 		result = ISC_R_SUCCESS;
 		goto cleanup;
 	} else if (result != ISC_R_SUCCESS)
 		goto cleanup;
 
-	CHECK(dns_view_findzone(inst->view, &name, &foundzone));
+	CHECK(dns_view_findzone(inst->view, name, &foundzone));
 	/* foundzone != zone indicates a bug */
 	RUNTIME_CHECK(foundzone == zone);
 	dns_zone_detach(&foundzone);
@@ -732,7 +728,7 @@ ldap_delete_zone(ldap_instance_t *inst, const char *dn, isc_boolean_t lock)
 
 	dns_zone_unload(zone);
 	CHECK(dns_zt_unmount(inst->view->zonetable, zone));
-	CHECK(zr_del_zone(inst->zone_register, &name));
+	CHECK(zr_del_zone(inst->zone_register, name));
 	dns_zonemgr_releasezone(inst->zmgr, zone);
 	dns_zone_detach(&zone);
 
@@ -741,6 +737,23 @@ cleanup:
 		dns_view_freeze(inst->view);
 	if (unlock)
 		isc_task_endexclusive(inst->task);
+
+	return result;
+}
+
+/* Delete zone */
+static isc_result_t
+ldap_delete_zone(ldap_instance_t *inst, const char *dn, isc_boolean_t lock)
+{
+	isc_result_t result;
+	dns_name_t name;
+	dns_name_init(&name, NULL);
+	
+	CHECK(dn_to_dnsname(inst->mctx, dn, &name));
+
+	result = ldap_delete_zone2(inst, &name, lock);
+
+cleanup:
 	if (dns_name_dynamic(&name))
 		dns_name_free(&name, inst->mctx);
 
@@ -1048,6 +1061,7 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 	ldap_connection_t *ldap_conn;
 	int zone_count = 0;
 	ldap_entry_t *entry;
+	dns_rbt_t *rbt = NULL;
 	char *attrs[] = {
 		"idnsName", "idnsUpdatePolicy", "idnsAllowQuery",
 		"idnsAllowTransfer", "idnsForwardPolicy", 
@@ -1069,14 +1083,93 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 			 LDAP_SCOPE_SUBTREE, attrs, 0,
 			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
 
+
+	/*
+	 * Create RB-tree with all zones stored in LDAP for cross check
+	 * with registered zones in plugin.
+	 */
+	CHECK(dns_rbt_create(ldap_inst->mctx, NULL, NULL, &rbt));
+	
 	for (entry = HEAD(ldap_conn->ldap_entries);
 	     entry != NULL;
 	     entry = NEXT(entry, link)) {
+
+		/* Derive the dns name of the zone from the DN. */
+		dns_name_t name;
+		dns_name_init(&name, NULL);
+		result = dn_to_dnsname(ldap_inst->mctx, entry->dn, &name);
+		if (result == ISC_R_SUCCESS) {
+			log_debug(5, "Refresh %s", entry->dn);
+			/* Add found zone to RB-tree for later check. */
+			result = dns_rbt_addname(rbt, &name, NULL);
+		}
+		if (dns_name_dynamic(&name))
+			dns_name_free(&name, ldap_inst->mctx);
+		
+		if (result != ISC_R_SUCCESS) {
+			log_error("Could not parse zone %s", entry->dn);
+			continue;
+		}
+
 		CHECK(ldap_parse_zoneentry(entry, ldap_inst, ISC_FALSE));
 		zone_count++;
 	}
 
+	dns_rbtnode_t *node;
+	dns_rbtnodechain_t chain;
+	isc_boolean_t delete = ISC_FALSE;	
+	
+	DECLARE_BUFFERED_NAME(fname);
+	DECLARE_BUFFERED_NAME(forig);
+	DECLARE_BUFFERED_NAME(aname);
+	
+	INIT_BUFFERED_NAME(fname);
+	INIT_BUFFERED_NAME(forig);
+	INIT_BUFFERED_NAME(aname);
+	
+	dns_rbtnodechain_init(&chain, ldap_inst->mctx);
+	result = dns_rbtnodechain_first(&chain, zr_get_rbt(ldap_inst->zone_register), NULL, NULL);
+	
+	while (result == DNS_R_NEWORIGIN || result == ISC_R_SUCCESS) {
+		
+		delete = ISC_FALSE;	
+		node = NULL;
+		
+		result = dns_rbtnodechain_current(&chain, &fname, &forig, &node);
+		if (result != ISC_R_SUCCESS)
+			goto next;
+
+		if (dns_name_concatenate(&fname, &forig, &aname, aname.buffer) != ISC_R_SUCCESS) {
+			goto next;	
+		}
+
+		DECLARE_BUFFERED_NAME(foundname);
+		INIT_BUFFERED_NAME(foundname);
+		
+		void *data = NULL;
+		if (dns_rbt_findname(rbt, &aname, DNS_RBTFIND_EMPTYDATA,
+		                     &foundname, &data) == ISC_R_SUCCESS) {
+			goto next;		
+		}
+		/* Log zone removing. */
+		char buf[255];
+		dns_name_format(&aname, buf, 255);
+		log_debug(1, "Zone '%s' has been removed from database.", buf);
+		
+		delete = ISC_TRUE;
+next:	
+		result = dns_rbtnodechain_next(&chain, NULL, NULL);
+	
+		if (delete == ISC_TRUE)
+			ldap_delete_zone2(ldap_inst, &aname, ISC_FALSE);
+	}
+
+
 cleanup:
+	if (rbt != NULL)
+		dns_rbt_destroy(&rbt); 
+
+	dns_rbtnodechain_invalidate(&chain);	
 	ldap_pool_putconnection(ldap_inst->pool, ldap_conn);
 
 	log_debug(2, "finished refreshing list of zones");

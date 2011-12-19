@@ -55,6 +55,12 @@ typedef struct {
 /* Callback for dns_rbt_create(). */
 static void delete_zone_info(void *arg1, void *arg2);
 
+dns_rbt_t *
+zr_get_rbt(zone_register_t *zr)
+{
+	return zr->rbt;
+}
+
 /*
  * Create a new zone register.
  */
