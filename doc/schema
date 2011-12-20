@@ -266,6 +266,20 @@ attributetype ( 2.16.840.1.113730.3.8.5.15
 	SYNTAX 1.3.6.1.4.1.1466.115.121.1.26
 	MULTI-VALUE )
 
+attributetype ( 2.16.840.1.113730.3.8.5.16
+	NAME 'idnsZoneRefresh'
+	DESC 'zone refresh interval'
+	EQUALITY integerMatch
+	SYNTAX 1.3.6.1.4.1.1466.115.121.1.27
+	SINGLE-VALUE )
+
+attributetype ( 2.16.840.1.113730.3.8.5.17
+	NAME 'idnsPersistentSearch'
+	DESC 'allow persistent searches'
+	EQUALITY booleanMatch 
+	SYNTAX 1.3.6.1.4.1.1466.115.121.1.7 
+	SINGLE-VALUE )
+
 objectclass ( 2.16.840.1.113730.3.8.6.0
 	NAME 'idnsRecord'
 	DESC 'dns Record, usually a host'
@@ -291,4 +305,12 @@ objectclass ( 2.16.840.1.113730.3.8.6.1
 	)
 	MAY ( idnsUpdatePolicy $ idnsAllowQuery $ idnsAllowTransfer $
 		idnsAllowSyncPTR $ idnsForwardPolicy $ idnsForwarders
+	) )
+
+objectclass ( 2.16.840.1.113730.3.8.6.2
+	NAME 'idnsConfigObject'
+	DESC 'DNS global config options'
+	STRUCTURAL
+	MAY ( dnsForwardPolicy $ idnsForwarders $ idnsAllowSyncPTR $
+	    idnsZoneRefresh $ idnsPersistentSearch
 	) )
