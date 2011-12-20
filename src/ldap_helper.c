@@ -2772,6 +2772,14 @@ ldap_psearch_watcher(isc_threadarg_t arg)
 	/* Pick connection, one is reserved purely for this thread */
 	conn = ldap_pool_getconnection(inst->pool);
 
+	/* Try to connect. */
+	while (conn->handle == NULL) {
+		log_error("ldap_psearch_watcher handle is NULL. "
+		          "Next try in %ds", inst->reconnect_interval);
+		sleep(inst->reconnect_interval);
+		ldap_connect(inst, conn, ISC_TRUE);
+	}
+
 restart:
 	/* Perform initial lookup */
 	if (inst->psearch) {
