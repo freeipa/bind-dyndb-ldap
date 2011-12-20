@@ -42,10 +42,10 @@ typedef LIST(dns_rdatalist_t) ldapdb_rdatalist_t;
 typedef struct ldapdb_node ldapdb_node_t;
 typedef LIST(ldapdb_node_t) ldapdb_nodelist_t;
 struct ldapdb_node {
-	unsigned int            magic;
-	isc_refcount_t          refs;
-	dns_name_t          owner;
-	ldapdb_rdatalist_t      rdatalist;
+	unsigned int		magic;
+	isc_refcount_t		refs;
+	dns_name_t		owner;
+	ldapdb_rdatalist_t	rdatalist;
 	ISC_LINK(ldapdb_node_t)	link;
 };
 
