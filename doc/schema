@@ -310,6 +310,6 @@ objectclass ( 2.16.840.1.113730.3.8.6.2
 	NAME 'idnsConfigObject'
 	DESC 'DNS global config options'
 	STRUCTURAL
-	MAY ( dnsForwardPolicy $ idnsForwarders $ idnsAllowSyncPTR $
+	MAY ( idnsForwardPolicy $ idnsForwarders $ idnsAllowSyncPTR $
 	    idnsZoneRefresh $ idnsPersistentSearch
 	) )
