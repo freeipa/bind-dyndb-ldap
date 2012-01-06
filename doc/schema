@@ -263,8 +263,7 @@ attributetype ( 2.16.840.1.113730.3.8.5.15
 	DESC 'list of forwarders'
 	EQUALITY caseIgnoreIA5Match
 	SUBSTR caseIgnoreIA5SubstringsMatch
-	SYNTAX 1.3.6.1.4.1.1466.115.121.1.26
-	MULTI-VALUE )
+	SYNTAX 1.3.6.1.4.1.1466.115.121.1.26)
 
 attributetype ( 2.16.840.1.113730.3.8.5.16
 	NAME 'idnsZoneRefresh'
