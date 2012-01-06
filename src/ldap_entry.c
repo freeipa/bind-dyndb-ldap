@@ -257,6 +257,8 @@ ldap_entry_getvalues(const ldap_entry_t *entry, const char *attrname,
 	REQUIRE(attrname != NULL);
 	REQUIRE(values != NULL);
 
+	INIT_LIST(*values);
+
 	for (attr = HEAD(entry->attrs);
 	     attr != NULL;
 	     attr = NEXT(attr, link)) {
@@ -394,6 +396,8 @@ ldap_entry_getclass(ldap_entry_t *entry)
 			entryclass |= LDAP_ENTRYCLASS_RR;
 		else if (!strcasecmp(val->value, "idnszone"))
 			entryclass |= LDAP_ENTRYCLASS_ZONE;
+		else if (!strcasecmp(val->value, "idnsconfigobject"))
+			entryclass |= LDAP_ENTRYCLASS_CONFIG;
 	}
 
 	return entryclass;

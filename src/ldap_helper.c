@@ -885,6 +885,11 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 			log_error("Failed to update forwarders");
 			return ISC_R_FAILURE;
 		}
+
+		if (EMPTY(*values)) {
+			log_debug(1, "Forwarders are empty for '%s'", dn);
+			return ISC_R_SUCCESS;
+		}
 		
 		ISC_LIST_INIT(addrs);
 		for (value = HEAD(*values);
@@ -929,6 +934,26 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 	
 }
 
+/* Parse the config object entry */
+static isc_result_t
+ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst)
+{
+	isc_result_t result;
+	ldap_valuelist_t values;
+
+	result = ldap_entry_getvalues(entry, "idnsForwarders", &values);
+	if (result == ISC_R_SUCCESS) {
+		log_debug(2, "Setting global forwarders");
+		result = configure_zone_forwarders(entry, inst, dns_rootname, &values);
+		if (result != ISC_R_SUCCESS) {
+			log_error("Global forwarder could not be set up.");
+		}
+	}
+	/* TODO: handle updates of other config attrs */
+
+	return ISC_R_SUCCESS;   
+}
+
 /* Parse the zone entry */
 static isc_result_t
 ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
@@ -967,6 +992,9 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 		CHECK(configure_zone_forwarders(entry, inst, &name, &values));		
 		/* DO NOT CHANGE ANYTHING ELSE after forwarders are set up! */
 		goto cleanup;
+	} else {
+		/* No forwarders are used. Remove zone from fwdtable. */
+		CHECK(configure_zone_forwarders(entry, inst, &name, &values));
 	}
 
 	/* Check if we are already serving given zone */
@@ -1053,7 +1081,12 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 	int zone_count = 0;
 	ldap_entry_t *entry;
 	dns_rbt_t *rbt = NULL;
-	char *attrs[] = {
+	char *config_attrs[] = {
+		"idnsForwardPolicy", "idnsForwarders", 
+		"idnsAllowSyncPTR", "idnsZoneRefresh",
+		"idnsPersistentSearch", NULL
+	};
+	char *zone_attrs[] = {
 		"idnsName", "idnsUpdatePolicy", "idnsAllowQuery",
 		"idnsAllowTransfer", "idnsForwardPolicy", 
 		"idnsForwarders", NULL
@@ -1071,7 +1104,19 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 	ldap_conn = ldap_pool_getconnection(ldap_inst->pool);
 
 	CHECK(ldap_query(ldap_inst, ldap_conn, str_buf(ldap_inst->base),
-			 LDAP_SCOPE_SUBTREE, attrs, 0,
+			 LDAP_SCOPE_SUBTREE, config_attrs, 0,
+			 "(objectClass=idnsConfigObject)"));
+
+	for (entry = HEAD(ldap_conn->ldap_entries);
+	     entry != NULL;
+	     entry = NEXT(entry, link)) {
+		CHECK(ldap_parse_configentry(entry, ldap_inst));
+	}
+
+	ldap_query_free(ldap_conn);
+
+	CHECK(ldap_query(ldap_inst, ldap_conn, str_buf(ldap_inst->base),
+			 LDAP_SCOPE_SUBTREE, zone_attrs, 0,
 			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
 
 	/*
@@ -2634,14 +2679,14 @@ update_action(isc_task_t *task, isc_event_t *event)
 			 LDAP_SCOPE_BASE, attrs, 0,
 			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
 
-        for (entry = HEAD(conn->ldap_entries);
+	for (entry = HEAD(conn->ldap_entries);
              entry != NULL;
              entry = NEXT(entry, link)) {
 		delete = ISC_FALSE;
-                result = ldap_parse_zoneentry(entry, inst);
+		result = ldap_parse_zoneentry(entry, inst);
 		if (result != ISC_R_SUCCESS)
 			goto cleanup;
-        }
+	}
 
 	if (delete)
 		CHECK(ldap_delete_zone(inst, pevent->dn, ISC_TRUE));
@@ -2652,6 +2697,59 @@ cleanup:
 	if (result != ISC_R_SUCCESS)
 		log_error("update_action (psearch) failed for %s. "
 			  "Zones can be outdated, run `rndc reload`",
+			  pevent->dn);
+
+	isc_mem_free(mctx, pevent->dbname);
+	isc_mem_free(mctx, pevent->dn);
+	isc_mem_detach(&mctx);
+	isc_event_free(&event);
+}
+
+static void
+update_config(isc_task_t *task, isc_event_t *event)
+{
+	ldap_psearchevent_t *pevent = (ldap_psearchevent_t *)event;
+	isc_result_t result ;
+	ldap_instance_t *inst = NULL;
+	ldap_connection_t *conn;
+	ldap_entry_t *entry;
+	isc_mem_t *mctx;
+	char *attrs[] = {
+		"idnsAllowSyncPTR", "idnsForwardPolicy", "idnsForwarders",
+		"idnsZoneRefresh", "idnsPersistentSearch", NULL
+	};
+
+	UNUSED(task);
+
+	mctx = pevent->mctx;
+
+	result = manager_get_ldap_instance(pevent->dbname, &inst);
+	if (result != ISC_R_SUCCESS)
+		goto cleanup;
+
+	conn = ldap_pool_getconnection(inst->pool);
+
+	CHECK(ldap_query(inst, conn, pevent->dn,
+			 LDAP_SCOPE_BASE, attrs, 0,
+			 "(objectClass=idnsConfigObject)"));
+
+	if (EMPTY(conn->ldap_entries))
+		log_error("Config object can not be empty");
+
+	for (entry = HEAD(conn->ldap_entries);
+	     entry != NULL;
+	     entry = NEXT(entry, link)) {
+		result = ldap_parse_configentry(entry, inst);
+		if (result != ISC_R_SUCCESS)
+			goto cleanup;
+	}
+
+	ldap_pool_putconnection(inst->pool, conn);
+
+cleanup:
+	if (result != ISC_R_SUCCESS)
+		log_error("update_config (psearch) failed for %s. "
+			  "Configuration can be outdated, run `rndc reload`",
 			  pevent->dn);
 
 	isc_mem_free(mctx, pevent->dbname);
@@ -2795,12 +2893,13 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 {
 	ldap_entryclass_t class;
 	isc_result_t result = ISC_R_SUCCESS;
-	ldap_psearchevent_t *pevent;
+	ldap_psearchevent_t *pevent = NULL;
 	int chgtype = LDAP_ENTRYCHANGE_ADD;
 	char *moddn = NULL;
 	char *dn = NULL;
 	char *dbname = NULL;
 	isc_mem_t *mctx = NULL;
+	isc_taskaction_t action = NULL;
 
 	class = ldap_entry_getclass(entry);
 	if (class == LDAP_ENTRYCLASS_NONE) {
@@ -2834,49 +2933,37 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 
 	/*
 	 * We are very simple. Every update (add/mod/del) means that
-	 * we remove the zone, fetch it's control entry from LDAP
+	 * we remove the zone/record, fetch it's entry from LDAP
 	 * and then add it again. This is definitely place for improvement
-	 * but zones aren't changed often so this is should be enough for now.
+	 * but it should be enough for now.
 	 */
 
-	if ((class & LDAP_ENTRYCLASS_ZONE) != 0) {
-		pevent = (ldap_psearchevent_t *)isc_event_allocate(inst->mctx,
-		            inst, LDAPDB_EVENT_PSEARCH,
-		            update_action, NULL,
-		            sizeof(ldap_psearchevent_t));
-		if (pevent == NULL) {
-			result = ISC_R_NOMEMORY;
-			goto cleanup;
-		}
-
-		pevent->mctx = mctx;
-		pevent->dbname = dbname;
-		pevent->dn = dn;
-		isc_task_send(inst->task, (isc_event_t **)&pevent);
-		/* Do not update records when the zone has been reloaded. */
-		class = LDAP_ENTRYCLASS_NONE; 
+	if ((class & LDAP_ENTRYCLASS_CONFIG) != 0)
+		action = update_config;
+	else if ((class & LDAP_ENTRYCLASS_ZONE) != 0)
+		action = update_action;
+	else if ((class & LDAP_ENTRYCLASS_RR) != 0)
+		action = update_record;
+	else {
+		result = ISC_R_FAILURE;
+		goto cleanup;
 	}
 
-	/*
-	 * In future we might want to support also psearch for RRs
-	 */
-	if ((class & LDAP_ENTRYCLASS_RR) != 0) {
-		pevent = (ldap_psearchevent_t *)isc_event_allocate(inst->mctx,
+	pevent = (ldap_psearchevent_t *)isc_event_allocate(inst->mctx,
 				inst, LDAPDB_EVENT_PSEARCH,
-				update_record, NULL,
+				action, NULL,
 				sizeof(ldap_psearchevent_t));
 
-		if (pevent == NULL) {
-			result = ISC_R_NOMEMORY;
-			goto cleanup;
-		}
-
-		pevent->mctx = mctx;
-		pevent->dbname = dbname;
-		pevent->dn = dn;
-		pevent->chgtype = chgtype;
-		isc_task_send(inst->task, (isc_event_t **)&pevent);
+	if (pevent == NULL) {
+		result = ISC_R_NOMEMORY;
+		goto cleanup;
 	}
+
+	pevent->mctx = mctx;
+	pevent->dbname = dbname;
+	pevent->dn = dn;
+	pevent->chgtype = chgtype;
+	isc_task_send(inst->task, (isc_event_t **)&pevent);
 
 cleanup:
 	if (result != ISC_R_SUCCESS) {
@@ -2943,10 +3030,12 @@ restart:
 				      LDAP_SCOPE_SUBTREE,
 					  /*
 					   * (objectClass==idnsZone AND idnsZoneActive==TRUE) 
-					   * OR (objectClass == idnsRecord) 
+					   * OR (objectClass == idnsRecord)
+					   * OR (objectClass == idnsConfigObject)
 					   */
 				      "(|(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"
-					  "(objectClass=idnsRecord))",
+					  "(objectClass=idnsRecord)"
+					  "(objectClass=idnsConfigObject))",
 				      NULL, 0, conn->serverctrls, NULL, NULL,
 				      LDAP_NO_LIMIT, &conn->msgid);
 		if (ret != LDAP_SUCCESS) {

@@ -65,6 +65,7 @@ struct ldap_attribute {
 #define LDAP_ENTRYCLASS_NONE	0x0
 #define LDAP_ENTRYCLASS_RR	0x1
 #define LDAP_ENTRYCLASS_ZONE	0x2
+#define LDAP_ENTRYCLASS_CONFIG	0x4
 
 typedef unsigned char		ldap_entryclass_t;
 
