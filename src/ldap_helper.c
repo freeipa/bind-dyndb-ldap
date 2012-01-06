@@ -1327,7 +1327,6 @@ ldapdb_nodelist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *nam
 	ldap_connection_t *ldap_conn;
 	ldap_entry_t *entry;
 	ld_string_t *string = NULL;
-	ldap_cache_t *cache;
 	ldapdb_node_t *node;
 
 	REQUIRE(mctx != NULL);
