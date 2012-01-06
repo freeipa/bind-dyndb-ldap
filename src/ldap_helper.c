@@ -869,11 +869,11 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 		ldap_value_t *value;
 		isc_sockaddrlist_t addrs;
 
-		REQUIRE(entry !=NULL && inst !=NULL && name != NULL && values != NULL);
+		REQUIRE(entry != NULL && inst != NULL && name != NULL && values != NULL);
 
 		/* Clean old fwdtable. */
 		result = dns_fwdtable_delete(inst->view->fwdtable, name);
-		if (result != ISC_R_SUCCESS) {
+		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {
 			log_error("Failed to update forwarders");
 			return ISC_R_FAILURE;
 		}
