@@ -1446,7 +1446,6 @@ cleanup:
 	str_destroy(&string);
 
 	if (result != ISC_R_SUCCESS)
-
 		ldapdb_rdatalist_destroy(mctx, rdatalist);
 
 	return result;
@@ -2719,13 +2718,15 @@ update_record(isc_task_t *task, isc_event_t *event)
 		 */
 		log_debug(5, "psearch_update: Updating item in cache (%s)", 
 		          pevent->dn);
-		CHECK(ldapdb_rdatalist_get(mctx, inst, &name,
-								   NULL, &rdatalist));
+		CHECK(ldapdb_rdatalist_get(mctx, inst, &name, NULL, &rdatalist));
 	
 		/* 
 		 * The cache is updated in ldapdb_rdatalist_get(...):
 		 * CHECK(ldap_cache_addrdatalist(cache, &name, &rdatalist);
 		 */
+
+		/* Destroy rdatalist, it is now in the cache. */
+		ldapdb_rdatalist_destroy(mctx, &rdatalist);
 	}
 cleanup:
 	if (result != ISC_R_SUCCESS)
