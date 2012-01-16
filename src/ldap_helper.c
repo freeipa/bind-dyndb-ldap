@@ -627,7 +627,6 @@ create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, dns_zone_t **zonep)
 	}
 
 	CHECK(dns_zone_create(&zone, ldap_inst->mctx));
-	dns_zone_setview(zone, ldap_inst->view);
 	CHECK(dns_zone_setorigin(zone, name));
 	dns_zone_setclass(zone, dns_rdataclass_in);
 	dns_zone_settype(zone, dns_zone_master);
@@ -644,22 +643,31 @@ cleanup:
 }
 
 static isc_result_t
-publish_zone(ldap_instance_t *ldap_inst, dns_zone_t *zone)
+publish_zone(ldap_instance_t *inst, dns_zone_t *zone)
 {
 	isc_result_t result;
+	isc_boolean_t freeze = ISC_FALSE;
 
-	REQUIRE(ldap_inst != NULL);
+	REQUIRE(inst != NULL);
 	REQUIRE(zone != NULL);
 
-	result = dns_zonemgr_managezone(ldap_inst->zmgr, zone);
+	if (inst->view->frozen) {
+		freeze = ISC_TRUE;
+		dns_view_thaw(inst->view);
+	}
+
+	dns_zone_setview(zone, inst->view);
+	result = dns_zonemgr_managezone(inst->zmgr, zone);
 	if (result != ISC_R_SUCCESS)
 		return result;
-	CHECK(dns_view_addzone(ldap_inst->view, zone));
-
-	return ISC_R_SUCCESS;
+	CHECK(dns_view_addzone(inst->view, zone));
 
 cleanup:
-	dns_zonemgr_releasezone(ldap_inst->zmgr, zone);
+	if (result != ISC_R_SUCCESS)
+		dns_zonemgr_releasezone(inst->zmgr, zone);
+
+	if (freeze)
+		dns_view_freeze(inst->view);
 
 	return result;
 }
@@ -923,15 +931,13 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 
 /* Parse the zone entry */
 static isc_result_t
-ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
-		     isc_boolean_t replace)
+ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 {
 	const char *dn;
 	ldap_valuelist_t values;
 	dns_name_t name;
 	dns_zone_t *zone = NULL;
 	isc_result_t result;
-	isc_boolean_t freeze = ISC_FALSE;
 	isc_boolean_t unlock = ISC_FALSE;
 	isc_boolean_t publish = ISC_FALSE;
 	isc_boolean_t load = ISC_FALSE;
@@ -950,8 +956,6 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 
 	CHECK(discard_from_cache(inst->cache, &name));
 
-create:
-	
 	/* 
 	 * Fetch forwarders. 
 	 * Forwarding has top priority hence when the forwarders are properly
@@ -965,28 +969,13 @@ create:
 		goto cleanup;
 	}
 
-	/*
-	 * Check if we are already serving given zone.
-	 */
+	/* Check if we are already serving given zone */
 	result = zr_get_zone_ptr(inst->zone_register, &name, &zone);
 	if (result != ISC_R_SUCCESS) {
 		CHECK(create_zone(inst, &name, &zone));
 		CHECK(zr_add_zone(inst->zone_register, zone, dn));
 		publish = ISC_TRUE;
-		replace = ISC_FALSE;
 		log_debug(2, "created zone %p: %s", zone, dn);
-	}
-
-	if (inst->view->frozen) {
-		freeze = ISC_TRUE;
-		dns_view_thaw(inst->view);
-	}
-
-	if (replace && zone != NULL) {
-		CHECK(ldap_delete_zone(inst, dn, ISC_FALSE));
-		dns_zone_detach(&zone);
-		replace = ISC_FALSE;
-		goto create;
 	}
 
 	log_debug(2, "Setting SSU table for %p: %s", zone, dn);
@@ -1005,8 +994,10 @@ create:
 		CHECK(acl_from_ldap(inst->mctx, &values, &queryacl));
 		dns_zone_setqueryacl(zone, queryacl);
 		dns_acl_detach(&queryacl);
-	} else
+	} else {
 		log_debug(2, "allow-query not set");
+		dns_zone_clearqueryacl(zone);
+	}
 
 	log_debug(2, "Setting allow-transfer for %p: %s", zone, dn);
 	result = ldap_entry_getvalues(entry, "idnsAllowTransfer", &values);
@@ -1015,8 +1006,10 @@ create:
 		CHECK(acl_from_ldap(inst->mctx, &values, &transferacl));
 		dns_zone_setxfracl(zone, transferacl);
 		dns_acl_detach(&transferacl);
-	} else
+	} else {
 		log_debug(2, "allow-transfer not set");
+		dns_zone_clearxfracl(zone);
+	}
 
 	if (publish) {
 		/* Everything is set correctly, publish zone */
@@ -1033,8 +1026,6 @@ cleanup:
 		 */
 		(void) dns_zone_load(zone);
 	}
-	if (freeze)
-		dns_view_freeze(inst->view);
 	if (unlock)
 		isc_task_endexclusive(task);
 	if (dns_name_dynamic(&name))
@@ -1083,7 +1074,6 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 			 LDAP_SCOPE_SUBTREE, attrs, 0,
 			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
 
-
 	/*
 	 * Create RB-tree with all zones stored in LDAP for cross check
 	 * with registered zones in plugin.
@@ -1111,7 +1101,7 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 			continue;
 		}
 
-		CHECK(ldap_parse_zoneentry(entry, ldap_inst, ISC_FALSE));
+		CHECK(ldap_parse_zoneentry(entry, ldap_inst));
 		zone_count++;
 	}
 
@@ -2648,7 +2638,7 @@ update_action(isc_task_t *task, isc_event_t *event)
              entry != NULL;
              entry = NEXT(entry, link)) {
 		delete = ISC_FALSE;
-                result = ldap_parse_zoneentry(entry, inst, ISC_TRUE);
+                result = ldap_parse_zoneentry(entry, inst);
 		if (result != ISC_R_SUCCESS)
 			goto cleanup;
         }
