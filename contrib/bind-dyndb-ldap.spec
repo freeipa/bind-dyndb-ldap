@@ -1,11 +1,11 @@
 #%define PATCHVER P4
-%define PREVER rc1
+%define PREVER a1
 #%define VERSION %{version}
 #%define VERSION %{version}-%{PATCHVER}
 %define VERSION %{version}%{PREVER}
 
 Name:           bind-dyndb-ldap
-Version:        1.0.0
+Version:        1.1.0
 Release:        0.1.%{PREVER}%{?dist}
 Summary:        LDAP back-end plug-in for BIND
 
