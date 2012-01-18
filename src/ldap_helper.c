@@ -853,20 +853,22 @@ parse_nameserver(char *token, struct sockaddr *sa)
 	return result;
 }
 
-void *
-get_in_addr(struct sockaddr *sa) {
-	if (sa->sa_family == AF_INET) {
+static void *
+get_in_addr(struct sockaddr *sa)
+{
+	if (sa->sa_family == AF_INET)
 		return &(((struct sockaddr_in*)sa)->sin_addr);
-	}
-    return &(((struct sockaddr_in6*)sa)->sin6_addr);
+	else
+		return &(((struct sockaddr_in6*)sa)->sin6_addr);
 }
 
-in_port_t
-get_in_port(struct sockaddr *sa) {
-    if (sa->sa_family == AF_INET) {
-        return (((struct sockaddr_in*)sa)->sin_port);
-    }
-    return (((struct sockaddr_in6*)sa)->sin6_port);
+static in_port_t
+get_in_port(struct sockaddr *sa)
+{
+	if (sa->sa_family == AF_INET)
+		return (((struct sockaddr_in*)sa)->sin_port);
+	else
+		return (((struct sockaddr_in6*)sa)->sin6_port);
 }
 
 static isc_result_t
@@ -900,7 +902,8 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 
 			result = parse_nameserver(value->value, &sa);
 			if (result != ISC_R_SUCCESS) {
-				log_bug("Could not convert IP address from string '%s'.", value->value);
+				log_bug("Could not convert IP address "
+					"from string '%s'.", value->value);
 			}
 
 			/* Convert port from network byte order. */
