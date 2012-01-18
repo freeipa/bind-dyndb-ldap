@@ -1,3 +1,34 @@
+1.1.0a1
+======
+
+[1] The plugin now skips only invalid record instead of the whole DN
+when DN contains multiple records and one is invalid.
+
+[2] New option "sync_ptr". When set to "yes" the plugin automatically
+updates corresponding PTR records when A/AAAA update is received.
+Zone must not have "idnsAllowDynUpdate" set to "no".
+
+[3] New zone attribute idnsAllowSyncPTR which allows to enable PTR
+synchronization per-zone.
+
+[4] New idnsForwarders and idnsForwardPolicy attributes. You can set per-domain
+forwarding with those options. See BIND 9 Administrator reference manual,
+description of "forwarders", forward zones and "forward" options for details.
+
+[5] Added support for zone transfers. Only AXFR is supported now.
+
+[6] The plugin now periodically reconnects to LDAP when the first connection
+attempt fails.
+
+[7] New object class idnsConfigObject can be used to store plugin configuration
+in LDAP. Only idnsForwarders option is currently supported. In future it's
+planned to allow to store every bind-dyndb-ldap option valid in named.conf to be
+stored in LDAP.
+
+[8] Persistent search feature was extended to resource records.
+
+[9] Many bugfixes, see git log for details.
+
 1.0.0rc1
 =======
 
