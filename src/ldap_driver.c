@@ -628,7 +628,8 @@ cleanup:
  */
 
 static void
-dbiterator_destroy(dns_dbiterator_t **iteratorp) {
+dbiterator_destroy(dns_dbiterator_t **iteratorp)
+{
 	dns_dbiterator_t *iterator = *iteratorp;
 	ldap_dbiterator_t *ldapiter = (ldap_dbiterator_t *) iterator;
 	
@@ -645,7 +646,8 @@ dbiterator_destroy(dns_dbiterator_t **iteratorp) {
 }
 
 static isc_result_t
-dbiterator_first(dns_dbiterator_t *iterator) {
+dbiterator_first(dns_dbiterator_t *iterator)
+{
 	ldap_dbiterator_t *ldapiter = (ldap_dbiterator_t *) iterator;
 	
 	if (EMPTY(ldapiter->nodelist))
@@ -656,7 +658,8 @@ dbiterator_first(dns_dbiterator_t *iterator) {
 }
 
 static isc_result_t
-dbiterator_last(dns_dbiterator_t *iterator) {
+dbiterator_last(dns_dbiterator_t *iterator)
+{
 	ldap_dbiterator_t *ldapiter = (ldap_dbiterator_t *) iterator;
 
 	if (EMPTY(ldapiter->nodelist))
@@ -667,25 +670,29 @@ dbiterator_last(dns_dbiterator_t *iterator) {
 }
 
 static isc_result_t
-dbiterator_seek(dns_dbiterator_t *iterator,
-                dns_name_t *name) {
+dbiterator_seek(dns_dbiterator_t *iterator, dns_name_t *name)
+{
 	UNUSED(iterator);
 	UNUSED(name);
+
 	log_bug("%s: not implemented", __FUNCTION__);
 	return (ISC_R_NOTIMPLEMENTED);
 }
 
 static isc_result_t
-dbiterator_prev(dns_dbiterator_t *iterator) {
+dbiterator_prev(dns_dbiterator_t *iterator)
+{
 	ldap_dbiterator_t *ldapiter = (ldap_dbiterator_t *) iterator;
 	ldapiter->current = PREV(ldapiter->current, link);
 	if (ldapiter->current == NULL)
 		return (ISC_R_NOMORE);
+
 	return (ISC_R_NOMORE);
 }
 
 static isc_result_t
-dbiterator_next(dns_dbiterator_t *iterator) {
+dbiterator_next(dns_dbiterator_t *iterator)
+{
 	ldap_dbiterator_t *ldapiter = (ldap_dbiterator_t *) iterator;
 	ldapiter->current = NEXT(ldapiter->current, link);
 	if (ldapiter->current == NULL)
@@ -695,10 +702,9 @@ dbiterator_next(dns_dbiterator_t *iterator) {
 }
 
 static isc_result_t
-dbiterator_current(dns_dbiterator_t *iterator,
-                   dns_dbnode_t **nodep,
-                   dns_name_t *name) {
-	
+dbiterator_current(dns_dbiterator_t *iterator, dns_dbnode_t **nodep,
+		   dns_name_t *name)
+{
 	REQUIRE(nodep != NULL && *nodep == NULL);
 	
 	ldap_dbiterator_t *ldapiter = (ldap_dbiterator_t *) iterator;
@@ -711,14 +717,15 @@ dbiterator_current(dns_dbiterator_t *iterator,
 }
 
 static isc_result_t
-dbiterator_pause(dns_dbiterator_t *iterator) {
+dbiterator_pause(dns_dbiterator_t *iterator)
+{
 	UNUSED(iterator);
 	return (ISC_R_SUCCESS);
 }
 
 static isc_result_t
-dbiterator_origin(dns_dbiterator_t *iterator,
-                  dns_name_t *name) {
+dbiterator_origin(dns_dbiterator_t *iterator, dns_name_t *name)
+{
 	UNUSED(iterator);
 	return (dns_name_copy(dns_rootname, name, NULL));
 }
