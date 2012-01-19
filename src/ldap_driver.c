@@ -1064,32 +1064,7 @@ getoriginnode(dns_db_t *db, dns_dbnode_t **nodep)
 }
 #endif
 
-#if LIBDNS_VERSION_MAJOR >= 45
-static void
-transfernode(dns_db_t *db, dns_dbnode_t **sourcep, dns_dbnode_t **targetp)
-{
-	UNUSED(db);
-	UNUSED(sourcep);
-	UNUSED(targetp);
-}
-
 #if LIBDNS_VERSION_MAJOR >= 50
-static isc_result_t
-getnsec3parameters(dns_db_t *db, dns_dbversion_t *version, dns_hash_t *hash,
-		   isc_uint8_t *flags, isc_uint16_t *iterations,
-		   unsigned char *salt, size_t *salt_len)
-{
-	UNUSED(db);
-	UNUSED(version);
-	UNUSED(hash);
-	UNUSED(flags);
-	UNUSED(iterations);
-	UNUSED(salt);
-	UNUSED(salt_len);
-
-	return ISC_R_NOTIMPLEMENTED;
-}
-
 static isc_result_t
 findnsec3node(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 	      dns_dbnode_t **nodep)
@@ -1102,34 +1077,6 @@ findnsec3node(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
 	return ISC_R_NOTIMPLEMENTED;
 }
 
-static isc_result_t
-setsigningtime(dns_db_t *db, dns_rdataset_t *rdataset, isc_stdtime_t resign)
-{
-	UNUSED(db);
-	UNUSED(rdataset);
-	UNUSED(resign);
-
-	return ISC_R_NOTIMPLEMENTED;
-}
-
-static isc_result_t
-getsigningtime(dns_db_t *db, dns_rdataset_t *rdataset, dns_name_t *name)
-{
-	UNUSED(db);
-	UNUSED(rdataset);
-	UNUSED(name);
-
-	return ISC_R_NOTIMPLEMENTED;
-}
-
-static void
-resigned(dns_db_t *db, dns_rdataset_t *rdataset, dns_dbversion_t *version)
-{
-	UNUSED(db);
-	UNUSED(rdataset);
-	UNUSED(version);
-}
-
 static isc_boolean_t
 isdnssec(dns_db_t *db)
 {
@@ -1138,15 +1085,6 @@ isdnssec(dns_db_t *db)
 	return ISC_R_NOTIMPLEMENTED;
 }
 #endif /* LIBDNS_VERSION_MAJOR >= 50 */
-
-static dns_stats_t *
-getrrsetstats(dns_db_t *db)
-{
-	UNUSED(db);
-
-	return NULL;
-}
-#endif /* LIBDNS_VERSION_MAJOR >= 45 */
 
 static dns_dbmethods_t ldapdb_methods = {
 	attach,
@@ -1180,16 +1118,16 @@ static dns_dbmethods_t ldapdb_methods = {
 	getoriginnode,
 #endif
 #if LIBDNS_VERSION_MAJOR >= 45
-	transfernode,
+	NULL,			/* transfernode */
 #if LIBDNS_VERSION_MAJOR >= 50
-	getnsec3parameters,
+	NULL,			/* getnsec3parameters */
 	findnsec3node,
-	setsigningtime,
-	getsigningtime,
-	resigned,
+	NULL,			/* setsigningtime */
+	NULL,			/* getsigningtime */
+	NULL,			/* resigned */
 	isdnssec,
 #endif /* LIBDNS_VERSION_MAJOR >= 50 */
-	getrrsetstats,
+	NULL,			/* getrrsetstats */
 #endif /* LIBDNS_VERSION_MAJOR >= 45 */
 #if LIBDNS_VERSION_MAJOR >= 82
 	NULL,			/* rpz_enabled */
