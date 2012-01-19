@@ -879,6 +879,7 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 	isc_result_t result;
 	ldap_value_t *value;
 	isc_sockaddrlist_t addrs;
+	isc_sockaddr_t *addr;
 
 	REQUIRE(entry != NULL && inst != NULL && name != NULL && values != NULL);
 
@@ -896,8 +897,14 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 
 	ISC_LIST_INIT(addrs);
 	for (value = HEAD(*values); value != NULL; value = NEXT(value, link)) {
-		isc_sockaddr_t address;
 		struct sockaddr sa;
+
+		addr = isc_mem_get(inst->mctx, sizeof(*addr));
+		if (addr == NULL) {
+			result = ISC_R_NOMEMORY;
+			goto cleanup;
+		}
+		ISC_LINK_INIT(addr, link);
 
 		result = parse_nameserver(value->value, &sa);
 		if (result != ISC_R_SUCCESS) {
@@ -907,11 +914,10 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 
 		/* Convert port from network byte order. */
 		in_port_t port = ntohs(get_in_port(&sa));
-		port = (port != 0)?port:53; /* use well known port */			
+		port = (port != 0) ? port : 53; /* use well known port */			
 
-		isc_sockaddr_fromin(&address, get_in_addr(&sa), port);
-		ISC_LINK_INIT(&address, link);
-		ISC_LIST_APPEND(addrs, &address, link);
+		isc_sockaddr_fromin(addr, get_in_addr(&sa), port);
+		ISC_LIST_APPEND(addrs, addr, link);
 		log_debug(5, "Adding forwarder %s (:%d) for %s", value->value, port, dn);
 	}
 
@@ -933,7 +939,16 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 	log_debug(5, "Forward policy: %d", fwdpolicy);
 		
 	/* Set forward table up. */
-	return dns_fwdtable_add(inst->view->fwdtable, name, &addrs, fwdpolicy);
+	result = dns_fwdtable_add(inst->view->fwdtable, name, &addrs, fwdpolicy);
+
+cleanup:
+	while (!ISC_LIST_EMPTY(addrs)) {
+		addr = ISC_LIST_HEAD(addrs);
+		ISC_LIST_UNLINK(addrs, addr, link);
+		isc_mem_put(inst->mctx, addr, sizeof(*addr));
+	}
+
+	return result;
 }
 
 /* Parse the config object entry */
