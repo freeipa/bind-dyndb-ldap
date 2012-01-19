@@ -2212,17 +2212,17 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	LDAPMod *change_ptr = NULL;
 	ldap_cache_t *cache;
 
+	if (rdlist->type == dns_rdatatype_soa && mod_op == LDAP_MOD_DELETE)
+		return ISC_R_SUCCESS;
+
 	/* Flush modified record from the cache */
 	cache = ldap_instance_getcache(ldap_inst);
 	CHECK(discard_from_cache(cache, owner));
 
-	if (rdlist->type == dns_rdatatype_soa && mod_op == LDAP_MOD_DELETE)
-		return ISC_R_SUCCESS;
-
-	ldap_conn = ldap_pool_getconnection(ldap_inst->pool);
-
 	CHECK(str_new(mctx, &owner_dn));
 	CHECK(dnsname_to_dn(ldap_inst->zone_register, owner, owner_dn));
+
+	ldap_conn = ldap_pool_getconnection(ldap_inst->pool);
 
 	if (rdlist->type == dns_rdatatype_soa) {
 		result = modify_soa_record(ldap_conn, str_buf(owner_dn),
@@ -2434,11 +2434,14 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 
 		/* Modify PTR record. */
 		CHECK(ldap_modify_do(ldap_conn, str_buf(owner_dn_ptr), change, delete_node));
-		(void) discard_from_cache(ldap_instance_getcache(ldap_inst), dns_fixedname_name(&name)); 
+		(void) discard_from_cache(ldap_instance_getcache(ldap_inst),
+					  dns_fixedname_name(&name)); 
 	}
 	
 cleanup:
-	ldap_pool_putconnection(ldap_inst->pool, ldap_conn);
+	if (ldap_conn != NULL)
+		ldap_pool_putconnection(ldap_inst->pool, ldap_conn);
+
 	str_destroy(&owner_dn);
 	free_ldapmod(mctx, &change[0]);
 	free_ldapmod(mctx, &change[1]);
