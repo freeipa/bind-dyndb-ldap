@@ -873,68 +873,67 @@ get_in_port(struct sockaddr *sa)
 
 static isc_result_t
 configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst, 
-                          dns_name_t *name, ldap_valuelist_t *values) {
-		const char *dn = entry->dn;
-		isc_result_t result;
-		ldap_value_t *value;
-		isc_sockaddrlist_t addrs;
+                          dns_name_t *name, ldap_valuelist_t *values)
+{
+	const char *dn = entry->dn;
+	isc_result_t result;
+	ldap_value_t *value;
+	isc_sockaddrlist_t addrs;
 
-		REQUIRE(entry != NULL && inst != NULL && name != NULL && values != NULL);
+	REQUIRE(entry != NULL && inst != NULL && name != NULL && values != NULL);
 
-		/* Clean old fwdtable. */
-		result = dns_fwdtable_delete(inst->view->fwdtable, name);
-		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {
-			log_error("Failed to update forwarders");
-			return ISC_R_FAILURE;
+	/* Clean old fwdtable. */
+	result = dns_fwdtable_delete(inst->view->fwdtable, name);
+	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {
+		log_error("Failed to update forwarders");
+		return ISC_R_FAILURE;
+	}
+
+	if (EMPTY(*values)) {
+		log_debug(1, "Forwarders are empty for '%s'", dn);
+		return ISC_R_SUCCESS;
+	}
+
+	ISC_LIST_INIT(addrs);
+	for (value = HEAD(*values); value != NULL; value = NEXT(value, link)) {
+		isc_sockaddr_t address;
+		struct sockaddr sa;
+
+		result = parse_nameserver(value->value, &sa);
+		if (result != ISC_R_SUCCESS) {
+			log_bug("Could not convert IP address "
+				"from string '%s'.", value->value);
 		}
 
-		if (EMPTY(*values)) {
-			log_debug(1, "Forwarders are empty for '%s'", dn);
-			return ISC_R_SUCCESS;
-		}
-		
-		ISC_LIST_INIT(addrs);
-		for (value = HEAD(*values);
-		     value != NULL;
-		     value = NEXT(value, link)) {
-			isc_sockaddr_t address;
-			struct sockaddr sa;
+		/* Convert port from network byte order. */
+		in_port_t port = ntohs(get_in_port(&sa));
+		port = (port != 0)?port:53; /* use well known port */			
 
-			result = parse_nameserver(value->value, &sa);
-			if (result != ISC_R_SUCCESS) {
-				log_bug("Could not convert IP address "
-					"from string '%s'.", value->value);
-			}
+		isc_sockaddr_fromin(&address, get_in_addr(&sa), port);
+		ISC_LINK_INIT(&address, link);
+		ISC_LIST_APPEND(addrs, &address, link);
+		log_debug(5, "Adding forwarder %s (:%d) for %s", value->value, port, dn);
+	}
 
-			/* Convert port from network byte order. */
-			in_port_t port = ntohs(get_in_port(&sa));
-			port = (port != 0)?port:53; /* use well known port */			
-
-			isc_sockaddr_fromin(&address, get_in_addr(&sa), port);
-			ISC_LINK_INIT(&address, link);
-			ISC_LIST_APPEND(addrs, &address, link);
-			log_debug(5, "Adding forwarder %s (:%d) for %s", value->value, port, dn);
-		}
-
+	/*
+	 * Fetch forward policy.
+	 */
+	dns_fwdpolicy_t fwdpolicy = dns_fwdpolicy_first; /* "first" is default option. */
+	result = ldap_entry_getvalues(entry, "idnsForwardPolicy", values);
+	if (result == ISC_R_SUCCESS) {
+		value = HEAD(*values);
 		/*
-		 * Fetch forward policy.
+		 * fwdpolicy: "only" or "first" (default)
 		 */
-		dns_fwdpolicy_t fwdpolicy = dns_fwdpolicy_first; /* "first" is default option. */
-		result = ldap_entry_getvalues(entry, "idnsForwardPolicy", values);
-		if (result == ISC_R_SUCCESS) {
-			value = HEAD(*values);
-			/*
-			 * fwdpolicy: "only" or "first" (default)
-			 */
-			if (value != NULL && value->value != NULL && strcmp(value->value, "only") == 0) {
-				fwdpolicy = dns_fwdpolicy_only;
-			}
-		}
-		log_debug(5, "Forward policy: %d", fwdpolicy);
+		if (value != NULL && value->value != NULL &&
+		    strcmp(value->value, "only") == 0)
+			fwdpolicy = dns_fwdpolicy_only;
+	}
+
+	log_debug(5, "Forward policy: %d", fwdpolicy);
 		
-		/* Set forward table up. */
-		return dns_fwdtable_add(inst->view->fwdtable, name, &addrs, fwdpolicy);
-	
+	/* Set forward table up. */
+	return dns_fwdtable_add(inst->view->fwdtable, name, &addrs, fwdpolicy);
 }
 
 /* Parse the config object entry */
