@@ -2807,17 +2807,16 @@ update_record(isc_task_t *task, isc_event_t *event)
 	dns_name_t name;
 	dns_name_init(&name, NULL);
 	CHECK(dn_to_dnsname(mctx, pevent->dn, &name));
-	
-	/* Get cache instance. */
-	cache = ldap_instance_getcache(inst);
-	
+
 	if (PSEARCH_DEL(pevent->chgtype)) {
-		/* Discards entry from cache indentified by name. */
 		log_debug(5, "psearch_update: Removing item from cache (%s)", 
 		          pevent->dn);
-		CHECK(discard_from_cache(cache, &name));
 	} 
-	
+
+	/* Get cache instance & clean old record */
+	cache = ldap_instance_getcache(inst);
+	CHECK(discard_from_cache(cache, &name));
+
 	if (PSEARCH_ADD(pevent->chgtype) || PSEARCH_MOD(pevent->chgtype)) {
 		/* 
 		 * Find new data in LDAP. 
