@@ -30,6 +30,11 @@ $ make
 Where <libdir> is a directory where your libdns is installed. This is
 typically going to be /usr/lib or /usr/lib64 on 64 bit systems.
 
+If configure script complains that it "Can't obtain libdns version",
+please verify you have installed bind development files (package bind9-dev
+or bind-devel) and you exported correct CPPFLAGS via
+"export CPPFLAGS=`isc-config.sh --cflags`" command.
+
 Then, to install, run this as root:
 # make install
 
