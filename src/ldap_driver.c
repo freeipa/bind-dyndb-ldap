@@ -449,6 +449,9 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 		REQUIRE(version == ldapdb_version);
 	}
 
+	if (!dns_name_issubdomain(name, &db->origin))
+		return DNS_R_NXDOMAIN;	
+
 	result = ldapdb_rdatalist_get(ldapdb->common.mctx, ldapdb->ldap_inst,
 				      name, &ldapdb->common.origin,
 				      &rdatalist);
