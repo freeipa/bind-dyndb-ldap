@@ -1,3 +1,17 @@
+1.1.0a2
+======
+
+[1] Fix some errors reported by Coverity tool.
+
+[2] Persistent search didn't propagate added/modified RRs to cache.
+
+[3] DNS delegation now works fine.
+
+[4] Relative domain names in resource records weren't expanded correctly
+when psearch was used.
+
+[5] The plugin could crash when LDAP contained DNS name with no data.
+
 1.1.0a1
 ======
 
