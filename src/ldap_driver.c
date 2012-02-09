@@ -237,15 +237,11 @@ ldapdb_rdataset_disassociate(dns_rdataset_t *rdataset)
 	REQUIRE(rdataset != NULL);
 
 	rdlist = rdataset->private1;
+	INSIST(rdlist != NULL);
 	mctx = rdataset->private5;
-	if (rdlist == NULL)
-		return;
-	rdataset->private1 = NULL;
-	rdataset->private5 = NULL;
 
 	free_rdatalist(mctx, rdlist);
 	SAFE_MEM_PUT_PTR(mctx, rdlist);
-
 	isc_mem_detach(&mctx);
 }
 
