@@ -457,6 +457,7 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	ldapdb_node_t *node = NULL;
 	dns_rdatalist_t *rdlist = NULL;
 	isc_boolean_t is_cname = ISC_FALSE;
+	isc_boolean_t is_delegation = ISC_FALSE;
 	ldapdb_rdatalist_t rdatalist;
 
 	UNUSED(now);
@@ -482,11 +483,32 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 		return (result == ISC_R_NOTFOUND) ? DNS_R_NXDOMAIN : result;
 
 	/*
+	 * Check if there is at least one NS RR. If yes and this is not NS
+	 * record of this zone (i.e. NS record has higher number of labels),
+	 * we hit delegation point. Delegation point has the highest priority
+	 * and we supress all other RR types than NS.
+	 */
+	result = ldapdb_rdatalist_findrdatatype(&rdatalist, dns_rdatatype_ns,
+						&rdlist);
+	if (result == ISC_R_SUCCESS) {
+		if (dns_name_countlabels(&db->origin) <
+		    dns_name_countlabels(name)) {
+			/* Delegation point */
+			type = dns_rdatatype_ns;
+			is_delegation = ISC_TRUE;
+			goto skipfind;
+		} else {
+			/* Our NS RRset, continue as usual */
+			rdlist = NULL;
+		}
+	}
+
+	/*
 	 * ANY pseudotype indicates the whole node, skip routines
 	 * which attempts to find the exact RR type.
 	 */
 	if (type == dns_rdatatype_any)
-		goto anyfound;
+		goto skipfind;
 
 	result = ldapdb_rdatalist_findrdatatype(&rdatalist, type, &rdlist);
 	if (result != ISC_R_SUCCESS) {
@@ -508,7 +530,7 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 		goto cleanup;
 	}
 
-anyfound:
+skipfind:
 	/* XXX currently we implemented only exact authoritative matches */
 	CHECK(dns_name_copy(name, foundname, NULL));
 
@@ -526,7 +548,12 @@ anyfound:
 		ldapdb_rdatalist_destroy(ldapdb->common.mctx, &rdatalist);
 	}
 
-	return (is_cname == ISC_TRUE) ? DNS_R_CNAME : ISC_R_SUCCESS;
+	if (is_delegation)
+		return DNS_R_DELEGATION;
+	else if (is_cname)
+		return DNS_R_CNAME;
+	else
+		return ISC_R_SUCCESS;
 
 cleanup:
 	ldapdb_rdatalist_destroy(ldapdb->common.mctx, &rdatalist);
