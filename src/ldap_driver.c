@@ -249,6 +249,32 @@ ldapdb_rdataset_disassociate(dns_rdataset_t *rdataset)
 	isc_mem_detach(&mctx);
 }
 
+void
+ldapdb_rdataset_clone(dns_rdataset_t *source, dns_rdataset_t *target)
+{
+	dns_rdatalist_t *rdlist, *new_rdlist = NULL;
+	isc_mem_t *mctx;
+	isc_result_t result;
+
+	REQUIRE(source != NULL);
+
+	rdlist = source->private1;
+	mctx = source->private5;
+
+	result = rdatalist_clone(mctx, rdlist, &new_rdlist);
+	/*
+	 * INSIST is bad here but there is no other way how to handle NOMEM
+	 * errors
+	 */
+	INSIST(result == ISC_R_SUCCESS);
+
+	*target = *source;
+	target->private1 = new_rdlist;
+	target->private2 = NULL; /* Reset iterator */
+	target->private5 = NULL;
+	isc_mem_attach(mctx, (isc_mem_t **)&target->private5);
+}
+
 /*
  * Functions.
  *
@@ -1230,6 +1256,7 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 		memcpy(&rdataset_methods, rdset.methods,
 		       sizeof(dns_rdatasetmethods_t));
 		rdataset_methods.disassociate = ldapdb_rdataset_disassociate;
+		rdataset_methods.clone = ldapdb_rdataset_clone;
 	}
 
 	/* Register new DNS DB implementation. */
