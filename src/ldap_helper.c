@@ -2805,8 +2805,10 @@ update_record(isc_task_t *task, isc_event_t *event)
 
 	/* Convert domain name from text to struct dns_name_t. */
 	dns_name_t name;
+	dns_name_t origin;
 	dns_name_init(&name, NULL);
-	CHECK(dn_to_dnsname(mctx, pevent->dn, &name, NULL));
+	dns_name_init(&origin, NULL);
+	CHECK(dn_to_dnsname(mctx, pevent->dn, &name, &origin));
 
 	if (PSEARCH_DEL(pevent->chgtype)) {
 		log_debug(5, "psearch_update: Removing item from cache (%s)", 
@@ -2825,7 +2827,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 		 */
 		log_debug(5, "psearch_update: Updating item in cache (%s)", 
 		          pevent->dn);
-		CHECK(ldapdb_rdatalist_get(mctx, inst, &name, NULL, &rdatalist));
+		CHECK(ldapdb_rdatalist_get(mctx, inst, &name, &origin, &rdatalist));
 	
 		/* 
 		 * The cache is updated in ldapdb_rdatalist_get(...):
@@ -2843,6 +2845,8 @@ cleanup:
 
 	if (dns_name_dynamic(&name))
 		dns_name_free(&name, inst->mctx);
+	if (dns_name_dynamic(&origin))
+		dns_name_free(&origin, inst->mctx);
 	isc_mem_free(mctx, pevent->dbname);
 	isc_mem_free(mctx, pevent->dn);
 	isc_mem_detach(&mctx);
