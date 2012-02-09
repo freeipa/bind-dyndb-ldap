@@ -238,6 +238,7 @@ ldap_cache_addrdatalist(ldap_cache_t *cache, dns_name_t *name,
 	cache_node_t *node = NULL;
 
 	REQUIRE(cache != NULL);
+	REQUIRE(rdatalist != NULL && !EMPTY(*rdatalist));
 
 	if (!ldap_cache_enabled(cache))
 		return ISC_R_SUCCESS; /* Caching is disabled */

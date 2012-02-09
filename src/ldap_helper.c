@@ -1489,9 +1489,12 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 		}
 	}
 
-	/* Cache RRs */
-	CHECK(ldap_cache_addrdatalist(cache, name, rdatalist));
-	/* result = ISC_R_SUCCESS; - Performed by ldap_cache_addrdatalist call above */
+	if (!EMPTY(*rdatalist)) {
+		/* Cache RRs */
+		CHECK(ldap_cache_addrdatalist(cache, name, rdatalist));
+		/* result = ISC_R_SUCCESS; - Performed by above call */
+	} else
+		result = ISC_R_NOTFOUND;
 
 cleanup:
 	ldap_pool_putconnection(ldap_inst->pool, ldap_conn);
