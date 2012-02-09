@@ -459,6 +459,9 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	isc_boolean_t is_cname = ISC_FALSE;
 	isc_boolean_t is_delegation = ISC_FALSE;
 	ldapdb_rdatalist_t rdatalist;
+	unsigned int labels, qlabels;
+	dns_fixedname_t fname;
+	dns_name_t *traversename;
 
 	UNUSED(now);
 	UNUSED(options);
@@ -473,15 +476,47 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	}
 
 	if (!dns_name_issubdomain(name, &db->origin))
-		return DNS_R_NXDOMAIN;	
+		return DNS_R_NXDOMAIN;
 
-	result = ldapdb_rdatalist_get(ldapdb->common.mctx, ldapdb->ldap_inst,
-				      name, &ldapdb->common.origin,
-				      &rdatalist);
+	labels = dns_name_countlabels(&db->origin);
+	qlabels = dns_name_countlabels(name);
+
+	/*
+	 * We need to find the best match in LDAP. We can receive question for
+	 * any name beneath db->origin. We perform "up->down" traverse and
+	 * when we hit authoritative record or delegation point, we stop and
+	 * return answer.
+	 */
+	dns_fixedname_init(&fname);
+	traversename = dns_fixedname_name(&fname);
+
+	if (labels != qlabels) {
+		/*
+		 * Skip the zone label, otherwise we will always find the
+		 * SOA record.
+		 */
+		labels++;
+	}
+
+	while (labels <= qlabels) {
+		dns_name_getlabelsequence(name, qlabels - labels, labels,
+					  traversename);
+
+		result = ldapdb_rdatalist_get(ldapdb->common.mctx,
+					      ldapdb->ldap_inst, traversename,
+					      &ldapdb->common.origin,
+					      &rdatalist);
+		if (result == ISC_R_SUCCESS)
+			goto found;
+
+		labels++;
+	}
+
 
 	if (result != ISC_R_SUCCESS && result != DNS_R_PARTIALMATCH)
 		return (result == ISC_R_NOTFOUND) ? DNS_R_NXDOMAIN : result;
 
+found:
 	/*
 	 * Check if there is at least one NS RR. If yes and this is not NS
 	 * record of this zone (i.e. NS record has higher number of labels),
@@ -492,7 +527,7 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 						&rdlist);
 	if (result == ISC_R_SUCCESS) {
 		if (dns_name_countlabels(&db->origin) <
-		    dns_name_countlabels(name)) {
+		    dns_name_countlabels(traversename)) {
 			/* Delegation point */
 			type = dns_rdatatype_ns;
 			is_delegation = ISC_TRUE;
@@ -531,8 +566,7 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	}
 
 skipfind:
-	/* XXX currently we implemented only exact authoritative matches */
-	CHECK(dns_name_copy(name, foundname, NULL));
+	CHECK(dns_name_copy(traversename, foundname, NULL));
 
 	if (rdataset != NULL && type != dns_rdatatype_any) {
 		/* dns_rdatalist_tordataset returns success only */
@@ -541,7 +575,7 @@ skipfind:
 	}
 
 	if (nodep != NULL) {
-		CHECK(ldapdbnode_create(ldapdb->common.mctx, name, &node));
+		CHECK(ldapdbnode_create(ldapdb->common.mctx, traversename, &node));
 		memcpy(&node->rdatalist, &rdatalist, sizeof(rdatalist));
 		*nodep = node;
 	} else {
