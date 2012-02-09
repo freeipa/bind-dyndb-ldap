@@ -757,7 +757,7 @@ ldap_delete_zone(ldap_instance_t *inst, const char *dn, isc_boolean_t lock)
 	dns_name_t name;
 	dns_name_init(&name, NULL);
 	
-	CHECK(dn_to_dnsname(inst->mctx, dn, &name));
+	CHECK(dn_to_dnsname(inst->mctx, dn, &name, NULL));
 
 	result = ldap_delete_zone2(inst, &name, lock);
 
@@ -989,7 +989,7 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 
 	/* Derive the dns name of the zone from the DN. */
 	dn = entry->dn;
-	CHECK(dn_to_dnsname(inst->mctx, dn, &name));
+	CHECK(dn_to_dnsname(inst->mctx, dn, &name, NULL));
 
 	result = isc_task_beginexclusive(task);
 	RUNTIME_CHECK(result == ISC_R_SUCCESS || result == ISC_R_LOCKBUSY);
@@ -1149,7 +1149,7 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 		/* Derive the dns name of the zone from the DN. */
 		dns_name_t name;
 		dns_name_init(&name, NULL);
-		result = dn_to_dnsname(ldap_inst->mctx, entry->dn, &name);
+		result = dn_to_dnsname(ldap_inst->mctx, entry->dn, &name, NULL);
 		if (result == ISC_R_SUCCESS) {
 			log_debug(5, "Refresh %s", entry->dn);
 			/* Add found zone to RB-tree for later check. */
@@ -1407,8 +1407,8 @@ ldapdb_nodelist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *nam
 		node = NULL;	
 		dns_name_t node_name;
 		dns_name_init(&node_name, NULL);
-		if (dn_to_dnsname(mctx, entry->dn, 
-			              &node_name) != ISC_R_SUCCESS) {
+		if (dn_to_dnsname(mctx, entry->dn,  &node_name, NULL)
+		    != ISC_R_SUCCESS) {
 			log_error("Failed to parse dn %s", entry->dn);
 			continue;
 		}
@@ -2383,7 +2383,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		 */
 		ld_string_t *str_ptr = NULL;
 		CHECK(str_new(mctx, &str_ptr));
-		CHECK(dn_to_text(str_buf(owner_dn), str_ptr));
+		CHECK(dn_to_text(str_buf(owner_dn), str_ptr, NULL));
 		 
 		/*
 		 * Delete only when PTR record's value == A/AAAA record's key.
@@ -2806,7 +2806,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 	/* Convert domain name from text to struct dns_name_t. */
 	dns_name_t name;
 	dns_name_init(&name, NULL);
-	CHECK(dn_to_dnsname(mctx, pevent->dn, &name));
+	CHECK(dn_to_dnsname(mctx, pevent->dn, &name, NULL));
 
 	if (PSEARCH_DEL(pevent->chgtype)) {
 		log_debug(5, "psearch_update: Removing item from cache (%s)", 

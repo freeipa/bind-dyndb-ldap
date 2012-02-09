@@ -29,10 +29,11 @@
 /*
  * Convert LDAP DN 'dn', to dns_name_t 'target'. 'target' needs to be
  * initialized with dns_name_init() before the call and freed by the caller
- * after it using dns_name_free().
+ * after it using dns_name_free(). If origin is not NULL, then origin name of
+ * that DNS name is returned.
  */
 isc_result_t dn_to_dnsname(isc_mem_t *mctx, const char *dn,
-			   dns_name_t *target);
+			   dns_name_t *target, dns_name_t *origin);
 
 isc_result_t dnsname_to_dn(zone_register_t *zr, dns_name_t *name,
 			   ld_string_t *target);
@@ -43,6 +44,7 @@ isc_result_t ldap_attribute_to_rdatatype(const char *ldap_record,
 isc_result_t rdatatype_to_ldap_attribute(dns_rdatatype_t rdtype,
 					 const char **target);
 
-isc_result_t dn_to_text(const char *dn, ld_string_t *target);
+isc_result_t dn_to_text(const char *dn, ld_string_t *target,
+			ld_string_t *origin);
 
 #endif /* !_LD_LDAP_CONVERT_H_ */

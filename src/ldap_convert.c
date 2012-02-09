@@ -67,11 +67,14 @@ static isc_result_t explode_rdn(const char *rdn, char ***explodedp,
 
 
 isc_result_t
-dn_to_dnsname(isc_mem_t *mctx, const char *dn, dns_name_t *target)
+dn_to_dnsname(isc_mem_t *mctx, const char *dn, dns_name_t *target,
+	      dns_name_t *otarget)
 {
 	isc_result_t result;
 	DECLARE_BUFFERED_NAME(name);
+	DECLARE_BUFFERED_NAME(origin);
 	ld_string_t *str = NULL;
+	ld_string_t *ostr = NULL;
 	isc_buffer_t buffer;
 
 	REQUIRE(mctx != NULL);
@@ -80,9 +83,20 @@ dn_to_dnsname(isc_mem_t *mctx, const char *dn, dns_name_t *target)
 	INIT_BUFFERED_NAME(name);
 	CHECK(str_new(mctx, &str));
 
-	CHECK(dn_to_text(dn, str));
+	if (otarget != NULL) {
+		INIT_BUFFERED_NAME(origin);
+		CHECK(str_new(mctx, &ostr));
+	}
+
+	CHECK(dn_to_text(dn, str, ostr));
 	str_to_isc_buffer(str, &buffer);
 	CHECK(dns_name_fromtext(&name, &buffer, dns_rootname, 0, NULL));
+
+	if (otarget != NULL) {
+		str_to_isc_buffer(ostr, &buffer);
+		CHECK(dns_name_fromtext(&origin, &buffer, dns_rootname, 0,
+		      NULL));
+	}
 
 cleanup:
 	if (result == ISC_R_SUCCESS)
@@ -90,7 +104,21 @@ cleanup:
 	else
 		log_error_r("failed to convert dn %s to DNS name", dn);
 
+	if (otarget != NULL && result == ISC_R_SUCCESS)
+		result = dns_name_dupwithoffsets(&origin, mctx, otarget);
+
+	if (result != ISC_R_SUCCESS) {
+		if (dns_name_dynamic(target))
+			dns_name_free(target, mctx);
+		if (otarget) {
+			if (dns_name_dynamic(otarget))
+				dns_name_free(otarget, mctx);
+		}
+	}
+
 	str_destroy(&str);
+	if (otarget != NULL)
+		str_destroy(&ostr);
 
 	return result;
 }
@@ -105,11 +133,12 @@ cleanup:
  * The resulting string will be "foo.bar.example.org."
  */
 isc_result_t
-dn_to_text(const char *dn, ld_string_t *target)
+dn_to_text(const char *dn, ld_string_t *target, ld_string_t *origin)
 {
 	isc_result_t result;
 	char **exploded_dn = NULL;
 	char **exploded_rdn = NULL;
+	unsigned int i;
 
 	REQUIRE(dn != NULL);
 	REQUIRE(target != NULL);
@@ -118,15 +147,35 @@ dn_to_text(const char *dn, ld_string_t *target)
 
 	CHECK(explode_dn(dn, &exploded_dn, 0));
 	str_clear(target);
-	for (unsigned int i = 0; exploded_dn[i] != NULL; i++) {
+	for (i = 0; exploded_dn[i] != NULL; i++) {
 		if (strncasecmp(exploded_dn[i], "idnsName", 8) != 0)
 			break;
+
+		if (exploded_rdn != NULL) {
+			ldap_value_free(exploded_rdn);
+			exploded_rdn = NULL;
+		}
+
 		CHECK(explode_rdn(exploded_dn[i], &exploded_rdn, 1));
 		CHECK(str_cat_char(target, exploded_rdn[0]));
 		CHECK(str_cat_char(target, "."));
+	}
 
-		ldap_value_free(exploded_rdn);
-		exploded_rdn = NULL;
+	if (origin != NULL) {
+		str_clear(origin);
+
+		/*
+		 * If we have DNs with only one idnsName part,
+		 * treat them as absolute.
+		 */
+
+		if (i < 2)
+			CHECK(str_init_char(origin, "."));
+		else {
+			CHECK(str_cat_char(origin, exploded_rdn[0]));
+			CHECK(str_cat_char(origin, "."));
+		}
+			
 	}
 
 	if (str_len(target) == 0)
