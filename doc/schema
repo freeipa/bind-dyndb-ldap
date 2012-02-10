@@ -235,13 +235,15 @@ attributetype ( 2.16.840.1.113730.3.8.5.11
 	NAME 'idnsAllowQuery'
 	DESC 'BIND9 allow-query ACL element'
 	EQUALITY caseIgnoreIA5Match
-	SYNTAX 1.3.6.1.4.1.1466.115.121.1.26 )
+	SYNTAX 1.3.6.1.4.1.1466.115.121.1.26
+	SINGLE-VALUE )
 
 attributetype ( 2.16.840.1.113730.3.8.5.12
 	NAME 'idnsAllowTransfer'
 	DESC 'BIND9 allow-transfer ACL element'
 	EQUALITY caseIgnoreIA5Match
-	SYNTAX 1.3.6.1.4.1.1466.115.121.1.26 )
+	SYNTAX 1.3.6.1.4.1.1466.115.121.1.26
+	SINGLE-VALUE )
 
 attributetype ( 2.16.840.1.113730.3.8.5.13
 	NAME 'idnsAllowSyncPTR'

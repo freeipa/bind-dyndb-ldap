@@ -67,6 +67,8 @@
 
 static isc_once_t once = ISC_ONCE_INIT;
 static cfg_type_t *update_policy;
+static cfg_type_t *allow_query;
+static cfg_type_t *allow_transfer;
 
 static cfg_type_t *
 get_type_from_tuplefield(const cfg_type_t *cfg_type, const char *name)
@@ -128,19 +130,20 @@ get_type_from_clause_array(const cfg_type_t *cfg_type, const char *name)
 static void
 init_cfgtypes(void)
 {
-	
-	cfg_type_t *zonecfg;
+	cfg_type_t *zoneopts;
 
-	zonecfg = &cfg_type_namedconf;
-	zonecfg = get_type_from_clause_array(zonecfg, "zone");
+	zoneopts = &cfg_type_namedconf;
+	zoneopts = get_type_from_clause_array(zoneopts, "zone");
+	zoneopts = get_type_from_tuplefield(zoneopts, "options");
 
-	update_policy = get_type_from_tuplefield(zonecfg, "options");
-	update_policy = get_type_from_clause_array(update_policy, "update-policy");
-
+	update_policy = get_type_from_clause_array(zoneopts, "update-policy");
+	allow_query = get_type_from_clause_array(zoneopts, "allow-query");
+	allow_transfer = get_type_from_clause_array(zoneopts, "allow-transfer");
 }
 
 static isc_result_t
-parse(cfg_parser_t *parser, const char *string, cfg_obj_t **objp)
+parse(cfg_parser_t *parser, const char *string, cfg_type_t **type,
+      cfg_obj_t **objp)
 {
 	isc_result_t result;
 	isc_buffer_t buffer;
@@ -157,7 +160,7 @@ parse(cfg_parser_t *parser, const char *string, cfg_obj_t **objp)
 	isc_buffer_init(&buffer, string, string_len);
 	isc_buffer_add(&buffer, string_len);
 
-	result = cfg_parse_buffer(parser, &buffer, update_policy, &ret);
+	result = cfg_parse_buffer(parser, &buffer, *type, &ret);
 
 	if (result == ISC_R_SUCCESS)
 		*objp = ret;
@@ -330,6 +333,24 @@ cleanup:
 	return result;
 }
 
+static isc_result_t
+bracket_str(isc_mem_t *mctx, const char *str, ld_string_t **bracket_strp)
+{
+	ld_string_t *tmp = NULL;
+	isc_result_t result;
+
+	CHECK(str_new(mctx, &tmp));
+	CHECK(str_sprintf(tmp, "{ %s }", str));
+
+	*bracket_strp = tmp;
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	str_destroy(&tmp);
+	return result;
+}
+
 isc_result_t
 acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone)
 {
@@ -348,11 +369,10 @@ acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone)
 	if (policy_str == NULL)
 		goto cleanup;
 
-	CHECK(str_new(mctx, &new_policy_str));
-	CHECK(str_sprintf(new_policy_str, "{ %s }", policy_str));
+	CHECK(bracket_str(mctx, policy_str, &new_policy_str));
 
 	CHECK(cfg_parser_create(mctx, dns_lctx, &parser));
-	result = parse(parser, str_buf(new_policy_str), &policy);
+	result = parse(parser, str_buf(new_policy_str), &update_policy, &policy);
 
 	if (result != ISC_R_SUCCESS) {
 		dns_zone_log(zone, ISC_LOG_ERROR,
@@ -407,123 +427,55 @@ acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone)
 	return result;
 }
 
-static isc_result_t
-inaddr_fromtext(const char *addr, struct in_addr *in)
-{
-	if (inet_pton(AF_INET, addr, in) == 1)
-		return ISC_R_SUCCESS;
-
-	return ISC_R_FAILURE;
-}
-
-static isc_result_t
-in6addr_fromtext(const char *addr, struct in6_addr *in6)
-{
-	if (inet_pton(AF_INET6, addr, in6) == 1)
-		return ISC_R_SUCCESS;
-
-	return ISC_R_FAILURE;
-}
-
 isc_result_t
-acl_from_ldap(isc_mem_t *mctx, const ldap_valuelist_t *vals, dns_acl_t **aclp)
+acl_from_ldap(isc_mem_t *mctx, const char *aclstr, acl_type_t type,
+	      dns_acl_t **aclp)
 {
 	dns_acl_t *acl = NULL;
-	ldap_value_t *val;
-	int count = 0;
-	isc_result_t result = ISC_R_FAILURE;
+	isc_result_t result;
+	ld_string_t *new_aclstr = NULL;
+	cfg_parser_t *parser = NULL;
+	cfg_obj_t *aclobj = NULL;
+	cfg_aclconfctx_t *aclctx = NULL;
 
-	/* *aclp != NULL means nested ACL which is not allowed */
 	REQUIRE(aclp != NULL && *aclp == NULL);
 
-	CHECK(dns_acl_create(mctx, count, &acl));
+	CHECK(bracket_str(mctx, aclstr, &new_aclstr));
 
-	/* Process ACL elements */
-	for (val = HEAD(*vals); val != NULL; val = NEXT(val, link)) {
-		char *addr = val->value;
-		char *prefix;
-		isc_boolean_t neg = ISC_FALSE;
-		unsigned int bitlen;
-		struct in_addr in;
-		struct in6_addr in6;
-		isc_netaddr_t na;
-
-		if (*addr == '!') {
-			neg = ISC_TRUE;
-			addr++;
-			acl->has_negatives = ISC_TRUE;
-		}
-
-		if ((prefix = strchr(addr, '/')) != NULL) {
-			/* Net prefix */
-			char *err;
-
-			*prefix = '\0';
-			prefix++;
-
-			bitlen = strtol(prefix, &err, 10);
-			if (*err != '\0') {
-				log_error("Invalid network prefix");
-				result = ISC_R_FAILURE;
-				goto cleanup;
-			}
-
-			/* Convert IPv4/IPv6 address and add it to iptable */
-			if (inaddr_fromtext(addr, &in) == ISC_R_SUCCESS) {
-				if (bitlen > 32) {
-					log_error("Too long network prefix");
-					result = ISC_R_FAILURE;
-					goto cleanup;
-				}
-				isc_netaddr_fromin(&na, &in);
-			} else if (in6addr_fromtext(addr, &in6) == ISC_R_SUCCESS) {
-				if (bitlen > 128) {
-					log_error("Too long network prefix");
-					result = ISC_R_FAILURE;
-					goto cleanup;
-				}
-				isc_netaddr_fromin6(&na, &in6);
-			} else {
-				log_error("Invalid network address");
-				result = ISC_R_FAILURE;
-				goto cleanup;
-			}
-
-			CHECK(dns_iptable_addprefix(acl->iptable, &na, bitlen,
-						    !neg));
-		} else {
-			/* It is IP address or "none" or "any" or invalid value */
-			if (inaddr_fromtext(addr, &in) == ISC_R_SUCCESS) {
-				isc_netaddr_fromin(&na, &in);
-				bitlen = 32;
-				CHECK(dns_iptable_addprefix(acl->iptable, &na, bitlen,
-							    !neg));
-			} else if (in6addr_fromtext(addr, &in6) == ISC_R_SUCCESS) {
-				isc_netaddr_fromin6(&na, &in6);
-				bitlen = 128;
-				CHECK(dns_iptable_addprefix(acl->iptable, &na, bitlen,
-							    !neg));
-			} else if (strcasecmp(addr, "none") == 0) {
-				CHECK(dns_iptable_addprefix(acl->iptable, NULL, 0,
-							    neg));
-			} else if (strcasecmp(addr, "any") == 0) {
-				CHECK(dns_iptable_addprefix(acl->iptable, NULL, 0,
-							    !neg));
-			} else {
-				log_error("Invalid ACL element: %s", val->value);
-				result = ISC_R_FAILURE;
-				goto cleanup;
-			}
-		}
+	CHECK(cfg_parser_create(mctx, dns_lctx, &parser));
+	switch (type) {
+	case acl_type_query:
+		result = parse(parser, str_buf(new_aclstr), &allow_query,
+			       &aclobj);
+		break;
+	case acl_type_transfer:
+		result = parse(parser, str_buf(new_aclstr), &allow_transfer,
+			       &aclobj);
+		break;
+	default:
+		/* This is a bug */
+		REQUIRE("Unhandled ACL type in acl_from_ldap" == NULL);
 	}
 
-	*aclp = acl;
+	if (result != ISC_R_SUCCESS) {
+		log_error("Failed to parse ACL (%s)", aclstr);
+		goto cleanup;
+	}
 
-	return ISC_R_SUCCESS;
+	CHECK(cfg_aclconfctx_create(mctx, &aclctx));
+	CHECK(cfg_acl_fromconfig(aclobj, NULL, dns_lctx, aclctx, mctx, 0, &acl));
+
+	*aclp = acl;
+	result = ISC_R_SUCCESS;
 
 cleanup:
-	if (acl != NULL)
-		dns_acl_detach(&acl);
+	if (aclctx != NULL)
+		cfg_aclconfctx_detach(&aclctx);
+	if (aclobj != NULL)
+		cfg_obj_destroy(parser, &aclobj);
+	if (parser != NULL)
+		cfg_parser_destroy(&parser);
+	str_destroy(&new_aclstr);
 
 	return result;
 }

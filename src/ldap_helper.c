@@ -1036,7 +1036,8 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	result = ldap_entry_getvalues(entry, "idnsAllowQuery", &values);
 	if (result == ISC_R_SUCCESS) {
 		dns_acl_t *queryacl = NULL;
-		CHECK(acl_from_ldap(inst->mctx, &values, &queryacl));
+		CHECK(acl_from_ldap(inst->mctx, HEAD(values)->value,
+		      acl_type_query, &queryacl));
 		dns_zone_setqueryacl(zone, queryacl);
 		dns_acl_detach(&queryacl);
 	} else {
@@ -1048,7 +1049,8 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	result = ldap_entry_getvalues(entry, "idnsAllowTransfer", &values);
 	if (result == ISC_R_SUCCESS) {
 		dns_acl_t *transferacl = NULL;
-		CHECK(acl_from_ldap(inst->mctx, &values, &transferacl));
+		CHECK(acl_from_ldap(inst->mctx, HEAD(values)->value,
+		      acl_type_transfer, &transferacl));
 		dns_zone_setxfracl(zone, transferacl);
 		dns_acl_detach(&transferacl);
 	} else {
