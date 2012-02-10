@@ -12,6 +12,9 @@ when psearch was used.
 
 [5] The plugin could crash when LDAP contained DNS name with no data.
 
+[6] Reworked idnsAllowQuery and idnsAllowTransfer support. We now 100% follow
+BIND9 syntax.
+
 1.1.0a1
 ======
 
