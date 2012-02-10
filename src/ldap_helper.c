@@ -165,6 +165,7 @@ struct ldap_instance {
 	isc_thread_t		watcher;
 	isc_boolean_t		exiting;
 	isc_boolean_t		sync_ptr;
+	isc_boolean_t		dyn_update;
 };
 
 struct ldap_pool {
@@ -332,6 +333,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		{ "psearch",	 default_boolean(ISC_FALSE)	},
 		{ "ldap_hostname", default_string("")		},
 		{ "sync_ptr",	 default_boolean(ISC_FALSE) },
+		{ "dyn_update",	 default_boolean(ISC_FALSE) },
 		end_of_settings
 	};
 
@@ -390,6 +392,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	ldap_settings[i++].target = &ldap_inst->psearch; 
 	ldap_settings[i++].target = ldap_inst->ldap_hostname;
 	ldap_settings[i++].target = &ldap_inst->sync_ptr;
+	ldap_settings[i++].target = &ldap_inst->dyn_update;
 	CHECK(set_settings(ldap_settings, argv));
 
 	/* Validate and check settings. */
@@ -2216,6 +2219,43 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	LDAPMod *change[3] = { NULL };
 	LDAPMod *change_ptr = NULL;
 	ldap_cache_t *cache;
+	ldap_entry_t *entry;
+	ldap_valuelist_t values;
+	isc_boolean_t zone_dyn_update = ldap_inst->dyn_update;
+	char *attrs[] = {"idnsAllowSyncPTR", "idnsAllowDynUpdate", NULL};
+
+	/*
+	 * Find parent zone entry and check if Dynamic Update is allowed.
+	 * @todo Try the cache first and improve split.
+	 */
+	CHECK(str_new(mctx, &owner_dn));
+	CHECK(dnsname_to_dn(ldap_inst->zone_register, owner, owner_dn));
+	char *zone_dn = strstr(str_buf(owner_dn),", ") + 1;
+
+	ldap_conn = ldap_pool_getconnection(ldap_inst->pool);
+	CHECK(ldap_query(ldap_inst, ldap_conn, zone_dn,
+					 LDAP_SCOPE_BASE, attrs, 0,
+					 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
+
+	/* only 0 or 1 active zone can be returned from query */
+	entry = HEAD(ldap_conn->ldap_entries);
+	if (entry == NULL) {
+		log_debug(3, "Active zone %s not found", zone_dn);
+		result = ISC_R_NOTFOUND;
+		goto cleanup;
+	}
+
+	result = ldap_entry_getvalues(entry, "idnsAllowDynUpdate", &values);
+	if (result == ISC_R_SUCCESS) { /* zone specific setting found */
+		zone_dyn_update = (strcmp(HEAD(values)->value, "TRUE") == 0 )
+			? ISC_TRUE : ISC_FALSE;
+	}
+
+	if (!zone_dyn_update) {
+		log_debug(3, "Dynamic Update is not allowed in zone %s", zone_dn);
+		result = ISC_R_NOPERM;
+		goto cleanup;
+	}
 
 	if (rdlist->type == dns_rdatatype_soa && mod_op == LDAP_MOD_DELETE)
 		return ISC_R_SUCCESS;
@@ -2223,11 +2263,6 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	/* Flush modified record from the cache */
 	cache = ldap_instance_getcache(ldap_inst);
 	CHECK(discard_from_cache(cache, owner));
-
-	CHECK(str_new(mctx, &owner_dn));
-	CHECK(dnsname_to_dn(ldap_inst->zone_register, owner, owner_dn));
-
-	ldap_conn = ldap_pool_getconnection(ldap_inst->pool);
 
 	if (rdlist->type == dns_rdatatype_soa) {
 		result = modify_soa_record(ldap_conn, str_buf(owner_dn),
@@ -2245,38 +2280,18 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 
 	/* Keep the PTR of corresponding A/AAAA record synchronized. */
 	if (rdlist->type == dns_rdatatype_a || rdlist->type == dns_rdatatype_aaaa) {
-		
-		ldap_entry_t *entry;
-		ldap_valuelist_t values;
-		char *attrs[] = {"idnsAllowSyncPTR", "idnsAllowDynUpdate", NULL};
-
 		/* Look for zone "idnsAllowSyncPTR" attribute when plugin 
 		 * option "sync_ptr" is set to "no" otherwise the synchronization
 		 * is always enabled for all zones. */
 		if (ldap_inst->sync_ptr == ISC_FALSE) {
-			/* 
-			 * Find parent zone entry.
-			 * @todo Try the cache first and improve split.
-			 */
-			char *zone_dn = strstr(str_buf(owner_dn),", ") + 1;
-						
-			CHECK(ldap_query(ldap_inst, ldap_conn, zone_dn,
-							 LDAP_SCOPE_BASE, attrs, 0,
-							 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
 			
 			/* Search for zone entry with 'idnsAllowSyncPTR == "TRUE"'. */
-			for (entry = HEAD(ldap_conn->ldap_entries);
-				 entry != NULL;
-				 entry = NEXT(entry, link)) {
-				result = ldap_entry_getvalues(entry, "idnsAllowSyncPTR", &values);
-				if (result != ISC_R_SUCCESS) 
-					continue;
-
-				if (strcmp(HEAD(values)->value, "TRUE") != 0) {
-					entry = NULL;
-				}
-				break;
+			result = ldap_entry_getvalues(entry, "idnsAllowSyncPTR", &values);
+			if (result != ISC_R_SUCCESS
+				|| strcmp(HEAD(values)->value, "TRUE") != 0) {
+				entry = NULL;
 			}
+
 			/* Any valid zone was found. */
 			if (entry == NULL) {
 				log_debug(3, "Sync PTR is not allowed in zone %s", zone_dn);
