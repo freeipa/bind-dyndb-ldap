@@ -282,7 +282,7 @@ static isc_result_t
 get_types(isc_mem_t *mctx, const cfg_obj_t *obj, dns_rdatatype_t **typesp,
 	  unsigned int *np)
 {
-	isc_result_t result;
+	isc_result_t result = ISC_R_SUCCESS;
 	unsigned int i;
 	unsigned int n = 0;
 	const cfg_listelt_t *el;
