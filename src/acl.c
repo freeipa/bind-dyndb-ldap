@@ -45,6 +45,7 @@
 #include <isc/buffer.h>
 #include <isc/log.h>
 #include <isc/mem.h>
+#include <isc/once.h>
 #include <isc/result.h>
 #include <isc/util.h>
 
@@ -64,6 +65,7 @@
 #include "util.h"
 #include "log.h"
 
+static isc_once_t once = ISC_ONCE_INIT;
 static cfg_type_t *update_policy;
 
 static cfg_type_t *
@@ -123,18 +125,18 @@ get_type_from_clause_array(const cfg_type_t *cfg_type, const char *name)
 	return ret;
 }
 
-static cfg_type_t *
-get_update_policy_type(void)
+static void
+init_cfgtypes(void)
 {
-	cfg_type_t *type;
+	
+	cfg_type_t *zonecfg;
 
-	type = &cfg_type_namedconf;
-	type = get_type_from_clause_array(type, "zone");
-	type = get_type_from_tuplefield(type, "options");
-	type = get_type_from_clause_array(type, "update-policy");
-	//type = (cfg_type_t *)type->of;
+	zonecfg = &cfg_type_namedconf;
+	zonecfg = get_type_from_clause_array(zonecfg, "zone");
 
-	return type;
+	update_policy = get_type_from_tuplefield(zonecfg, "options");
+	update_policy = get_type_from_clause_array(update_policy, "update-policy");
+
 }
 
 static isc_result_t
@@ -149,8 +151,7 @@ parse(cfg_parser_t *parser, const char *string, cfg_obj_t **objp)
 	REQUIRE(string != NULL);
 	REQUIRE(objp != NULL && *objp == NULL);
 
-	/* FIXME: Only do this once. */
-	update_policy = get_update_policy_type();
+	RUNTIME_CHECK(isc_once_do(&once, init_cfgtypes) == ISC_R_SUCCESS);
 
 	string_len = strlen(string);
 	isc_buffer_init(&buffer, string, string_len);
