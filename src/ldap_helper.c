@@ -2226,11 +2226,17 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 
 	/*
 	 * Find parent zone entry and check if Dynamic Update is allowed.
-	 * @todo Try the cache first and improve split.
+	 * @todo Try the cache first and improve split: SOA records are problematic.
 	 */
 	CHECK(str_new(mctx, &owner_dn));
 	CHECK(dnsname_to_dn(ldap_inst->zone_register, owner, owner_dn));
-	char *zone_dn = strstr(str_buf(owner_dn),", ") + 1;
+	char *zone_dn = strstr(str_buf(owner_dn),", ");
+
+	if (zone_dn == NULL) { /* SOA record; owner = zone => owner_dn = zone_dn */
+		zone_dn = str_buf(owner_dn);
+	} else {
+		zone_dn += 1; /* skip whitespace */
+	}
 
 	ldap_conn = ldap_pool_getconnection(ldap_inst->pool);
 	CHECK(ldap_query(ldap_inst, ldap_conn, zone_dn,
@@ -2257,9 +2263,10 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		goto cleanup;
 	}
 
-	if (rdlist->type == dns_rdatatype_soa && mod_op == LDAP_MOD_DELETE)
-		return ISC_R_SUCCESS;
-
+	if (rdlist->type == dns_rdatatype_soa && mod_op == LDAP_MOD_DELETE) {
+		result = ISC_R_SUCCESS;
+		goto cleanup;
+	}
 	/* Flush modified record from the cache */
 	cache = ldap_instance_getcache(ldap_inst);
 	CHECK(discard_from_cache(cache, owner));
