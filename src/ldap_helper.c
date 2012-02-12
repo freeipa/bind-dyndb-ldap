@@ -2222,6 +2222,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	ldap_entry_t *entry;
 	ldap_valuelist_t values;
 	isc_boolean_t zone_dyn_update = ldap_inst->dyn_update;
+	isc_boolean_t zone_sync_ptr = ldap_inst->sync_ptr;
 	char *attrs[] = {"idnsAllowSyncPTR", "idnsAllowDynUpdate", NULL};
 
 	/*
@@ -2287,25 +2288,23 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 
 	/* Keep the PTR of corresponding A/AAAA record synchronized. */
 	if (rdlist->type == dns_rdatatype_a || rdlist->type == dns_rdatatype_aaaa) {
-		/* Look for zone "idnsAllowSyncPTR" attribute when plugin 
-		 * option "sync_ptr" is set to "no" otherwise the synchronization
-		 * is always enabled for all zones. */
-		if (ldap_inst->sync_ptr == ISC_FALSE) {
-			
-			/* Search for zone entry with 'idnsAllowSyncPTR == "TRUE"'. */
-			result = ldap_entry_getvalues(entry, "idnsAllowSyncPTR", &values);
-			if (result != ISC_R_SUCCESS
-				|| strcmp(HEAD(values)->value, "TRUE") != 0) {
-				entry = NULL;
-			}
+		/*
+		 * Look for zone "idnsAllowSyncPTR" attribute. If attribute do not exist,
+		 * use global plugin configuration: option "sync_ptr"
+		 */
 
-			/* Any valid zone was found. */
-			if (entry == NULL) {
-				log_debug(3, "Sync PTR is not allowed in zone %s", zone_dn);
-				goto cleanup;
-			}
-			log_debug(3, "Sync PTR is allowed for zone %s", zone_dn);
+		result = ldap_entry_getvalues(entry, "idnsAllowSyncPTR", &values);
+		if (result == ISC_R_SUCCESS) { /* zone specific setting found */
+			zone_sync_ptr = (strcmp(HEAD(values)->value, "TRUE") == 0)
+				? ISC_TRUE : ISC_FALSE;
 		}
+
+		if (!zone_sync_ptr) {
+			log_debug(3, "Sync PTR is not allowed in zone %s", zone_dn);
+			result = ISC_R_SUCCESS;
+			goto cleanup;
+		}
+		log_debug(3, "Sync PTR is allowed for zone %s", zone_dn);
 
 		/* Get string with IP address from change request
 		 * and convert it to in_addr structure. */
@@ -2313,6 +2312,8 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		if ((ip = inet_addr(change[0]->mod_values[0])) == 0) {
 			log_bug("Could not convert IP address from string '%s'.",
 			        change[0]->mod_values[0]);
+			result = ISC_R_FAILURE;
+			goto cleanup;
 		}
 		
 		/* Use internal net address representation. */
@@ -2347,7 +2348,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {
 			log_error("Can not synchronize PTR record, ldapdb_rdatalist_get = %d", 
 			          result);
-			result = ISC_R_SUCCESS; /* Problem only with PTR synchronization. */
+			result = ISC_R_FAILURE; /* Synchronization required: report error. */
 			goto cleanup;
 		}
 
@@ -2356,10 +2357,10 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		 */
 		if ((result == ISC_R_SUCCESS && mod_op == LDAP_MOD_ADD) ||
 			(result == ISC_R_NOTFOUND && mod_op == LDAP_MOD_DELETE)) {
-			log_bug("Can not synchronize PTR record for A/AAAA one (%s) - %s.", 
+			log_debug(2,"Can not synchronize PTR record for A/AAAA one (%s) - record %s.",
 			        str_buf(owner_dn), 
 			        ((mod_op == LDAP_MOD_ADD)?"already exists":"not found"));
-			result = ISC_R_SUCCESS;
+			result = ISC_R_SUCCESS; /* @todo: More checks for ADD operation. */
 			goto cleanup;
 		}
 
@@ -2376,32 +2377,34 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		 */
 		char *owner_zone_dn_ptr = strstr(str_buf(owner_dn_ptr),", ") + 1;
 		
-		/* Get attribute "idnsAllowDynUpdate" for reverse zone. */
+		/* Get attribute "idnsAllowDynUpdate" for reverse zone or use default. */
 		ldap_query_free(ldap_conn);
+		zone_dyn_update = ldap_inst->dyn_update;
 		CHECK(ldap_query(ldap_inst, ldap_conn, owner_zone_dn_ptr,
 						 LDAP_SCOPE_BASE, attrs, 0,
 						 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
-			
-		for (entry = HEAD(ldap_conn->ldap_entries);
-			 entry != NULL;
-			 entry = NEXT(entry, link)) {
-			result = ldap_entry_getvalues(entry, "idnsAllowDynUpdate", &values);
-			if (result != ISC_R_SUCCESS) 
-				continue;
 
-			if (strcmp(HEAD(values)->value, "TRUE") != 0) {
-				entry = NULL;
-			}
-			break;
-		}
-
-		/* Any valid reverse zone was found. */
+		/* Only 0 or 1 active zone can be returned from query. */
+		entry = HEAD(ldap_conn->ldap_entries);
 		if (entry == NULL) {
-			log_debug(3, "Dynamic Update is not allowed in zone %s", owner_zone_dn_ptr);
+			log_debug(3, "Active zone %s not found", zone_dn);
+			result = ISC_R_NOTFOUND;
 			goto cleanup;
 		}
-		log_debug(3, "Dynamic Update  is allowed for zone %s", owner_zone_dn_ptr);
 
+		result = ldap_entry_getvalues(entry, "idnsAllowDynUpdate", &values);
+		if (result == ISC_R_SUCCESS) { /* zone specific setting found */
+			zone_dyn_update = (strcmp(HEAD(values)->value, "TRUE") == 0)
+				? ISC_TRUE : ISC_FALSE;
+		}
+
+		if (!zone_dyn_update) {
+			log_debug(3, "Dynamic Update is not allowed in zone %s", owner_zone_dn_ptr);
+			result = ISC_R_NOPERM;
+			goto cleanup;
+		}
+
+		log_debug(3, "Dynamic Update is allowed for zone %s", owner_zone_dn_ptr);
 		
 		/* 
 		 * Get string representation of PTR record value.
@@ -2428,7 +2431,9 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 			char **vals = NULL;
 			CHECK(ldap_rdata_to_char_array(mctx, HEAD(rdlist_ptr->rdata), &vals));
 			if (vals != NULL && vals[0] != NULL && strcmp(vals[0], str_buf(str_ptr)) != 0) {
-				log_bug("Can not delete PTR record, needed value %s\n", str_buf(str_ptr));
+				log_debug(3,"Cannot delete PTR record, unexpected value found "
+					"(expected \"%s\")\n", str_buf(str_ptr));
+				result = ISC_R_FAILURE;
 				goto cleanup;
 			}
 		}

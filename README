@@ -52,7 +52,7 @@ example zone ldif is available in the doc directory.
 
 * idnsAllowDynUpdate
 	Allow dynamic update of records in this zone. If attribute doesn't exist,
-	value from plugin configuration will be used. 
+	value "dyn_update" from plugin configuration will be used.
 
 * idnsAllowQuery
 	Specifies BIND9 zone ACL element. This attribute can be set multiple
@@ -80,7 +80,9 @@ example zone ldif is available in the doc directory.
 	If not set then zone inherits global allow-transfer from named.conf.
 
 * idnsAllowSyncPTR
-	Allow synchronization of PTR records in zone with A/AAAA records.
+	Allow synchronization of A/AAAA records in zone with PTR records in reverse
+	zone. Reverse zone must have Dynamic update allowed. 
+	(See idnsAllowDynUpdate attribute and dyn_update configuration parameter.)
 
 * idnsForwardPolicy
 	Specifies BIND9 zone forward policy. Only relevant in conjunction 
