@@ -15,6 +15,8 @@ when psearch was used.
 [6] Reworked idnsAllowQuery and idnsAllowTransfer support. We now 100% follow
 BIND9 syntax.
 
+[7] Fixed various bugs in code which synchronizes A/AAAA and it's PTR records.
+
 1.1.0a1
 ======
 
