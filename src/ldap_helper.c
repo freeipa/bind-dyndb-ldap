@@ -2235,7 +2235,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	char *zone_dn = strstr(str_buf(owner_dn),", ");
 
 	if (zone_dn == NULL) { /* SOA record; owner = zone => owner_dn = zone_dn */
-		zone_dn = str_buf(owner_dn);
+		zone_dn = (char *)str_buf(owner_dn);
 	} else {
 		zone_dn += 1; /* skip whitespace */
 	}
@@ -2764,7 +2764,7 @@ update_config(isc_task_t *task, isc_event_t *event)
 	ldap_psearchevent_t *pevent = (ldap_psearchevent_t *)event;
 	isc_result_t result ;
 	ldap_instance_t *inst = NULL;
-	ldap_connection_t *conn;
+	ldap_connection_t *conn = NULL;
 	ldap_entry_t *entry;
 	isc_mem_t *mctx;
 	char *attrs[] = {
@@ -2797,9 +2797,11 @@ update_config(isc_task_t *task, isc_event_t *event)
 			goto cleanup;
 	}
 
-	ldap_pool_putconnection(inst->pool, conn);
 
 cleanup:
+	if (conn != NULL)
+		ldap_pool_putconnection(inst->pool, conn);
+
 	if (result != ISC_R_SUCCESS)
 		log_error("update_config (psearch) failed for %s. "
 			  "Configuration can be outdated, run `rndc reload`",
