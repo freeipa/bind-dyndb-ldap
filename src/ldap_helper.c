@@ -2223,6 +2223,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	ldap_valuelist_t values;
 	isc_boolean_t zone_dyn_update = ldap_inst->dyn_update;
 	isc_boolean_t zone_sync_ptr = ldap_inst->sync_ptr;
+	ld_string_t *owner_dn_ptr = NULL;
 	char *attrs[] = {"idnsAllowSyncPTR", "idnsAllowDynUpdate", NULL};
 
 	/*
@@ -2365,7 +2366,6 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		}
 
 		/* Get LDAP entry indentifier. */ 
-		ld_string_t *owner_dn_ptr = NULL;
 		CHECK(str_new(mctx, &owner_dn_ptr));   
 		CHECK(dnsname_to_dn(ldap_inst->zone_register, dns_fixedname_name(&name),
 		      owner_dn_ptr));
@@ -2474,6 +2474,7 @@ cleanup:
 	if (ldap_conn != NULL)
 		ldap_pool_putconnection(ldap_inst->pool, ldap_conn);
 
+	str_destroy(&owner_dn_ptr);
 	str_destroy(&owner_dn);
 	free_ldapmod(mctx, &change[0]);
 	free_ldapmod(mctx, &change[1]);
