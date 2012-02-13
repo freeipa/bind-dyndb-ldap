@@ -453,7 +453,7 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
      dns_rdataset_t *sigrdataset)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
-	isc_result_t result;
+	isc_result_t result = ISC_R_FAILURE;
 	ldapdb_node_t *node = NULL;
 	dns_rdatalist_t *rdlist = NULL;
 	isc_boolean_t is_cname = ISC_FALSE;
