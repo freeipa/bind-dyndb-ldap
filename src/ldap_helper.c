@@ -1623,8 +1623,13 @@ ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 		  str_buf(ldap_conn->query_string));
 
 	if (ldap_conn->handle == NULL) {
-		log_bug("ldap_conn->handle is NULL");
-		return ISC_R_FAILURE;
+		/*
+		 * handle can be NULL when the first connection to LDAP wasn't
+		 * successful
+		 */
+		result = ldap_connect(ldap_inst, ldap_conn, ISC_FALSE);
+		if (result != ISC_R_SUCCESS)
+			return result;
 	}
 
 	do {
