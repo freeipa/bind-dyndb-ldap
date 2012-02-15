@@ -1103,6 +1103,7 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 	int zone_count = 0;
 	ldap_entry_t *entry;
 	dns_rbt_t *rbt = NULL;
+	isc_boolean_t invalidate_nodechain = ISC_FALSE;
 	char *config_attrs[] = {
 		"idnsForwardPolicy", "idnsForwarders", 
 		"idnsAllowSyncPTR", "idnsZoneRefresh",
@@ -1185,6 +1186,7 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 	INIT_BUFFERED_NAME(aname);
 	
 	dns_rbtnodechain_init(&chain, ldap_inst->mctx);
+	invalidate_nodechain = ISC_TRUE;
 	result = dns_rbtnodechain_first(&chain, zr_get_rbt(ldap_inst->zone_register), NULL, NULL);
 	
 	while (result == DNS_R_NEWORIGIN || result == ISC_R_SUCCESS) {
@@ -1226,7 +1228,9 @@ cleanup:
 	if (rbt != NULL)
 		dns_rbt_destroy(&rbt); 
 
-	dns_rbtnodechain_invalidate(&chain);	
+	if (invalidate_nodechain)
+		dns_rbtnodechain_invalidate(&chain);
+
 	ldap_pool_putconnection(ldap_inst->pool, ldap_conn);
 
 	log_debug(2, "finished refreshing list of zones");
