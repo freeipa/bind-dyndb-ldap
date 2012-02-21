@@ -88,7 +88,7 @@ static dns_dbiteratormethods_t dbiterator_methods = {
 
 typedef struct {
 	dns_dbiterator_t		common;
-	ldapdb_node_t		*current;
+	ldapdb_node_t			*current;
 	ldapdb_nodelist_t		nodelist;
 } ldap_dbiterator_t;
 
@@ -675,19 +675,17 @@ createiterator(dns_db_t *db,
 	       dns_dbiterator_t **iteratorp)
 {
 	isc_result_t result;
-	ldap_dbiterator_t *ldapiter;
-	dns_dbiterator_t *iterator = NULL;
+	ldap_dbiterator_t *ldapiter = NULL;
 	
 	CHECKED_MEM_GET_PTR(db->mctx, ldapiter);
-	iterator = &ldapiter->common;
-	iterator->magic = DNS_DBITERATOR_MAGIC;
-	iterator->methods = &dbiterator_methods;
-	iterator->db = NULL;
-	attach(db, &iterator->db);
+	ZERO_PTR(ldapiter);
+	ldapiter->common.magic = DNS_DBITERATOR_MAGIC;
+	ldapiter->common.methods = &dbiterator_methods;
+	attach(db, &ldapiter->common.db);
 #if LIBDNS_VERSION_MAJOR >= 50
 	UNUSED(options);
 #else
-	iterator->relative_names = relative_names;
+	ldapiter->common.relative_names = relative_names;
 #endif
 
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
@@ -704,7 +702,8 @@ createiterator(dns_db_t *db,
 		return (ISC_R_SUCCESS);
 
 cleanup:
-	dbiterator_destroy(iteratorp);
+	if (ldapiter != NULL)
+		dbiterator_destroy((dns_dbiterator_t **) &ldapiter);
 	return result;
 }
 
@@ -718,17 +717,22 @@ dbiterator_destroy(dns_dbiterator_t **iteratorp)
 {
 	dns_dbiterator_t *iterator = *iteratorp;
 	ldap_dbiterator_t *ldapiter = (ldap_dbiterator_t *) iterator;
-	
+	dns_db_t *db;
+
+	REQUIRE(iteratorp != NULL && *iteratorp != NULL);
+
+	db = iterator->db;
+
 	ldapiter->current = HEAD(ldapiter->nodelist);
 	while (ldapiter->current != NULL) {
 		dns_dbnode_t *node = (dns_dbnode_t *) ldapiter->current;
 		ldapiter->current = NEXT(ldapiter->current, link);
-		detachnode(iterator->db, &node);
+		detachnode(db, &node);
 	}
-	dns_db_t *db = iterator->db;
-	if (iterator != NULL && iterator->db != NULL)
-		detach(&db);
-	SAFE_MEM_PUT_PTR(iterator->db->mctx, *iteratorp);
+
+	SAFE_MEM_PUT_PTR(db->mctx, ldapiter);
+	*iteratorp = NULL;
+	detach(&db);
 }
 
 static isc_result_t
