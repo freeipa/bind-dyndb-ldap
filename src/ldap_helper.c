@@ -1389,6 +1389,7 @@ ldapdb_nodelist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *nam
 	ldap_entry_t *entry;
 	ld_string_t *string = NULL;
 	ldapdb_node_t *node;
+	dns_name_t node_name;
 
 	REQUIRE(mctx != NULL);
 	REQUIRE(ldap_inst != NULL);
@@ -1414,7 +1415,6 @@ ldapdb_nodelist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *nam
 		entry != NULL;
 		entry = NEXT(entry, link)) {
 		node = NULL;	
-		dns_name_t node_name;
 		dns_name_init(&node_name, NULL);
 		if (dn_to_dnsname(mctx, entry->dn,  &node_name, NULL)
 		    != ISC_R_SUCCESS) {
@@ -1423,7 +1423,7 @@ ldapdb_nodelist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *nam
 		}
 
 		result = ldapdbnode_create(mctx, &node_name, &node);
-		//dns_name_reset(&node_name);
+		dns_name_free(&node_name, mctx);
 		if (result == ISC_R_SUCCESS) {
 			result = ldap_parse_rrentry(mctx, entry, ldap_conn,
 		                       origin, ldap_inst->fake_mname,
