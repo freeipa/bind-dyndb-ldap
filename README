@@ -15,7 +15,7 @@ Hopefully, the patch will once be included in the official BIND release.
 ===========
 * support for dynamic updates
 * SASL authentication
-* persistent search for zones
+* persistent search for zones (experimental)
 
 
 3. Installation
@@ -244,6 +244,22 @@ base for entries with object class idnsZone, for which the
 idnsZoneActive attribute is set to True. For each entry it will find, it
 will register a new zone with BIND. The LDAP back-end will keep each
 record it gets from LDAP in its cache for 5 minutes.
+
+5.3 Configuration in LDAP
+-------------------------
+Some options can be configured in LDAP as idnsConfigObject attributes.
+Value configured in LDAP has priority over value in configuration file.
+(This behavior will change in future versions!)
+Configuration is updated at same time as zone refresh.
+
+Following options are supported (option = attribute equivalent):
+
+forwarders = idnsForwarders (BIND native option)
+forward = idnsForwardPolicy (BIND native option)
+sync_ptr = idnsAllowSyncPTR
+zone_refresh = idnsZoneRefresh
+
+Forward policy option cannot be set without setting forwarders at the same time.
 
 
 6. License

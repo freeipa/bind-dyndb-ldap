@@ -39,4 +39,8 @@ isc_result_t
 manager_get_ldap_instance(const char *name,
 			  ldap_instance_t **ldap_inst);
 
+isc_result_t
+manager_get_db_timer(const char *name,
+			  isc_timer_t **timer);
+
 #endif /* !_LD_ZONE_MANAGER_H_ */

@@ -45,6 +45,8 @@
 #include <isc/time.h>
 #include <isc/util.h>
 #include <isc/netaddr.h>
+#include <isc/parseint.h>
+#include <isc/timer.h>
 
 #include <alloca.h>
 #define LDAP_DEPRECATED 1
@@ -93,8 +95,10 @@
  * Note about locking in this source.
  *
  * ldap_instance_t structure is equal to dynamic-db {}; statement in named.conf.
- * Attributes in ldap_instance_t can be modified only in new_ldap_instance
- * function, which means server is started or reloaded.
+ * Attributes in ldap_instance_t are be modified in new_ldap_instance function,
+ * which means server is started or reloaded (running single-thread).
+ * Before modifying at other places, switch to single-thread mode via
+ * isc_task_beginexclusive() and then return back via isc_task_endexclusive()!
  *
  * ldap_connection_t structure represents connection to the LDAP database and
  * per-connection specific data. Access is controlled via
@@ -856,6 +860,7 @@ parse_nameserver(char *token, struct sockaddr *sa)
 	return result;
 }
 
+/* TODO: Code hardering. */
 static void *
 get_in_addr(struct sockaddr *sa)
 {
@@ -960,7 +965,22 @@ ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst)
 {
 	isc_result_t result;
 	ldap_valuelist_t values;
+	isc_boolean_t unlock_required = ISC_FALSE;
+	isc_timer_t *timer_inst;
+	isc_interval_t timer_interval;
+	isc_uint32_t interval_sec;
+	isc_timertype_t timer_type;
 
+	/* Before changing parameters transit to single-thread operation. */
+	result = isc_task_beginexclusive(inst->task);
+	RUNTIME_CHECK(result == ISC_R_SUCCESS ||
+					result == ISC_R_LOCKBUSY);
+	if (result == ISC_R_SUCCESS)
+		unlock_required = ISC_TRUE;
+
+	log_debug(3, "Parsing configuration object");
+
+	/* idnsForwardPolicy change is handled by configure_zone_forwarders() */
 	result = ldap_entry_getvalues(entry, "idnsForwarders", &values);
 	if (result == ISC_R_SUCCESS) {
 		log_debug(2, "Setting global forwarders");
@@ -969,7 +989,38 @@ ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst)
 			log_error("Global forwarder could not be set up.");
 		}
 	}
-	/* TODO: handle updates of other config attrs */
+
+	result = ldap_entry_getvalues(entry, "idnsAllowSyncPTR", &values);
+	if (result == ISC_R_SUCCESS) {
+		log_debug(2, "Setting global AllowSyncPTR = %s", HEAD(values)->value);
+		inst->sync_ptr = (strcmp(HEAD(values)->value, "TRUE") == 0)
+						? ISC_TRUE : ISC_FALSE;
+	}
+
+	result = ldap_entry_getvalues(entry, "idnsZoneRefresh", &values);
+	if (result == ISC_R_SUCCESS) {
+		log_debug(2, "Setting global ZoneRefresh timer = %s", HEAD(values)->value);
+		RUNTIME_CHECK(manager_get_db_timer(inst->db_name, &timer_inst) == ISC_R_SUCCESS);
+
+		result = isc_parse_uint32(&interval_sec, HEAD(values)->value, 10);
+		if (result != ISC_R_SUCCESS) {
+			log_error("Could not parse ZoneRefresh interval");
+			goto cleanup;
+		}
+		isc_interval_set(&timer_interval, interval_sec, 0);
+		/* update interval only, not timer type */
+		timer_type = isc_timer_gettype(timer_inst);
+		result = isc_timer_reset(timer_inst, timer_type, NULL,
+				&timer_interval, ISC_TRUE);
+		if (result != ISC_R_SUCCESS) {
+			log_error("Could not adjust ZoneRefresh timer");
+			goto cleanup;
+		}
+	}
+
+cleanup:
+	if (unlock_required == ISC_TRUE)
+		isc_task_endexclusive(inst->task);
 
 	return ISC_R_SUCCESS;   
 }

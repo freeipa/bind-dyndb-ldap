@@ -23,6 +23,7 @@
 #include <isc/result.h>
 #include <isc/task.h>
 #include <isc/timer.h>
+#include <isc/boolean.h>
 #include <isc/util.h>
 
 #include <dns/dynamic_db.h>
@@ -112,6 +113,9 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 	isc_result_t result;
 	db_instance_t *db_inst = NULL;
 	unsigned int zone_refresh;
+	isc_timermgr_t *timer_mgr;
+	isc_interval_t interval;
+	isc_timertype_t timer_type = isc_timertype_inactive;
 	isc_task_t *task;
 	setting_t manager_settings[] = {
 		{ "zone_refresh", default_uint(0) },
@@ -147,6 +151,28 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 	CHECK(new_ldap_instance(mctx, db_inst->name, argv, dyndb_args, task,
 				&db_inst->ldap_inst));
 
+	/* Add a timer to periodically refresh the zones. Create inactive timer if
+	 * zone refresh is disabled. (For simplifying configuration change.)
+	 *
+	 * Timer must exist before refresh_zones_from_ldap() is called. */
+	timer_mgr = dns_dyndb_get_timermgr(dyndb_args);
+	isc_interval_set(&interval, zone_refresh, 0);
+
+	if (zone_refresh) {
+		timer_type = isc_timertype_ticker;
+	} else {
+		timer_type = isc_timertype_inactive;
+	}
+
+	CHECK(isc_timer_create(timer_mgr, timer_type, NULL,
+					   &interval, task, refresh_zones_action,
+					   db_inst, &db_inst->timer));
+
+	/* instance must be in list while calling refresh_zones_from_ldap() */
+	LOCK(&instance_list_lock);
+	APPEND(instance_list, db_inst, link);
+	UNLOCK(&instance_list_lock);
+
 	result = refresh_zones_from_ldap(db_inst->ldap_inst);
 	if (result != ISC_R_SUCCESS) {
 		/* In case we don't find any zones, we at least return
@@ -154,30 +180,23 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 		result = ISC_R_SUCCESS;
 		log_error("no valid zones found");
 		/*
-		 * Do not jump to cleanup. Rather create timer for zone refresh.
+		 * Do not jump to cleanup. Rather start timer for zone refresh.
 		 * This is just a workaround when the LDAP server is not available
 		 * during the initialization process.
 		 *
-		 * goto cleanup;
+		 * If no period is set (i.e. refresh is disabled in config), use 30 sec.
+		 * Timer is already started for cases where period != 0.
 		 */
+		if (!zone_refresh) { /* Enforce zone refresh in emergency situation. */
+			isc_interval_set(&interval, 30, 0);
+			result = isc_timer_reset(db_inst->timer, isc_timertype_ticker, NULL,
+						&interval, ISC_TRUE);
+			if (result != ISC_R_SUCCESS) {
+					log_error("Could not adjust ZoneRefresh timer while init");
+					goto cleanup;
+			}
+		}
 	}
-
-	/* Add a timer to periodically refresh the zones. */
-	if (zone_refresh) {
-		isc_timermgr_t *timer_mgr;
-		isc_interval_t interval;
-
-		timer_mgr = dns_dyndb_get_timermgr(dyndb_args);
-		isc_interval_set(&interval, zone_refresh, 0);
-
-		CHECK(isc_timer_create(timer_mgr, isc_timertype_ticker, NULL,
-				       &interval, task, refresh_zones_action,
-				       db_inst, &db_inst->timer));
-	}
-
-	LOCK(&instance_list_lock);
-	APPEND(instance_list, db_inst, link);
-	UNLOCK(&instance_list_lock);
 
 	return ISC_R_SUCCESS;
 
@@ -243,4 +262,18 @@ find_db_instance(const char *name, db_instance_t **instance)
 	}
 
 	return ISC_R_NOTFOUND;
+}
+
+isc_result_t
+manager_get_db_timer(const char *name, isc_timer_t **timer) {
+	isc_result_t result;
+	db_instance_t *db_inst = NULL;
+
+	REQUIRE(name != NULL);
+
+	result = find_db_instance(name, &db_inst);
+	if (result == ISC_R_SUCCESS)
+		*timer = db_inst->timer;
+
+	return result;
 }
