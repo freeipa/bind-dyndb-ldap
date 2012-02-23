@@ -965,18 +965,13 @@ ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst)
 {
 	isc_result_t result;
 	ldap_valuelist_t values;
-	isc_boolean_t unlock_required = ISC_FALSE;
+	isc_boolean_t sync_ptr_new;
 	isc_timer_t *timer_inst;
 	isc_interval_t timer_interval;
 	isc_uint32_t interval_sec;
 	isc_timertype_t timer_type;
 
-	/* Before changing parameters transit to single-thread operation. */
-	result = isc_task_beginexclusive(inst->task);
-	RUNTIME_CHECK(result == ISC_R_SUCCESS ||
-					result == ISC_R_LOCKBUSY);
-	if (result == ISC_R_SUCCESS)
-		unlock_required = ISC_TRUE;
+	/* BIND functions are thread safe, lock only ldap instance 'inst'. */
 
 	log_debug(3, "Parsing configuration object");
 
@@ -993,8 +988,18 @@ ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	result = ldap_entry_getvalues(entry, "idnsAllowSyncPTR", &values);
 	if (result == ISC_R_SUCCESS) {
 		log_debug(2, "Setting global AllowSyncPTR = %s", HEAD(values)->value);
-		inst->sync_ptr = (strcmp(HEAD(values)->value, "TRUE") == 0)
+		sync_ptr_new = (strcmp(HEAD(values)->value, "TRUE") == 0)
 						? ISC_TRUE : ISC_FALSE;
+
+		if (inst->sync_ptr != sync_ptr_new) { /* lock BIND only if necessary */
+			result = isc_task_beginexclusive(inst->task);
+			RUNTIME_CHECK(result == ISC_R_SUCCESS ||
+							result == ISC_R_LOCKBUSY);
+			inst->sync_ptr = sync_ptr_new;
+			if (result == ISC_R_SUCCESS) {
+				isc_task_endexclusive(inst->task);
+			}
+		}
 	}
 
 	result = ldap_entry_getvalues(entry, "idnsZoneRefresh", &values);
@@ -1019,9 +1024,7 @@ ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	}
 
 cleanup:
-	if (unlock_required == ISC_TRUE)
-		isc_task_endexclusive(inst->task);
-
+	/* Configuration errors are not fatal. */
 	return ISC_R_SUCCESS;   
 }
 
