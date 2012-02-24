@@ -113,12 +113,14 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 	isc_result_t result;
 	db_instance_t *db_inst = NULL;
 	unsigned int zone_refresh;
+	isc_boolean_t psearch;
 	isc_timermgr_t *timer_mgr;
 	isc_interval_t interval;
 	isc_timertype_t timer_type = isc_timertype_inactive;
 	isc_task_t *task;
 	setting_t manager_settings[] = {
 		{ "zone_refresh", default_uint(0) },
+		{ "psearch", default_boolean(0) },
 		end_of_settings
 	};
 
@@ -140,6 +142,7 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 
 	/* Parse settings. */
 	manager_settings[0].target = &zone_refresh;
+	manager_settings[1].target = &psearch;
 	CHECK(set_settings(manager_settings, argv));
 
 	CHECKED_MEM_GET_PTR(mctx, db_inst);
@@ -158,7 +161,12 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 	timer_mgr = dns_dyndb_get_timermgr(dyndb_args);
 	isc_interval_set(&interval, zone_refresh, 0);
 
-	if (zone_refresh) {
+	if (zone_refresh && psearch) {
+		log_error("Zone refresh and persistent search are enabled at same time! "
+				"Only persistent search will be used.");
+	}
+
+	if (zone_refresh && !psearch) {
 		timer_type = isc_timertype_ticker;
 	} else {
 		timer_type = isc_timertype_inactive;
