@@ -776,108 +776,6 @@ cleanup:
 }
 
 
-/**
- * @brief 
- *
- * @param nameserver
- * @param sa
- *
- * @return 
- */
-static isc_result_t
-sockaddr_fromchar(char *nameserver, struct sockaddr *sa)
-{
-	isc_result_t result = ISC_R_FAILURE;
-	struct addrinfo	*ai;
-	struct addrinfo	hints;
-	int res;
-
-	REQUIRE(sa != NULL);
-
-	memset(&hints, 0, sizeof(hints));
-	hints.ai_flags = AI_NUMERICHOST;
-
-	res = getaddrinfo(nameserver, NULL, &hints, &ai);
-	if (res == 0) {
-		if ((ai->ai_family == AF_INET) || (ai->ai_family == AF_INET6)) {
-			memcpy(sa, ai->ai_addr, ai->ai_addrlen);
-			result = ISC_R_SUCCESS;
-		}
-		freeaddrinfo(ai);
-	}
-	return result;
-}
-
-/**
- * Parse nameserver IP address with or without
- * port separated with a dot.
- *
- * @example
- * "192.168.0.100.53" -> { address:192.168.0.100,  port:53 }
- *
- * @param token 
- * @param sa Socket address structure.
- */
-static isc_result_t
-parse_nameserver(char *token, struct sockaddr *sa)
-{
-	isc_result_t result = ISC_R_FAILURE;
-	char *dot;
-	long number;
-
-	REQUIRE(token != NULL);
-	REQUIRE(sa != NULL);
-
-	result = sockaddr_fromchar(token, sa);
-	if (result == ISC_R_SUCCESS)
-		return result;
-
-	dot = strrchr(token, '.');
-	if (dot == NULL)
-		return ISC_R_FAILURE;
-	
-	number = strtol(dot + 1, NULL, 10);
-	if ((number < 0) || (number > UINT16_MAX))
-		return ISC_R_FAILURE;
-	
-	*dot = '\0';
-	result = sockaddr_fromchar(token, sa);
-	*dot = '.'; /* restore value */
-	if (result == ISC_R_SUCCESS) {
-		in_port_t port = htons(number);
-		switch (sa->sa_family) {
-		case AF_INET :
-			((struct sockaddr_in *)sa)->sin_port = port;
-			break;
-		case AF_INET6 :
-			((struct sockaddr_in6 *)sa)->sin6_port = port;
-			break;
-		default:
-			log_bug("Unknown sa_family type");
-			return ISC_R_FAILURE;
-		}
-	}
-	return result;
-}
-
-/* TODO: Code hardering. */
-static void *
-get_in_addr(struct sockaddr *sa)
-{
-	if (sa->sa_family == AF_INET)
-		return &(((struct sockaddr_in*)sa)->sin_addr);
-	else
-		return &(((struct sockaddr_in6*)sa)->sin6_addr);
-}
-
-static in_port_t
-get_in_port(struct sockaddr *sa)
-{
-	if (sa->sa_family == AF_INET)
-		return (((struct sockaddr_in*)sa)->sin_port);
-	else
-		return (((struct sockaddr_in6*)sa)->sin6_port);
-}
 
 static isc_result_t
 configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst, 
@@ -887,7 +785,6 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 	isc_result_t result;
 	ldap_value_t *value;
 	isc_sockaddrlist_t addrs;
-	isc_sockaddr_t *addr;
 
 	REQUIRE(entry != NULL && inst != NULL && name != NULL && values != NULL);
 
@@ -905,28 +802,19 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 
 	ISC_LIST_INIT(addrs);
 	for (value = HEAD(*values); value != NULL; value = NEXT(value, link)) {
-		struct sockaddr sa;
+		isc_sockaddr_t *addr = NULL;
+		char forwarder_txt[ISC_SOCKADDR_FORMATSIZE];
 
-		addr = isc_mem_get(inst->mctx, sizeof(*addr));
-		if (addr == NULL) {
-			result = ISC_R_NOMEMORY;
-			goto cleanup;
+		if( acl_parse_forwarder(value->value, inst->mctx, &addr)
+				!= ISC_R_SUCCESS) {
+			log_error("Could not parse forwarder '%s'", value->value);
+			continue;
 		}
+
 		ISC_LINK_INIT(addr, link);
-
-		result = parse_nameserver(value->value, &sa);
-		if (result != ISC_R_SUCCESS) {
-			log_bug("Could not convert IP address "
-				"from string '%s'.", value->value);
-		}
-
-		/* Convert port from network byte order. */
-		in_port_t port = ntohs(get_in_port(&sa));
-		port = (port != 0) ? port : 53; /* use well known port */			
-
-		isc_sockaddr_fromin(addr, get_in_addr(&sa), port);
 		ISC_LIST_APPEND(addrs, addr, link);
-		log_debug(5, "Adding forwarder %s (:%d) for %s", value->value, port, dn);
+		isc_sockaddr_format(addr, forwarder_txt, ISC_SOCKADDR_FORMATSIZE);
+		log_debug(5, "Adding forwarder %s for %s", forwarder_txt, dn);
 	}
 
 	/*
@@ -944,6 +832,11 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 			fwdpolicy = dns_fwdpolicy_only;
 	}
 
+	if (ISC_LIST_EMPTY(addrs)) {
+		log_debug(5, "No forwarders seen; disabling forwarding");
+		fwdpolicy = dns_fwdpolicy_none;
+	}
+
 	log_debug(5, "Forward policy: %d", fwdpolicy);
 		
 	/* Set forward table up. */
@@ -951,6 +844,7 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 
 cleanup:
 	while (!ISC_LIST_EMPTY(addrs)) {
+		isc_sockaddr_t *addr = NULL;
 		addr = ISC_LIST_HEAD(addrs);
 		ISC_LIST_UNLINK(addrs, addr, link);
 		isc_mem_put(inst->mctx, addr, sizeof(*addr));

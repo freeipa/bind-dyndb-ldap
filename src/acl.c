@@ -69,6 +69,7 @@ static isc_once_t once = ISC_ONCE_INIT;
 static cfg_type_t *update_policy;
 static cfg_type_t *allow_query;
 static cfg_type_t *allow_transfer;
+static cfg_type_t *forwarders;
 
 static cfg_type_t *
 get_type_from_tuplefield(const cfg_type_t *cfg_type, const char *name)
@@ -139,6 +140,7 @@ init_cfgtypes(void)
 	update_policy = get_type_from_clause_array(zoneopts, "update-policy");
 	allow_query = get_type_from_clause_array(zoneopts, "allow-query");
 	allow_transfer = get_type_from_clause_array(zoneopts, "allow-transfer");
+	forwarders = get_type_from_clause_array(zoneopts, "forwarders");
 }
 
 static isc_result_t
@@ -351,6 +353,24 @@ cleanup:
 	return result;
 }
 
+static isc_result_t
+semicolon_bracket_str(isc_mem_t *mctx, const char *str, ld_string_t **bracket_strp)
+{
+	ld_string_t *tmp = NULL;
+	isc_result_t result;
+
+	CHECK(str_new(mctx, &tmp));
+	CHECK(str_sprintf(tmp, "{ %s; }", str));
+
+	*bracket_strp = tmp;
+
+	return ISC_R_SUCCESS;
+
+cleanup:
+	str_destroy(&tmp);
+	return result;
+}
+
 isc_result_t
 acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone)
 {
@@ -480,3 +500,69 @@ cleanup:
 	return result;
 }
 
+
+/**
+ * Parse nameserver IP address with or without port specified in BIND9 syntax.
+ * IPv4 and IPv6 addresses are supported, see examples.
+ *
+ * @param[in] forwarder_str String with IP address and optionally port.
+ * @param[in] mctx Memory for allocating temporary and sa structure.
+ * @param[out] sa Socket address structure.
+ *
+ * @return Pointer to newly allocated isc_sockaddr_t structure.
+ *
+ * @example
+ * "192.168.0.100" -> { address:192.168.0.100, port:53 }
+ * "192.168.0.100 port 553" -> { address:192.168.0.100, port:553 }
+ * "0102:0304:0506:0708:090A:0B0C:0D0E:0FAA" ->
+ * 		{ address:0102:0304:0506:0708:090A:0B0C:0D0E:0FAA, port:53 }
+ * "0102:0304:0506:0708:090A:0B0C:0D0E:0FAA port 553" ->
+ * 		{ address:0102:0304:0506:0708:090A:0B0C:0D0E:0FAA, port:553 }
+ *
+ */
+isc_result_t
+acl_parse_forwarder(const char *forwarder_str, isc_mem_t *mctx, isc_sockaddr_t **sa)
+{
+	isc_result_t result = ISC_R_SUCCESS;
+	cfg_parser_t *parser = NULL;
+
+	cfg_obj_t *forwarders_cfg = NULL;
+	ld_string_t *new_forwarder_str = NULL;
+	const cfg_obj_t *faddresses;
+	const cfg_listelt_t *element;
+
+	in_port_t port = 53;
+
+	REQUIRE(forwarder_str != NULL);
+	REQUIRE(sa != NULL && *sa == NULL);
+
+	/* add semicolon and brackets as necessary for parser */
+	if (!index(forwarder_str, ';'))
+		CHECK(semicolon_bracket_str(mctx, forwarder_str, &new_forwarder_str));
+	else
+		CHECK(bracket_str(mctx, forwarder_str, &new_forwarder_str));
+
+	CHECK(cfg_parser_create(mctx, dns_lctx, &parser));
+	CHECK(parse(parser, str_buf(new_forwarder_str), &forwarders, &forwarders_cfg));
+
+	faddresses = cfg_tuple_get(forwarders_cfg, "addresses");
+	element = cfg_list_first(faddresses);
+	if (!element) {
+		result = ISC_R_FAILURE;
+		goto cleanup;
+	}
+
+	const cfg_obj_t *forwarder = cfg_listelt_value(element);
+	*sa = isc_mem_get(mctx, sizeof(isc_sockaddr_t));
+	if (*sa == NULL) {
+		result = ISC_R_NOMEMORY;
+		goto cleanup;
+	}
+	**sa = *cfg_obj_assockaddr(forwarder);
+	if (isc_sockaddr_getport(*sa) == 0)
+		isc_sockaddr_setport(*sa, port);
+
+cleanup:
+	str_destroy(&new_forwarder_str);
+	return result;
+}

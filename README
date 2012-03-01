@@ -89,8 +89,12 @@ example zone ldif is available in the doc directory.
 	with a valid idnsForwarders attribute.
 
 * idnsForwarders
-	Defines multiple IP addresses (TODO: optional port numbers) to which
-	queries will be forwarded.
+	Defines multiple IP addresses to which queries will be forwarded.
+	It is multi-value attribute: Each IP address (and optional port) has to
+	be in own value. BIND9 syntax for "forwarders" is required.
+	Optional port can be specified by adding " port <number>" after IP 
+	address. IPv4 and IPv6 addresses are supported.
+	Examples: "1.2.3.4" or "1.2.3.4 port 553" or "A::B" or "A::B port 553"
 
 5. Configuration
 ================
