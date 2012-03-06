@@ -563,6 +563,10 @@ acl_parse_forwarder(const char *forwarder_str, isc_mem_t *mctx, isc_sockaddr_t *
 		isc_sockaddr_setport(*sa, port);
 
 cleanup:
+	if (forwarders_cfg != NULL)
+		cfg_obj_destroy(parser, &forwarders_cfg);
+	if (parser != NULL)
+		cfg_parser_destroy(&parser);
 	str_destroy(&new_forwarder_str);
 	return result;
 }
