@@ -1,5 +1,16 @@
+1.1.0b1
+======
+
 [1] Add support for IPv6 elements in idnsForwarders attribute
-    and make syntax compatible with BIND9 forwarders.
+and make syntax compatible with BIND9 forwarders.
+
+[2] Fix bug which caused named to crash during reload when failed to make a
+connection to LDAP.
+
+[3] Plugin is now able to fetch certain configuration options from LDAP. Check
+README for more information.
+
+[4] Many other bugfixes.
 
 1.1.0a2
 ======
