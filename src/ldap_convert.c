@@ -77,7 +77,6 @@ dn_to_dnsname(isc_mem_t *mctx, const char *dn, dns_name_t *target,
 	ld_string_t *ostr = NULL;
 	isc_buffer_t buffer;
 
-	REQUIRE(mctx != NULL);
 	REQUIRE(dn != NULL);
 
 	INIT_BUFFERED_NAME(name);

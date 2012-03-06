@@ -124,7 +124,6 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 		end_of_settings
 	};
 
-	REQUIRE(mctx != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(dyndb_args != NULL);
 

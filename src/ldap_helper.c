@@ -341,7 +341,6 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		end_of_settings
 	};
 
-	REQUIRE(mctx != NULL);
 	REQUIRE(ldap_instp != NULL && *ldap_instp == NULL);
 
 	ldap_inst = isc_mem_get(mctx, sizeof(ldap_instance_t));
@@ -1339,7 +1338,6 @@ ldapdb_nodelist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *nam
 	ldapdb_node_t *node;
 	dns_name_t node_name;
 
-	REQUIRE(mctx != NULL);
 	REQUIRE(ldap_inst != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(nodelist != NULL);
@@ -1408,7 +1406,6 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 	ld_string_t *string = NULL;
 	ldap_cache_t *cache;
 
-	REQUIRE(mctx != NULL);
 	REQUIRE(ldap_inst != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(rdatalist != NULL);
@@ -1505,7 +1502,6 @@ parse_rdata(isc_mem_t *mctx, ldap_connection_t *ldap_conn,
 	isc_region_t rdatamem;
 	dns_rdata_t *rdata;
 
-	REQUIRE(mctx != NULL);
 	REQUIRE(ldap_conn != NULL);
 	REQUIRE(rdata_text != NULL);
 	REQUIRE(rdatap != NULL);

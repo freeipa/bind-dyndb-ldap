@@ -145,7 +145,6 @@ str__new(isc_mem_t *mctx, ld_string_t **new_str _STR_MEM_FLARG)
 {
 	ld_string_t *str;
 
-	REQUIRE(mctx != NULL);
 	REQUIRE(new_str != NULL && *new_str == NULL);
 
 #if ISC_MEM_TRACKLINES

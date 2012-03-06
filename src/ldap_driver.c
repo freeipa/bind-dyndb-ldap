@@ -205,8 +205,6 @@ clone_rdatalist_to_rdataset(isc_mem_t *mctx, dns_rdatalist_t *rdlist,
 	isc_result_t result;
 	dns_rdatalist_t *new_rdlist = NULL;
 
-	REQUIRE(mctx != NULL);
-
 	CHECK(rdatalist_clone(mctx, rdlist, &new_rdlist));
 
 	CHECK(dns_rdatalist_tordataset(new_rdlist, rdataset));
@@ -1295,7 +1293,6 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 {
 	isc_result_t result;
 
-	REQUIRE(mctx != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(argv != NULL);
 	REQUIRE(dyndb_args != NULL);

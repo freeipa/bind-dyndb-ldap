@@ -40,7 +40,6 @@ rdata_clone(isc_mem_t *mctx, dns_rdata_t *source, dns_rdata_t **targetp)
 	dns_rdata_t *target = NULL;
 	isc_region_t target_region, source_region;
 
-	REQUIRE(mctx != NULL);
 	REQUIRE(source != NULL);
 	REQUIRE(targetp != NULL && *targetp == NULL);
 
@@ -76,7 +75,6 @@ rdatalist_clone(isc_mem_t *mctx, dns_rdatalist_t *source,
 	dns_rdata_t *target_rdata;
 	isc_result_t result;
 
-	REQUIRE(mctx != NULL);
 	REQUIRE(source != NULL);
 	REQUIRE(targetp != NULL && *targetp == NULL);
 
@@ -116,7 +114,6 @@ ldap_rdatalist_copy(isc_mem_t *mctx, ldapdb_rdatalist_t source,
 	dns_rdatalist_t *new_rdlist;
 	isc_result_t result;
 
-	REQUIRE(mctx != NULL);
 	REQUIRE(target != NULL);
 
 	INIT_LIST(*target);

@@ -70,7 +70,6 @@ zr_create(isc_mem_t *mctx, zone_register_t **zrp)
 	isc_result_t result;
 	zone_register_t *zr = NULL;
 
-	REQUIRE(mctx != NULL);
 	REQUIRE(zrp != NULL && *zrp == NULL);
 
 	CHECKED_MEM_GET_PTR(mctx, zr);
@@ -124,7 +123,6 @@ create_zone_info(isc_mem_t *mctx, dns_zone_t *zone, const char *dn,
 	isc_result_t result;
 	zone_info_t *zinfo;
 
-	REQUIRE(mctx != NULL);
 	REQUIRE(zone != NULL);
 	REQUIRE(dn != NULL);
 	REQUIRE(zinfop != NULL && *zinfop == NULL);
@@ -151,8 +149,6 @@ delete_zone_info(void *arg1, void *arg2)
 {
 	zone_info_t *zinfo = arg1;
 	isc_mem_t *mctx = arg2;
-
-	REQUIRE(mctx != NULL);
 
 	if (zinfo == NULL)
 		return;
