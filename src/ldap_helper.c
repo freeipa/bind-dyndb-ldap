@@ -879,7 +879,6 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 	/* Set forward table up. */
 	result = dns_fwdtable_add(inst->view->fwdtable, name, &addrs, fwdpolicy);
 
-cleanup:
 	while (!ISC_LIST_EMPTY(addrs)) {
 		isc_sockaddr_t *addr = NULL;
 		addr = ISC_LIST_HEAD(addrs);
