@@ -288,6 +288,9 @@ static void free_char_array(isc_mem_t *mctx, char ***valsp);
 static isc_result_t modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		dns_rdatalist_t *rdlist, int mod_op, isc_boolean_t delete_node);
 
+static isc_result_t
+ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock);
+
 /* Functions for maintaining pool of LDAP connections */
 static isc_result_t ldap_pool_create(isc_mem_t *mctx, unsigned int connections,
 		ldap_pool_t **poolp);
@@ -484,10 +487,45 @@ void
 destroy_ldap_instance(ldap_instance_t **ldap_instp)
 {
 	ldap_instance_t *ldap_inst;
+	dns_rbtnodechain_t chain;
+	dns_rbt_t *rbt;
+	isc_result_t result;
 
 	REQUIRE(ldap_instp != NULL && *ldap_instp != NULL);
 
 	ldap_inst = *ldap_instp;
+
+	/*
+	 * Unregister all zones already registered in BIND.
+	 *
+	 * NOTE: This should be probably done in zone_register.c
+	 */
+	dns_rbtnodechain_init(&chain, ldap_inst->mctx);
+	rbt = zr_get_rbt(ldap_inst->zone_register);
+
+	result = dns_rbtnodechain_first(&chain, rbt, NULL, NULL);
+	RUNTIME_CHECK(result == ISC_R_SUCCESS || result == DNS_R_NEWORIGIN);
+
+	while (result != ISC_R_NOMORE) {
+		dns_fixedname_t name;
+		dns_fixedname_init(&name);
+		result = dns_rbtnodechain_current(&chain, NULL,
+						  dns_fixedname_name(&name),
+						  NULL);
+                RUNTIME_CHECK(result == ISC_R_SUCCESS);
+
+		result = ldap_delete_zone2(ldap_inst,
+					   dns_fixedname_name(&name),
+					   ISC_TRUE);
+                RUNTIME_CHECK(result == ISC_R_SUCCESS);
+
+		result = dns_rbtnodechain_next(&chain, NULL, NULL);
+		RUNTIME_CHECK(result == ISC_R_SUCCESS ||
+			      result == DNS_R_NEWORIGIN ||
+			      result == ISC_R_NOMORE);
+	}
+
+	dns_rbtnodechain_invalidate(&chain);
 
 	if (ldap_inst->psearch && ldap_inst->watcher != 0) {
 		ldap_inst->exiting = ISC_TRUE;
