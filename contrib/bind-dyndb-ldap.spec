@@ -1,5 +1,5 @@
 #%define PATCHVER P4
-%define PREVER a2
+%define PREVER b1
 #%define VERSION %{version}
 #%define VERSION %{version}-%{PATCHVER}
 %define VERSION %{version}%{PREVER}
