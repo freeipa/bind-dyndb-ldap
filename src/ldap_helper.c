@@ -3064,7 +3064,7 @@ ldap_psearch_watcher(isc_threadarg_t arg)
 	/* Try to connect. */
 	while (conn->handle == NULL) {
 		if (inst->exiting)
-				goto cleanup;
+			goto cleanup;
 
 		log_error("ldap_psearch_watcher handle is NULL. "
 		          "Next try in %ds", inst->reconnect_interval);
