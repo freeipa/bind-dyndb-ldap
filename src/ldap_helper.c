@@ -47,6 +47,7 @@
 #include <isc/netaddr.h>
 #include <isc/parseint.h>
 #include <isc/timer.h>
+#include <isc/string.h>
 
 #include <alloca.h>
 #define LDAP_DEPRECATED 1
@@ -2172,6 +2173,7 @@ static isc_result_t
 modify_soa_record(ldap_connection_t *ldap_conn, const char *zone_dn,
 		  dns_rdata_t *rdata)
 {
+	isc_result_t result;
 	isc_mem_t *mctx = ldap_conn->mctx;
 	dns_rdata_soa_t soa;
 	LDAPMod change[5];
@@ -2180,13 +2182,16 @@ modify_soa_record(ldap_connection_t *ldap_conn, const char *zone_dn,
 		NULL
 	};
 
+/* all values in SOA record are isc_uint32_t, i.e. max. 2^32-1 */
+#define MAX_SOANUM_LENGTH (10 + 1)
 #define SET_LDAP_MOD(index, name) \
 	change[index].mod_op = LDAP_MOD_REPLACE; \
 	change[index].mod_type = "idnsSOA" #name; \
 	change[index].mod_values = alloca(2 * sizeof(char *)); \
-	change[index].mod_values[0] = alloca(sizeof(soa.name) + 1); \
+	change[index].mod_values[0] = alloca(MAX_SOANUM_LENGTH); \
 	change[index].mod_values[1] = NULL; \
-	snprintf(change[index].mod_values[0], sizeof(soa.name) + 1, "%d", soa.name)
+	CHECK(isc_string_printf(change[index].mod_values[0], \
+		MAX_SOANUM_LENGTH, "%u", soa.name));
 
 	dns_rdata_tostruct(rdata, (void *)&soa, mctx);
 
@@ -2198,8 +2203,12 @@ modify_soa_record(ldap_connection_t *ldap_conn, const char *zone_dn,
 
 	dns_rdata_freestruct((void *)&soa);
 
-	return ldap_modify_do(ldap_conn, zone_dn, changep, ISC_FALSE);
+	result = ldap_modify_do(ldap_conn, zone_dn, changep, ISC_FALSE);
 
+cleanup:
+	return result;
+
+#undef MAX_SOANUM_LENGTH
 #undef SET_LDAP_MOD
 }
 
