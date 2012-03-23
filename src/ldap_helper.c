@@ -503,10 +503,15 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	dns_rbtnodechain_init(&chain, ldap_inst->mctx);
 	rbt = zr_get_rbt(ldap_inst->zone_register);
 
+	/* Potentially ISC_R_NOSPACE can occur. Destroy codepath has no way to
+	 * return errors, so kill BIND.
+	 * DNS_R_NAMETOOLONG should never happen, because all names were checked
+	 * while loading. */
 	result = dns_rbtnodechain_first(&chain, rbt, NULL, NULL);
-	RUNTIME_CHECK(result == ISC_R_SUCCESS || result == DNS_R_NEWORIGIN);
+	RUNTIME_CHECK(result == ISC_R_SUCCESS || result == DNS_R_NEWORIGIN
+			|| result == ISC_R_NOTFOUND);
 
-	while (result != ISC_R_NOMORE) {
+	while (result != ISC_R_NOMORE && result != ISC_R_NOTFOUND) {
 		dns_fixedname_t name;
 		dns_fixedname_init(&name);
 		result = dns_rbtnodechain_current(&chain, NULL,
