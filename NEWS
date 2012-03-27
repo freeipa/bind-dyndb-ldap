@@ -1,3 +1,14 @@
+1.1.0b2
+======
+
+[1] The plugin could incorrectly updated SOA record fields.
+
+[2] The plugin could crashed on shutdown/reload when no zones in LDAP are
+present.
+
+[3] When using psearch, plugin could hung on shutdown/reload when connection to
+LDAP was lost.
+
 1.1.0b1
 ======
 
