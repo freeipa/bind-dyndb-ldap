@@ -1192,6 +1192,14 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 			goto next;	
 		}
 
+		/* Do not remove auxiliary (= non-zone) nodes. */
+		char buf[DNS_NAME_FORMATSIZE];
+		dns_name_format(&aname, buf, DNS_NAME_FORMATSIZE);
+		if (!node->data) {
+			log_debug(11,"auxiliary zone/node '%s' will not be removed", buf);
+			goto next;
+		}
+
 		DECLARE_BUFFERED_NAME(foundname);
 		INIT_BUFFERED_NAME(foundname);
 		
@@ -1201,8 +1209,6 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 			goto next;		
 		}
 		/* Log zone removing. */
-		char buf[255];
-		dns_name_format(&aname, buf, 255);
 		log_debug(1, "Zone '%s' has been removed from database.", buf);
 		
 		delete = ISC_TRUE;
