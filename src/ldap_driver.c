@@ -462,7 +462,6 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	dns_name_t *traversename;
 
 	UNUSED(now);
-	UNUSED(options);
 	UNUSED(sigrdataset);
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
@@ -489,7 +488,7 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	dns_fixedname_init(&fname);
 	traversename = dns_fixedname_name(&fname);
 
-	while (labels <= qlabels) {
+	for (; labels <= qlabels; labels++) {
 		dns_name_getlabelsequence(name, qlabels - labels, labels,
 					  traversename);
 
@@ -497,39 +496,41 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 					      ldapdb->ldap_inst, traversename,
 					      &ldapdb->common.origin,
 					      &rdatalist);
-		if (result == ISC_R_SUCCESS) {
-			/*
-			 * Check if there is at least one NS RR. If yes and this is not NS
-			 * record of this zone (i.e. NS record has higher number of labels),
-			 * we hit delegation point. Delegation point has the highest priority
-			 * and we supress all other RR types than NS.
-			 */
+		if (result != ISC_R_SUCCESS) {
+			result = DNS_R_NXDOMAIN;
+			continue;
+		}
+
+		/* TODO: We should check for DNAME records right here */
+
+		/*
+		 * Check if there is at least one NS RR. If yes and this is not NS
+		 * record of this zone (i.e. NS record has higher number of labels),
+		 * we hit delegation point. Delegation point has the highest priority
+		 * and we supress all other RR types than NS, except when we are
+		 * trying to find glue.
+		 */
+		if (dns_name_countlabels(&db->origin) <
+		    dns_name_countlabels(traversename) &&
+		    (options & DNS_DBFIND_GLUEOK) == 0) {
 			result = ldapdb_rdatalist_findrdatatype(&rdatalist,
 								dns_rdatatype_ns,
 								&rdlist);
 			if (result == ISC_R_SUCCESS) {
-				if (dns_name_countlabels(&db->origin) <
-				    dns_name_countlabels(traversename)) {
-					/* Delegation point */
-					type = dns_rdatatype_ns;
-					is_delegation = ISC_TRUE;
-					goto skipfind;
-				} else {
-					/* Our NS RRset, continue as usual */
-					rdlist = NULL;
-				}
-			}
-
-			if (labels == qlabels) {
-				/* We've found an answer */
-				goto found;
-			} else {
-				ldapdb_rdatalist_destroy(ldapdb->common.mctx,
-							 &rdatalist);
+				/* Delegation point */
+				type = dns_rdatatype_ns;
+				is_delegation = ISC_TRUE;
+				goto skipfind;
 			}
 		}
 
-		labels++;
+		if (labels == qlabels) {
+			/* We've found an answer */
+			goto found;
+		} else {
+			ldapdb_rdatalist_destroy(ldapdb->common.mctx,
+						 &rdatalist);
+		}
 	}
 
 	if (result != ISC_R_SUCCESS)
