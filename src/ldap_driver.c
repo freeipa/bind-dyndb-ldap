@@ -1337,11 +1337,6 @@ dynamic_driver_destroy(void)
 	/* Only unregister the implementation if it was registered by us. */
 	if (ldapdb_imp != NULL)
 		dns_db_unregister(&ldapdb_imp);
-	/*
-	 * XXX: This is a work-around a bug in dns_db_unregister().
-	 *      Remove this line after it has been fixed.
-	 */
-	ldapdb_imp = NULL;
 
 	destroy_manager();
 }

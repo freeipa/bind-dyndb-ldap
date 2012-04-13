@@ -10,6 +10,8 @@ for your version here:
 
 Hopefully, the patch will once be included in the official BIND release.
 
+Because of bug in dns_db_unregister() in older BIND versions, BIND >= 9.7.0a1
+is required.
 
 2. Features
 ===========
