@@ -31,8 +31,9 @@
 #define CHECK_KRB5(ctx, err, msg, ...)					\
 	do {								\
 		if (err) {						\
-			log_error(msg " (%s)", ##__VA_ARGS__,		\
-				  krb5_get_error_message(ctx, err));	\
+			const char * errmsg = krb5_get_error_message(ctx, err);	\
+			log_error(msg " (%s)", ##__VA_ARGS__, errmsg);	\
+			krb5_free_error_message(ctx, errmsg);		\
 			result = ISC_R_FAILURE;				\
 			goto cleanup;					\
 		}							\
@@ -66,8 +67,10 @@ check_credentials(krb5_context context,
 
 	krberr = krb5_cc_retrieve_cred(context, ccache, 0, &mcreds, &creds);
 	if (krberr) {
+		const char * errmsg = krb5_get_error_message(context, krberr);
 		log_debug(2, "Principal not found in cred cache (%s)",
-			  krb5_get_error_message(context, krberr));
+			  errmsg);
+		krb5_free_error_message(context, errmsg);
 		result = ISC_R_FAILURE;
 		goto cleanup;
 	}
@@ -97,8 +100,9 @@ get_krb5_tgt(isc_mem_t *mctx, const char *principal, const char *keyfile)
 	krb5_context context = NULL;
 	krb5_keytab keytab = NULL;
 	krb5_ccache ccache = NULL;
-	krb5_principal kprincpw;
+	krb5_principal kprincpw = NULL;
 	krb5_creds my_creds;
+	krb5_creds * my_creds_ptr = NULL;
 	krb5_get_init_creds_opt options;
 	krb5_error_code krberr;
 	isc_result_t result;
@@ -167,6 +171,7 @@ get_krb5_tgt(isc_mem_t *mctx, const char *principal, const char *keyfile)
 	krberr = krb5_get_init_creds_keytab(context, &my_creds, kprincpw,
 					    keytab, 0, NULL, &options);
 	CHECK_KRB5(context, krberr, "Failed to init credentials");
+	my_creds_ptr = &my_creds;
 
 	/* store credentials in cache */
 	krberr = krb5_cc_initialize(context, ccache, kprincpw);
@@ -179,7 +184,10 @@ get_krb5_tgt(isc_mem_t *mctx, const char *principal, const char *keyfile)
 
 cleanup:
 	if (ccname) str_destroy(&ccname);
+	if (ccache) krb5_cc_close(context, ccache);
 	if (keytab) krb5_kt_close(context, keytab);
+	if (kprincpw) krb5_free_principal(context, kprincpw);
+	if (my_creds_ptr) krb5_free_cred_contents(context, my_creds_ptr);
 	if (context) krb5_free_context(context);
 	return result;
 }
