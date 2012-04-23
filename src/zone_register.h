@@ -45,4 +45,7 @@ zr_get_zone_ptr(zone_register_t *zr, dns_name_t *name, dns_zone_t **zonep);
 dns_rbt_t *
 zr_get_rbt(zone_register_t *zr);
 
+isc_mem_t *
+zr_get_mctx(zone_register_t *zr);
+
 #endif /* !_LD_ZONE_REGISTER_H_ */

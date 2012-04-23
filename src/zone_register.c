@@ -61,6 +61,13 @@ zr_get_rbt(zone_register_t *zr)
 	return zr->rbt;
 }
 
+isc_mem_t *
+zr_get_mctx(zone_register_t *zr) {
+	REQUIRE(zr);
+
+	return zr->mctx;
+}
+
 /*
  * Create a new zone register.
  */

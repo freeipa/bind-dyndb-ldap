@@ -21,6 +21,7 @@
 #include <isc/buffer.h>
 #include <isc/mem.h>
 #include <isc/util.h>
+#include <isc/string.h>
 
 #include <dns/name.h>
 #include <dns/rdatatype.h>
@@ -32,6 +33,7 @@
 
 #include <errno.h>
 #include <strings.h>
+#include <ctype.h>
 
 #include "str.h"
 #include "ldap_convert.h"
@@ -189,6 +191,92 @@ cleanup:
 	return result;
 }
 
+/**
+ * Convert a string from DNS escaping to LDAP escaping.
+ * The Input string dns_str is expected to be the result of dns_name_tostring().
+ * The DNS label can contain any binary data as described in
+ * http://tools.ietf.org/html/rfc2181#section-11 .
+ *
+ * DNS escaping uses form   "\123" = ASCII value 123 (decimal)
+ * LDAP escaping users form "\7b"  = ASCII value 7b (hexadecimal)
+ *
+ * Input (DNS escaped) example  : _aaa,bbb\255\000ccc.555.ddd-eee
+ * Output (LDAP escaped) example: _aaa\2cbbb\ff\00ccc.555.ddd-eee
+ *
+ * The DNS to text functions from ISC libraries do not convert certain
+ * characters (e.g. ","). This function converts \123 form to \7b form in all
+ * cases. Other characters (not escaped by ISC libraries) will be additionally
+ * converted to the LDAP escape form.
+ * Input characters [a-zA-Z0-9._-] are left in raw ASCII form.
+ *
+ * If dns_str consists only of the characters in the [a-zA-Z0-9._-] set, it
+ * will be checked & copied to the output buffer, without any additional escaping.
+ */
+isc_result_t
+dns_to_ldap_dn_escape(isc_mem_t *mctx, const char const * dns_str, char ** ldap_name) {
+	isc_result_t result = ISC_R_FAILURE;
+	char * esc_name = NULL;
+	int idx_symb_first = -1; /* index of first "nice" printable symbol in dns_str */
+	int dns_idx = 0;
+	int esc_idx = 0;
+
+	REQUIRE(dns_str != NULL);
+	REQUIRE(ldap_name != NULL && *ldap_name == NULL);
+
+	int dns_str_len = strlen(dns_str);
+
+	/**
+	 * In worst case each symbol from DNS dns_str will be represented
+	 * as "\xy" in ldap_name. (xy are hexadecimal digits)
+	 */
+	CHECKED_MEM_ALLOCATE(mctx, *ldap_name, 3 * dns_str_len + 1);
+	esc_name = *ldap_name;
+
+	for (dns_idx = 0; dns_idx < dns_str_len; dns_idx++) {
+		if (isalnum(dns_str[dns_idx]) || dns_str[dns_idx] == '.'
+				|| dns_str[dns_idx] == '-' || dns_str[dns_idx] == '_' ) {
+			if (idx_symb_first == -1)
+				idx_symb_first = dns_idx;
+			continue;
+		} else { /* some not very nice symbols */
+			int ascii_val;
+			if (idx_symb_first != -1) { /* copy previous nice part */
+				int length_ok = dns_idx - idx_symb_first;
+				memcpy(esc_name + esc_idx, dns_str + idx_symb_first, length_ok);
+				esc_idx += length_ok;
+				idx_symb_first = -1;
+			}
+			if (dns_str[dns_idx] != '\\') { /* not nice raw value, e.g. ',' */
+				ascii_val = dns_str[dns_idx];
+			} else { /* not nice value in DNS \123 decimal format */
+				/* check if input length <= expected size */
+				REQUIRE (dns_str_len > dns_idx + 3); /* this problem should never happen */
+				ascii_val = 100 * (dns_str[dns_idx + 1] - '0')
+						+ 10 * (dns_str[dns_idx + 2] - '0')
+						+ (dns_str[dns_idx + 3] - '0');
+				dns_idx += 3;
+			}
+			/* LDAP uses \xy escaping. "xy" represent two hexadecimal digits.*/
+			/* TODO: optimize to bit mask & rotate & dec->hex table? */
+			CHECK(isc_string_printf(esc_name + esc_idx, 4, "\\%02x", ascii_val));
+			esc_idx += 3; /* isc_string_printf wrote 4 bytes including '\0' */
+		}
+	}
+	if (idx_symb_first != -1) { /* copy last nice part */
+		int length_ok = dns_idx - idx_symb_first;
+		memcpy(esc_name + esc_idx, dns_str + idx_symb_first, dns_idx - idx_symb_first);
+		esc_idx += length_ok;
+		idx_symb_first = -1;
+	}
+	esc_name[esc_idx] = '\0';
+	return ISC_R_SUCCESS;
+
+cleanup:
+	if (*ldap_name)
+		isc_mem_free(mctx, *ldap_name);
+	return result;
+}
+
 static isc_result_t
 explode_dn(const char *dn, char ***explodedp, int notypes)
 {
@@ -243,10 +331,14 @@ dnsname_to_dn(zone_register_t *zr, dns_name_t *name, ld_string_t *target)
 	isc_result_t result;
 	int label_count;
 	const char *zone_dn = NULL;
+	char *dns_str = NULL;
+	char *escaped_name = NULL;
 
 	REQUIRE(zr != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(target != NULL);
+
+	isc_mem_t * mctx = zr_get_mctx(zr);
 
 	/* Find the DN of the zone we belong to. */
 	{
@@ -264,17 +356,15 @@ dnsname_to_dn(zone_register_t *zr, dns_name_t *name, ld_string_t *target)
 
 	str_clear(target);
 	if (label_count > 0) {
-		DECLARE_BUFFER(buffer, DNS_NAME_MAXTEXT);
 		dns_name_t labels;
 
-		INIT_BUFFER(buffer);
 		dns_name_init(&labels, NULL);
-
 		dns_name_getlabelsequence(name, 0, label_count, &labels);
-		CHECK(dns_name_totext(&labels, ISC_TRUE, &buffer));
+		CHECK(dns_name_tostring(&labels, &dns_str, mctx));
 
+		CHECK(dns_to_ldap_dn_escape(mctx, dns_str, &escaped_name));
 		CHECK(str_cat_char(target, "idnsName="));
-		CHECK(str_cat_isc_buffer(target, &buffer));
+		CHECK(str_cat_char(target, escaped_name));
 		/* 
 		 * Modification of following line can affect modify_ldap_common().
 		 * See line with: char *zone_dn = strstr(str_buf(owner_dn),", ") + 1;  
@@ -284,6 +374,10 @@ dnsname_to_dn(zone_register_t *zr, dns_name_t *name, ld_string_t *target)
 	CHECK(str_cat_char(target, zone_dn));
 
 cleanup:
+	if (dns_str)
+		isc_mem_free(mctx, dns_str);
+	if (escaped_name)
+		isc_mem_free(mctx, escaped_name);
 	return result;
 }
 
@@ -328,3 +422,4 @@ rdatatype_to_ldap_attribute(dns_rdatatype_t rdtype, const char **target)
 
 	return ISC_R_SUCCESS;
 }
+
