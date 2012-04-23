@@ -1930,6 +1930,10 @@ handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn
 	case LDAP_TIMEOUT:
 		log_error("LDAP query timed out. Try to adjust \"timeout\" parameter");
 		break;
+	case LDAP_INVALID_DN_SYNTAX:
+	case LDAP_INVALID_SYNTAX:
+		log_bug("Invalid syntax in handle_connection_error indicates a bug");
+		break;
 	default:
 		/* Try to reconnect on other errors. */
 		log_error("LDAP error: %s", ldap_err2string(err_code));
