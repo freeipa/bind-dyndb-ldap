@@ -267,9 +267,8 @@ static isc_result_t ldap_connect(ldap_instance_t *ldap_inst,
 		ldap_connection_t *ldap_conn, isc_boolean_t force);
 static isc_result_t ldap_reconnect(ldap_instance_t *ldap_inst,
 		ldap_connection_t *ldap_conn, isc_boolean_t force);
-static int handle_connection_error(ldap_instance_t *ldap_inst,
-		ldap_connection_t *ldap_conn, isc_boolean_t force,
-		isc_result_t *result);
+static isc_result_t handle_connection_error(ldap_instance_t *ldap_inst,
+		ldap_connection_t *ldap_conn, isc_boolean_t force);
 static isc_result_t ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 		const char *base,
 		int scope, char **attrs, int attrsonly, const char *filter, ...);
@@ -1605,6 +1604,8 @@ ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 	va_list ap;
 	isc_result_t result;
 	int cnt;
+	int ret;
+	int once = 0;
 
 	REQUIRE(ldap_conn != NULL);
 
@@ -1625,30 +1626,36 @@ ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 			return result;
 	}
 
-	do {
-		int ret;
+retry:
+	ret = ldap_search_ext_s(ldap_conn->handle, base, scope,
+				str_buf(ldap_conn->query_string),
+				attrs, attrsonly, NULL, NULL, NULL,
+				LDAP_NO_LIMIT, &ldap_conn->result);
+	if (ret == 0) {
+		ldap_conn->tries = 0;
+		cnt = ldap_count_entries(ldap_conn->handle, ldap_conn->result);
+		log_debug(2, "entry count: %d", cnt);
 
-		ret = ldap_search_ext_s(ldap_conn->handle, base, scope,
-					str_buf(ldap_conn->query_string),
-					attrs, attrsonly, NULL, NULL, NULL,
-					LDAP_NO_LIMIT, &ldap_conn->result);
-		if (ret == 0) {
-			ldap_conn->tries = 0;
-			cnt = ldap_count_entries(ldap_conn->handle, ldap_conn->result);
-			log_debug(2, "entry count: %d", cnt);
-
-			result = ldap_entrylist_create(ldap_conn->mctx,
-						       ldap_conn->handle,
-						       ldap_conn->result,
-						       &ldap_conn->ldap_entries);
-			if (result != ISC_R_SUCCESS) {
-				log_error("failed to save LDAP query results");
-				return result;
-			}
-
-			return ISC_R_SUCCESS;
+		result = ldap_entrylist_create(ldap_conn->mctx,
+					       ldap_conn->handle,
+					       ldap_conn->result,
+					       &ldap_conn->ldap_entries);
+		if (result != ISC_R_SUCCESS) {
+			log_error("failed to save LDAP query results");
+			return result;
 		}
-	} while (handle_connection_error(ldap_inst, ldap_conn, ISC_FALSE, &result));
+
+		return ISC_R_SUCCESS;
+	}
+
+	/* some error happened during ldap_search, try to recover */
+	if (!once) {
+		once++;
+		result = handle_connection_error(ldap_inst, ldap_conn,
+						 ISC_FALSE);
+		if (result == ISC_R_SUCCESS)
+			goto retry;
+	}
 
 	return result;
 }
@@ -1901,14 +1908,12 @@ force_reconnect:
 	return ISC_R_SUCCESS;
 }
 
-static int
+static isc_result_t
 handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
-			isc_boolean_t force, isc_result_t *result)
+			isc_boolean_t force)
 {
 	int ret;
 	int err_code;
-
-	*result = ISC_R_FAILURE;
 
 	ret = ldap_get_option(ldap_conn->handle, LDAP_OPT_RESULT_CODE,
 			      (void *)&err_code);
@@ -1920,9 +1925,8 @@ handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn
 
 	switch (err_code) {
 	case LDAP_NO_SUCH_OBJECT:
-		*result = ISC_R_SUCCESS;
 		ldap_conn->tries = 0;
-		return 0;
+		return ISC_R_SUCCESS;
 	case LDAP_TIMEOUT:
 		log_error("LDAP query timed out. Try to adjust \"timeout\" parameter");
 		break;
@@ -1932,11 +1936,11 @@ handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn
 reconnect:
 		if (ldap_conn->tries == 0)
 			log_error("connection to the LDAP server was lost");
-		if (ldap_connect(ldap_inst, ldap_conn, force) == ISC_R_SUCCESS)
-			return 1;
+		return ldap_connect(ldap_inst, ldap_conn, force);
+		
 	}
 
-	return 0;
+	return ISC_R_FAILURE;
 }
 
 /* FIXME: Handle the case where the LDAP handle is NULL -> try to reconnect. */
@@ -3121,16 +3125,14 @@ restart:
 				  &conn->result);
 
 		if (ret <= 0) {
-			int ok;
-			while (!(ok = handle_connection_error(inst, conn, ISC_TRUE,
-							&result))) {
+			while (handle_connection_error(inst, conn, ISC_TRUE)
+			       != ISC_R_SUCCESS) {
 				log_error("ldap_psearch_watcher failed to handle "
 					  "LDAP connection error. Reconnection "
 					  "in %ds", inst->reconnect_interval);
 				sleep(inst->reconnect_interval);
 			}
-			if (ok)
-				goto restart;
+			goto restart;
 		}
 
 		switch (ret) {
