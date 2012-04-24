@@ -24,6 +24,10 @@
 #include <isc/condition.h>
 #include <isc/mutex.h>
 
+/* Multiplier for to user-defined connection parameter 'timeout'. */
+#define SEM_WAIT_TIMEOUT_MUL 6 /* times */
+extern isc_interval_t semaphore_wait_timeout;
+
 /*
  * Semaphore can be "acquired" multiple times. However, it has a maximum
  * number of times someone can acquire him. If a semaphore is already acquired
@@ -40,7 +44,7 @@ typedef struct semaphore	semaphore_t;
 /* Public functions. */
 isc_result_t	semaphore_init(semaphore_t *sem, int value);
 void		semaphore_destroy(semaphore_t *sem);
-void		semaphore_wait(semaphore_t *sem);
+isc_result_t	semaphore_wait_timed(semaphore_t *sem);
 void		semaphore_signal(semaphore_t *sem);
 
 #endif /* !_LD_SEMAPHORE_H_ */

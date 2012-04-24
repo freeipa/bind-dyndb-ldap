@@ -27,8 +27,19 @@
 #include <isc/condition.h>
 #include <isc/result.h>
 #include <isc/util.h>
+#include <isc/time.h>
 
 #include "semaphore.h"
+#include "util.h"
+
+/*
+ * Timer setting for deadlock detection. Format: seconds, nanoseconds.
+ * These values will be overwriten during initialization
+ * from set_settings() with max(setting+SEM_WAIT_TIMEOUT_ADD, curr_value).
+ *
+ * Initial value can be useful in early phases of initialization.
+ */
+isc_interval_t semaphore_wait_timeout = { 3, 0 };
 
 /*
  * Initialize a semaphore.
@@ -74,20 +85,27 @@ semaphore_destroy(semaphore_t *sem)
 /*
  * Wait on semaphore. This operation will try to acquire a lock on the
  * semaphore. If the semaphore is already acquired as many times at it allows,
- * the function will block until someone releases the lock.
+ * the function will block until someone releases the lock OR timeout expire.
+ *
+ * @return ISC_R_SUCCESS or ISC_R_TIMEDOUT or other errors from ISC libs
  */
-void
-semaphore_wait(semaphore_t *sem)
+isc_result_t
+semaphore_wait_timed(semaphore_t *sem)
 {
+	isc_result_t result;
+	isc_time_t abs_timeout;
 	REQUIRE(sem != NULL);
 
+	CHECK(isc_time_nowplusinterval(&abs_timeout, &semaphore_wait_timeout));
 	LOCK(&sem->mutex);
 
 	while (sem->value <= 0)
-		WAIT(&sem->cond, &sem->mutex);
+		CHECK(WAITUNTIL(&sem->cond, &sem->mutex, &abs_timeout));
 	sem->value--;
 
+cleanup:
 	UNLOCK(&sem->mutex);
+	return result;
 }
 
 /*
