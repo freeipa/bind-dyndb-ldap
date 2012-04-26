@@ -38,4 +38,4 @@ ldap_la_SOURCES =		\
 
 ldap_la_CFLAGS = -Wall -Wextra -std=gnu99 -O2
 
-ldap_la_LDFLAGS = -module -avoid-version
+ldap_la_LDFLAGS = -module -avoid-version -Wl,-z,relro,-z,now,-z,noexecstack
