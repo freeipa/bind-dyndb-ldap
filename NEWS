@@ -1,3 +1,15 @@
+1.1.0rc1
+======
+
+[1] It was possible to DoS named service via query which contained non-alphabet
+character. (CVE-2012-2134)
+
+[2] The plugin wrote ambiguous "zone has been removed" messages to the log.
+
+[3] The plugin failed to return A/AAAA delegation glue records.
+
+[4] Fixes for memory leaks in code which handles Kerberos authentication.
+
 1.1.0b2
 ======
 
