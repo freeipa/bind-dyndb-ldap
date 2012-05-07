@@ -109,6 +109,7 @@
  * must acquire the semaphore and the lock.
  */
 
+typedef struct ldap_qresult	ldap_qresult_t;
 typedef struct ldap_connection  ldap_connection_t;
 typedef struct ldap_pool	ldap_pool_t;
 typedef struct ldap_auth_pair	ldap_auth_pair_t;
@@ -186,10 +187,8 @@ struct ldap_pool {
 struct ldap_connection {
 	isc_mem_t		*mctx;
 	isc_mutex_t		lock;
-	ld_string_t		*query_string;
 
 	LDAP			*handle;
-	LDAPMessage		*result;
 	LDAPControl		*serverctrls[2]; /* psearch/NULL or NULL/NULL */
 	int			msgid;
 
@@ -198,19 +197,19 @@ struct ldap_connection {
 	isc_buffer_t		rdata_target;
 	unsigned char		*rdata_target_mem;
 
-	/* Cache. */
-	ldap_entrylist_t	ldap_entries;
-
 	/* For reconnection logic. */
 	isc_time_t		next_reconnect;
 	unsigned int		tries;
+};
 
-	/* Temporary stuff. */
-	LDAPMessage		*entry;
-	BerElement		*ber;
-	char			*attribute;
-	char			**values;
-	char			*dn;
+/**
+ * Result from single LDAP query.
+ */
+struct ldap_qresult {
+	isc_mem_t		*mctx;
+	ld_string_t		*query_string;
+	LDAPMessage		*result;
+	ldap_entrylist_t	ldap_entries;
 };
 
 /*
@@ -271,9 +270,10 @@ static isc_result_t ldap_reconnect(ldap_instance_t *ldap_inst,
 static isc_result_t handle_connection_error(ldap_instance_t *ldap_inst,
 		ldap_connection_t *ldap_conn, isc_boolean_t force);
 static isc_result_t ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
-		const char *base,
-		int scope, char **attrs, int attrsonly, const char *filter, ...);
-static void ldap_query_free(ldap_connection_t *ldap_conn);
+		   ldap_qresult_t **ldap_qresultp, const char *base, int scope, char **attrs,
+		   int attrsonly, const char *filter, ...);
+static isc_result_t ldap_query_create(isc_mem_t *mctx, ldap_qresult_t **ldap_qresultp);
+static void ldap_query_free(isc_boolean_t prepare_reuse, ldap_qresult_t **ldap_qresultp);
 
 /* Functions for writing to LDAP. */
 static isc_result_t ldap_modify_do(ldap_connection_t *ldap_conn, const char *dn,
@@ -608,8 +608,6 @@ new_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
 
 	isc_mem_attach(pool->mctx, &ldap_conn->mctx);
 
-	CHECK(str_new(ldap_conn->mctx, &ldap_conn->query_string));
-
 	CHECK(isc_lex_create(ldap_conn->mctx, TOKENSIZ, &ldap_conn->lex));
 	CHECKED_MEM_GET(ldap_conn->mctx, ldap_conn->rdata_target_mem, MINTSIZ);
 	CHECK(ldap_pscontrol_create(ldap_conn->mctx,
@@ -636,8 +634,6 @@ destroy_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
 	DESTROYLOCK(&ldap_conn->lock);
 	if (ldap_conn->handle != NULL)
 		ldap_unbind_ext_s(ldap_conn->handle, NULL, NULL);
-
-	str_destroy(&ldap_conn->query_string);
 
 	if (ldap_conn->lex != NULL)
 		isc_lex_destroy(&ldap_conn->lex);
@@ -1103,6 +1099,8 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 {
 	isc_result_t result = ISC_R_SUCCESS;
 	ldap_connection_t *ldap_conn = NULL;
+	ldap_qresult_t *ldap_config_qresult = NULL;
+	ldap_qresult_t *ldap_zones_qresult = NULL;
 	int zone_count = 0;
 	ldap_entry_t *entry;
 	dns_rbt_t *rbt = NULL;
@@ -1127,23 +1125,23 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 
 	log_debug(2, "refreshing list of zones for %s", ldap_inst->db_name);
 
+	/* Query for configuration and zones from LDAP and release LDAP connection
+	 * before processing them. It prevents deadlock in situations where
+	 * ldap_parse_zoneentry() requests another connection. */
 	CHECK(ldap_pool_getconnection(ldap_inst->pool, &ldap_conn));
-
-	CHECK(ldap_query(ldap_inst, ldap_conn, str_buf(ldap_inst->base),
+	CHECK(ldap_query(ldap_inst, ldap_conn, &ldap_config_qresult, str_buf(ldap_inst->base),
 			 LDAP_SCOPE_SUBTREE, config_attrs, 0,
 			 "(objectClass=idnsConfigObject)"));
+	CHECK(ldap_query(ldap_inst, ldap_conn, &ldap_zones_qresult, str_buf(ldap_inst->base),
+			 LDAP_SCOPE_SUBTREE, zone_attrs, 0,
+			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
+	ldap_pool_putconnection(ldap_inst->pool, &ldap_conn);
 
-	for (entry = HEAD(ldap_conn->ldap_entries);
+	for (entry = HEAD(ldap_config_qresult->ldap_entries);
 	     entry != NULL;
 	     entry = NEXT(entry, link)) {
 		CHECK(ldap_parse_configentry(entry, ldap_inst));
 	}
-
-	ldap_query_free(ldap_conn);
-
-	CHECK(ldap_query(ldap_inst, ldap_conn, str_buf(ldap_inst->base),
-			 LDAP_SCOPE_SUBTREE, zone_attrs, 0,
-			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
 
 	/*
 	 * Create RB-tree with all zones stored in LDAP for cross check
@@ -1151,7 +1149,7 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 	 */
 	CHECK(dns_rbt_create(ldap_inst->mctx, NULL, NULL, &rbt));
 	
-	for (entry = HEAD(ldap_conn->ldap_entries);
+	for (entry = HEAD(ldap_zones_qresult->ldap_entries);
 	     entry != NULL;
 	     entry = NEXT(entry, link)) {
 
@@ -1240,6 +1238,8 @@ cleanup:
 	if (invalidate_nodechain)
 		dns_rbtnodechain_invalidate(&chain);
 
+	ldap_query_free(ISC_FALSE, &ldap_config_qresult);
+	ldap_query_free(ISC_FALSE, &ldap_zones_qresult);
 	ldap_pool_putconnection(ldap_inst->pool, &ldap_conn);
 
 	log_debug(2, "finished refreshing list of zones");
@@ -1395,6 +1395,7 @@ ldapdb_nodelist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *nam
 {
 	isc_result_t result;
 	ldap_connection_t *ldap_conn = NULL;
+	ldap_qresult_t *ldap_qresult = NULL;
 	ldap_entry_t *entry;
 	ld_string_t *string = NULL;
 	ldapdb_node_t *node;
@@ -1411,15 +1412,15 @@ ldapdb_nodelist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *nam
 	CHECK(str_new(mctx, &string));
 	CHECK(dnsname_to_dn(ldap_inst->zone_register, name, string));
 
-	CHECK(ldap_query(ldap_inst, ldap_conn, str_buf(string),
+	CHECK(ldap_query(ldap_inst, ldap_conn, &ldap_qresult, str_buf(string),
 			 LDAP_SCOPE_SUBTREE, NULL, 0, "(objectClass=idnsRecord)"));
 
-	if (EMPTY(ldap_conn->ldap_entries)) {
+	if (EMPTY(ldap_qresult->ldap_entries)) {
 		result = ISC_R_NOTFOUND;
 		goto cleanup;
 	}
 
-	for (entry = HEAD(ldap_conn->ldap_entries);
+	for (entry = HEAD(ldap_qresult->ldap_entries);
 		entry != NULL;
 		entry = NEXT(entry, link)) {
 		node = NULL;	
@@ -1452,6 +1453,7 @@ ldapdb_nodelist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *nam
 	result = ISC_R_SUCCESS;
 
 cleanup:
+	ldap_query_free(ISC_FALSE, &ldap_qresult);
 	ldap_pool_putconnection(ldap_inst->pool, &ldap_conn);
 	str_destroy(&string);
 
@@ -1464,6 +1466,7 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 {
 	isc_result_t result;
 	ldap_connection_t *ldap_conn = NULL;
+	ldap_qresult_t *ldap_qresult = NULL;
 	ldap_entry_t *entry;
 	ld_string_t *string = NULL;
 	ldap_cache_t *cache;
@@ -1486,15 +1489,15 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 	CHECK(dnsname_to_dn(ldap_inst->zone_register, name, string));
 
 	CHECK(ldap_pool_getconnection(ldap_inst->pool, &ldap_conn));
-	CHECK(ldap_query(ldap_inst, ldap_conn, str_buf(string),
+	CHECK(ldap_query(ldap_inst, ldap_conn, &ldap_qresult, str_buf(string),
 			 LDAP_SCOPE_BASE, NULL, 0, "(objectClass=idnsRecord)"));
 
-	if (EMPTY(ldap_conn->ldap_entries)) {
+	if (EMPTY(ldap_qresult->ldap_entries)) {
 		result = ISC_R_NOTFOUND;
 		goto cleanup;
 	}
 
-	for (entry = HEAD(ldap_conn->ldap_entries);
+	for (entry = HEAD(ldap_qresult->ldap_entries);
 		entry != NULL;
 		entry = NEXT(entry, link)) {
 		if (ldap_parse_rrentry(mctx, entry, ldap_conn,
@@ -1512,6 +1515,7 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 		result = ISC_R_NOTFOUND;
 
 cleanup:
+	ldap_query_free(ISC_FALSE, &ldap_qresult);
 	ldap_pool_putconnection(ldap_inst->pool, &ldap_conn);
 	str_destroy(&string);
 
@@ -1609,55 +1613,65 @@ cleanup:
 	return result;
 }
 
+/**
+ * @param ldap_conn    A LDAP connection structure obtained via ldap_get_connection().
+ * @param ldap_qresult New ldap_qresult structure will be allocated and pointer
+ *                     to it will be returned through this parameter. The result
+ *                     has to be freed by caller via ldap_query_free().
+ */
 static isc_result_t
 ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
-	   const char *base, int scope, char **attrs,
+	   ldap_qresult_t **ldap_qresultp, const char *base, int scope, char **attrs,
 	   int attrsonly, const char *filter, ...)
 {
 	va_list ap;
 	isc_result_t result;
+	ldap_qresult_t *ldap_qresult = NULL;
 	int cnt;
 	int ret;
 	int once = 0;
 
 	REQUIRE(ldap_conn != NULL);
+	REQUIRE(ldap_qresultp != NULL && *ldap_qresultp == NULL);
+
+	CHECK(ldap_query_create(ldap_inst->mctx, &ldap_qresult));
 
 	va_start(ap, filter);
-	str_vsprintf(ldap_conn->query_string, filter, ap);
+	str_vsprintf(ldap_qresult->query_string, filter, ap);
 	va_end(ap);
 
 	log_debug(2, "querying '%s' with '%s'", base,
-		  str_buf(ldap_conn->query_string));
+		  str_buf(ldap_qresult->query_string));
 
 	if (ldap_conn->handle == NULL) {
 		/*
 		 * handle can be NULL when the first connection to LDAP wasn't
 		 * successful
+		 * TODO: handle this case inside ldap_pool_getconnection()?
 		 */
-		result = ldap_connect(ldap_inst, ldap_conn, ISC_FALSE);
-		if (result != ISC_R_SUCCESS)
-			return result;
+		CHECK(ldap_connect(ldap_inst, ldap_conn, ISC_FALSE));
 	}
 
 retry:
 	ret = ldap_search_ext_s(ldap_conn->handle, base, scope,
-				str_buf(ldap_conn->query_string),
+				str_buf(ldap_qresult->query_string),
 				attrs, attrsonly, NULL, NULL, NULL,
-				LDAP_NO_LIMIT, &ldap_conn->result);
+				LDAP_NO_LIMIT, &ldap_qresult->result);
 	if (ret == 0) {
 		ldap_conn->tries = 0;
-		cnt = ldap_count_entries(ldap_conn->handle, ldap_conn->result);
+		cnt = ldap_count_entries(ldap_conn->handle, ldap_qresult->result);
 		log_debug(2, "entry count: %d", cnt);
 
 		result = ldap_entrylist_create(ldap_conn->mctx,
 					       ldap_conn->handle,
-					       ldap_conn->result,
-					       &ldap_conn->ldap_entries);
+					       ldap_qresult->result,
+					       &ldap_qresult->ldap_entries);
 		if (result != ISC_R_SUCCESS) {
 			log_error("failed to save LDAP query results");
 			return result;
 		}
 
+		*ldap_qresultp = ldap_qresult;
 		return ISC_R_SUCCESS;
 	}
 
@@ -1669,38 +1683,70 @@ retry:
 		if (result == ISC_R_SUCCESS)
 			goto retry;
 	}
-
+cleanup:
+	ldap_query_free(ISC_FALSE, &ldap_qresult);
 	return ISC_R_FAILURE;
 }
 
+/**
+ * Allocate and initialize new ldap_qresult structure.
+ * @param[out] ldap_qresultp Newly allocated ldap_qresult structure.
+ * @return ISC_R_SUCCESS or ISC_R_NOMEMORY (from CHECKED_MEM_GET_PTR)
+ */
+static isc_result_t
+ldap_query_create(isc_mem_t *mctx, ldap_qresult_t **ldap_qresultp) {
+	ldap_qresult_t *ldap_qresult = NULL;
+	isc_result_t result;
+
+	CHECKED_MEM_GET_PTR(mctx, ldap_qresult);
+	ldap_qresult->mctx = mctx;
+	ldap_qresult->result = NULL;
+	ldap_qresult->query_string = NULL;
+	INIT_LIST(ldap_qresult->ldap_entries);
+	CHECK(str_new(mctx, &ldap_qresult->query_string));
+
+	*ldap_qresultp = ldap_qresult;
+	return ISC_R_SUCCESS;
+
+cleanup:
+	SAFE_MEM_PUT_PTR(mctx, ldap_qresult);
+	return result;
+}
+
+/**
+ * Free LDAP query result. Can free the whole structure or internal parts only.
+ * Freeing internal parts is suitable before reusing the structure.
+ * @param[in] prepare_reuse ISC_TRUE implies freeing internal parts,
+ *                          but not the whole structure.
+ * @param[in,out] ldap_qresultp Pointer to freed query. Will be set to NULL
+ *                              if prepare_reuse == ISC_FALSE.
+ */
 static void
-ldap_query_free(ldap_connection_t *ldap_conn)
+ldap_query_free(isc_boolean_t prepare_reuse, ldap_qresult_t **ldap_qresultp)
 {
-	if (ldap_conn == NULL)
+	ldap_qresult_t *qresult;
+	REQUIRE(ldap_qresultp != NULL);
+
+	qresult = *ldap_qresultp;
+
+	if (qresult == NULL)
 		return;
 
-	if (ldap_conn->dn) {
-		ldap_memfree(ldap_conn->dn);
-		ldap_conn->dn = NULL;
-	}
-	if (ldap_conn->values) {
-		ldap_value_free(ldap_conn->values);
-		ldap_conn->values = NULL;
-	}
-	if (ldap_conn->attribute) {
-		ldap_memfree(ldap_conn->attribute);
-		ldap_conn->attribute = NULL;
-	}
-	if (ldap_conn->ber) {
-		ber_free(ldap_conn->ber, 0);
-		ldap_conn->ber = NULL;
-	}
-	if (ldap_conn->result) {
-		ldap_msgfree(ldap_conn->result);
-		ldap_conn->result = NULL;
+	if (qresult->result) {
+		ldap_msgfree(qresult->result);
+		qresult->result = NULL;
 	}
 
-	ldap_entrylist_destroy(ldap_conn->mctx, &ldap_conn->ldap_entries);
+	ldap_entrylist_destroy(qresult->mctx, &qresult->ldap_entries);
+
+	if (prepare_reuse) {
+		str_clear(qresult->query_string);
+		INIT_LIST(qresult->ldap_entries);
+	} else { /* free the whole structure */
+		str_destroy(&qresult->query_string);
+		SAFE_MEM_PUT_PTR(qresult->mctx, qresult);
+		*ldap_qresultp = NULL;
+	}
 }
 
 /* FIXME: Tested with SASL/GSSAPI/KRB5 only */
@@ -2246,6 +2292,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	isc_result_t result;
 	isc_mem_t *mctx = ldap_inst->mctx;
 	ldap_connection_t *ldap_conn = NULL;
+	ldap_qresult_t *ldap_qresult = NULL;
 	ld_string_t *owner_dn = NULL;
 	LDAPMod *change[3] = { NULL };
 	LDAPMod *change_ptr = NULL;
@@ -2272,12 +2319,12 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	}
 
 	CHECK(ldap_pool_getconnection(ldap_inst->pool, &ldap_conn));
-	CHECK(ldap_query(ldap_inst, ldap_conn, zone_dn,
+	CHECK(ldap_query(ldap_inst, ldap_conn, &ldap_qresult, zone_dn,
 					 LDAP_SCOPE_BASE, attrs, 0,
 					 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
 
 	/* only 0 or 1 active zone can be returned from query */
-	entry = HEAD(ldap_conn->ldap_entries);
+	entry = HEAD(ldap_qresult->ldap_entries);
 	if (entry == NULL) {
 		log_debug(3, "Active zone %s not found", zone_dn);
 		result = ISC_R_NOTFOUND;
@@ -2409,14 +2456,14 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		char *owner_zone_dn_ptr = strstr(str_buf(owner_dn_ptr),", ") + 1;
 		
 		/* Get attribute "idnsAllowDynUpdate" for reverse zone or use default. */
-		ldap_query_free(ldap_conn);
+		ldap_query_free(ISC_FALSE, &ldap_qresult);
 		zone_dyn_update = ldap_inst->dyn_update;
-		CHECK(ldap_query(ldap_inst, ldap_conn, owner_zone_dn_ptr,
+		CHECK(ldap_query(ldap_inst, ldap_conn, &ldap_qresult, owner_zone_dn_ptr,
 						 LDAP_SCOPE_BASE, attrs, 0,
 						 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
 
 		/* Only 0 or 1 active zone can be returned from query. */
-		entry = HEAD(ldap_conn->ldap_entries);
+		entry = HEAD(ldap_qresult->ldap_entries);
 		if (entry == NULL) {
 			log_debug(3, "Active zone %s not found", zone_dn);
 			result = ISC_R_NOTFOUND;
@@ -2502,6 +2549,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	}
 	
 cleanup:
+	ldap_query_free(ISC_FALSE, &ldap_qresult);
 	ldap_pool_putconnection(ldap_inst->pool, &ldap_conn);
 	str_destroy(&owner_dn_ptr);
 	str_destroy(&owner_dn);
@@ -2604,7 +2652,6 @@ ldap_pool_getconnection(ldap_pool_t *pool, ldap_connection_t ** conn)
 
 	RUNTIME_CHECK(ldap_conn != NULL);
 
-	INIT_LIST(ldap_conn->ldap_entries);
 	*conn = ldap_conn;
 
 cleanup:
@@ -2624,7 +2671,6 @@ ldap_pool_putconnection(ldap_pool_t *pool, ldap_connection_t **conn)
 	if (ldap_conn == NULL)
 		return;
 
-	ldap_query_free(ldap_conn);
 	UNLOCK(&ldap_conn->lock);
 	semaphore_signal(&pool->conn_semaphore);
 
@@ -2756,6 +2802,7 @@ update_action(isc_task_t *task, isc_event_t *event)
 	isc_result_t result ;
 	ldap_instance_t *inst = NULL;
 	ldap_connection_t *conn = NULL;
+	ldap_qresult_t *ldap_qresult = NULL;
 	ldap_entry_t *entry;
 	isc_boolean_t delete = ISC_TRUE;
 	isc_mem_t *mctx;
@@ -2775,11 +2822,11 @@ update_action(isc_task_t *task, isc_event_t *event)
 
 	CHECK(ldap_pool_getconnection(inst->pool, &conn));
 
-	CHECK(ldap_query(inst, conn, pevent->dn,
+	CHECK(ldap_query(inst, conn, &ldap_qresult, pevent->dn,
 			 LDAP_SCOPE_BASE, attrs, 0,
 			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
 
-	for (entry = HEAD(conn->ldap_entries);
+	for (entry = HEAD(ldap_qresult->ldap_entries);
              entry != NULL;
              entry = NEXT(entry, link)) {
 		delete = ISC_FALSE;
@@ -2797,6 +2844,7 @@ cleanup:
 			  "Zones can be outdated, run `rndc reload`",
 			  pevent->dn);
 
+	ldap_query_free(ISC_FALSE, &ldap_qresult);
 	ldap_pool_putconnection(inst->pool, &conn);
 	isc_mem_free(mctx, pevent->dbname);
 	isc_mem_free(mctx, pevent->dn);
@@ -2811,6 +2859,7 @@ update_config(isc_task_t *task, isc_event_t *event)
 	isc_result_t result ;
 	ldap_instance_t *inst = NULL;
 	ldap_connection_t *conn = NULL;
+	ldap_qresult_t *ldap_qresult = NULL;
 	ldap_entry_t *entry;
 	isc_mem_t *mctx;
 	char *attrs[] = {
@@ -2828,14 +2877,14 @@ update_config(isc_task_t *task, isc_event_t *event)
 
 	CHECK(ldap_pool_getconnection(inst->pool, &conn));
 
-	CHECK(ldap_query(inst, conn, pevent->dn,
+	CHECK(ldap_query(inst, conn, &ldap_qresult, pevent->dn,
 			 LDAP_SCOPE_BASE, attrs, 0,
 			 "(objectClass=idnsConfigObject)"));
 
-	if (EMPTY(conn->ldap_entries))
-		log_error("Config object can not be empty");
+	if (EMPTY(ldap_qresult->ldap_entries))
+		log_error("Config object can not be empty"); /* TODO: WHY? */
 
-	for (entry = HEAD(conn->ldap_entries);
+	for (entry = HEAD(ldap_qresult->ldap_entries);
 	     entry != NULL;
 	     entry = NEXT(entry, link)) {
 		result = ldap_parse_configentry(entry, inst);
@@ -2850,6 +2899,7 @@ cleanup:
 			  "Configuration can be outdated, run `rndc reload`",
 			  pevent->dn);
 
+	ldap_query_free(ISC_FALSE, &ldap_qresult);
 	ldap_pool_putconnection(inst->pool, &conn);
 	isc_mem_free(mctx, pevent->dbname);
 	isc_mem_free(mctx, pevent->dn);
@@ -3148,6 +3198,7 @@ ldap_psearch_watcher(isc_threadarg_t arg)
 {
 	ldap_instance_t *inst = (ldap_instance_t *)arg;
 	ldap_connection_t *conn = NULL;
+	ldap_qresult_t *ldap_qresult = NULL;
 	struct timeval tv;
 	int ret, cnt;
 	isc_result_t result;
@@ -3187,6 +3238,8 @@ ldap_psearch_watcher(isc_threadarg_t arg)
 		ldap_connect(inst, conn, ISC_TRUE);
 	}
 
+	CHECK(ldap_query_create(conn->mctx, &ldap_qresult));
+
 restart:
 	/* Perform initial lookup */
 	if (inst->psearch) {
@@ -3213,7 +3266,7 @@ restart:
 
 	while (!inst->exiting) {
 		ret = ldap_result(conn->handle, conn->msgid, 0, &tv,
-				  &conn->result);
+				  &ldap_qresult->result);
 		if (ret <= 0) {
 			/* Don't reconnect if signaled to exit */
 			CHECK_EXIT;
@@ -3225,6 +3278,7 @@ restart:
 				if (!sane_sleep(inst, inst->reconnect_interval))
 					goto cleanup;
 			}
+			ldap_query_free(ISC_TRUE, &ldap_qresult);
 			goto restart;
 		}
 
@@ -3237,14 +3291,14 @@ restart:
 		}
 
 		conn->tries = 0;
-		cnt = ldap_count_entries(conn->handle, conn->result);
-	
+		cnt = ldap_count_entries(conn->handle, ldap_qresult->result);
+
 		if (cnt > 0) {
 			log_debug(3, "Got psearch updates (%d)", cnt);
 			result = ldap_entrylist_append(conn->mctx,
 						       conn->handle,
-						       conn->result,
-						       &conn->ldap_entries);
+						       ldap_qresult->result,
+						       &ldap_qresult->ldap_entries);
 			if (result != ISC_R_SUCCESS) {
 				/*
 				 * Error means inconsistency of our zones
@@ -3256,7 +3310,7 @@ restart:
 			}
 
 			ldap_entry_t *entry;
-			for (entry = HEAD(conn->ldap_entries);
+			for (entry = HEAD(ldap_qresult->ldap_entries);
 			     entry != NULL;
 			     entry = NEXT(entry, link)) {
 				LDAPControl **ctrls = NULL;
@@ -3274,16 +3328,14 @@ restart:
 				psearch_update(inst, entry, ctrls);
 			}
 soft_err:
-
-			ldap_msgfree(conn->result);
-			ldap_entrylist_destroy(conn->mctx,
-					       &conn->ldap_entries);
+			ldap_query_free(ISC_TRUE, &ldap_qresult);
 		}
 	}
 
 	log_debug(1, "Ending ldap_psearch_watcher");
 
 cleanup:
+	ldap_query_free(ISC_FALSE, &ldap_qresult);
 	ldap_pool_putconnection(inst->pool, &conn);
 
 	return (isc_threadresult_t)0;
