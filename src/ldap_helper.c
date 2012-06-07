@@ -3078,7 +3078,7 @@ static isc_threadresult_t
 ldap_psearch_watcher(isc_threadarg_t arg)
 {
 	ldap_instance_t *inst = (ldap_instance_t *)arg;
-	ldap_connection_t *conn;
+	ldap_connection_t *conn = NULL;
 	struct timeval tv;
 	int ret, cnt;
 	isc_result_t result;
