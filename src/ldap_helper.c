@@ -30,6 +30,7 @@
 #include <dns/ttl.h>
 #include <dns/view.h>
 #include <dns/zone.h>
+#include <dns/db.h>
 #include <dns/zt.h>
 #include <dns/byaddr.h>
 #include <dns/forward.h>
@@ -788,7 +789,12 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock)
 		freeze = ISC_TRUE;
 	}
 
-	dns_zone_unload(zone);
+	/* Do not unload partially loaded zones, they have incomplete structures. */
+	dns_db_t *dbp = NULL;
+	if (dns_zone_getdb(zone, &dbp) != DNS_R_NOTLOADED) {
+		dns_db_detach(&dbp); /* dns_zone_getdb() attaches DB implicitly */
+		dns_zone_unload(zone);
+	}
 	CHECK(dns_zt_unmount(inst->view->zonetable, zone));
 	CHECK(zr_del_zone(inst->zone_register, name));
 	dns_zonemgr_releasezone(inst->zmgr, zone);
@@ -1013,7 +1019,7 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 
 	/* Check if we are already serving given zone */
 	result = zr_get_zone_ptr(inst->zone_register, &name, &zone);
-	if (result != ISC_R_SUCCESS) {
+	if (result != ISC_R_SUCCESS) { /* TODO: What about other errors? */
 		CHECK(create_zone(inst, &name, &zone));
 		CHECK(zr_add_zone(inst->zone_register, zone, dn));
 		publish = ISC_TRUE;
@@ -2760,6 +2766,7 @@ update_action(isc_task_t *task, isc_event_t *event)
 	mctx = pevent->mctx;
 
 	result = manager_get_ldap_instance(pevent->dbname, &inst);
+	/* TODO: Can it happen? */
 	if (result != ISC_R_SUCCESS)
 		goto cleanup;
 
