@@ -18,6 +18,8 @@ AC_CHECK_LIB([dns], [dns_name_init], [],
 	AC_MSG_ERROR([Install BIND9 development files]))
 AC_CHECK_LIB([ldap], [ldap_initialize], [],
 	AC_MSG_ERROR([Install OpenLDAP development files]))
+AC_CHECK_LIB([krb5], [krb5_cc_initialize], [],
+	AC_MSG_ERROR([Install Kerberos 5 development files]))
 
 # Checks for header files.
 AC_CHECK_HEADERS([stddef.h stdlib.h string.h strings.h])
