@@ -1670,7 +1670,7 @@ retry:
 			goto retry;
 	}
 
-	return result;
+	return ISC_R_FAILURE;
 }
 
 static void
