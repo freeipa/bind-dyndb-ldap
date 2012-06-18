@@ -544,8 +544,11 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 		 * Wake up the watcher thread. This might look like a hack
 		 * but isc_thread_t is actually pthread_t and libisc don't
 		 * have any isc_thread_kill() func.
+		 *
+		 * We use SIGUSR1 to not to interfere with any signal
+		 * used by BIND itself.
 		 */
-		REQUIRE(pthread_kill(ldap_inst->watcher, SIGTERM) == 0);
+		REQUIRE(pthread_kill(ldap_inst->watcher, SIGUSR1) == 0);
 		RUNTIME_CHECK(isc_thread_join(ldap_inst->watcher, NULL)
 			      == ISC_R_SUCCESS);
 		ldap_inst->watcher = 0;
@@ -3081,6 +3084,65 @@ cleanup:
 	}
 }
 
+#define CHECK_EXIT \
+	do { \
+		if (inst->exiting) \
+			goto cleanup; \
+	} while (0)
+
+/*
+ * This "sane" sleep allows us to end if signal set the "exiting" variable.
+ *
+ * Returns ISC_FALSE if we should terminate, ISC_TRUE otherwise.
+ */
+static inline isc_boolean_t
+sane_sleep(const ldap_instance_t *inst, unsigned int timeout)
+{
+	unsigned int remains = timeout;
+
+	while (remains && !inst->exiting)
+		remains = sleep(remains);
+
+	if (remains)
+		log_debug(99, "sane_sleep: interrupted");
+
+	return inst->exiting ? ISC_FALSE : ISC_TRUE;
+}
+
+/* No-op signal handler for SIGUSR1 */
+static void
+noop_handler(int signal)
+{
+	UNUSED(signal);
+}
+
+static inline void
+install_usr1handler(void)
+{
+	struct sigaction sa;
+	struct sigaction oldsa;
+	int ret;
+	static isc_boolean_t once = ISC_FALSE;
+
+	if (once)
+		return;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = &noop_handler;
+
+	ret = sigaction(SIGUSR1, &sa, &oldsa);
+	RUNTIME_CHECK(ret == 0); /* If sigaction fails, it's a bug */
+
+	/* Don't attempt to replace already existing handler */
+	RUNTIME_CHECK(oldsa.sa_handler == NULL);
+
+	once = ISC_TRUE;
+}
+
+/*
+ * NOTE:
+ * Every blocking call in psearch_watcher thread must be preemptible.
+ */
 static isc_threadresult_t
 ldap_psearch_watcher(isc_threadarg_t arg)
 {
@@ -3093,14 +3155,16 @@ ldap_psearch_watcher(isc_threadarg_t arg)
 
 	log_debug(1, "Entering ldap_psearch_watcher");
 
+	install_usr1handler();
+
 	/*
 	 * By default, BIND sets threads to accept signals only via
-	 * sigwait(). However we need to use SIGTERM to interrupt
+	 * sigwait(). However we need to use SIGUSR1 to interrupt
 	 * watcher from waiting inside ldap_result so enable
-	 * asynchronous delivering of SIGTERM.
+	 * asynchronous delivering of SIGUSR1.
 	 */
 	sigemptyset(&sigset);
-	sigaddset(&sigset, SIGTERM);
+	sigaddset(&sigset, SIGUSR1);
 	ret = pthread_sigmask(SIG_UNBLOCK, &sigset, NULL);
 	/* pthread_sigmask fails only due invalid args */
 	RUNTIME_CHECK(ret == 0);
@@ -3114,12 +3178,12 @@ ldap_psearch_watcher(isc_threadarg_t arg)
 
 	/* Try to connect. */
 	while (conn->handle == NULL) {
-		if (inst->exiting)
-			goto cleanup;
+		CHECK_EXIT;
 
 		log_error("ldap_psearch_watcher handle is NULL. "
 		          "Next try in %ds", inst->reconnect_interval);
-		sleep(inst->reconnect_interval);
+		if (!sane_sleep(inst, inst->reconnect_interval))
+			goto cleanup;
 		ldap_connect(inst, conn, ISC_TRUE);
 	}
 
@@ -3150,14 +3214,16 @@ restart:
 	while (!inst->exiting) {
 		ret = ldap_result(conn->handle, conn->msgid, 0, &tv,
 				  &conn->result);
-
 		if (ret <= 0) {
+			/* Don't reconnect if signaled to exit */
+			CHECK_EXIT;
 			while (handle_connection_error(inst, conn, ISC_TRUE)
 			       != ISC_R_SUCCESS) {
 				log_error("ldap_psearch_watcher failed to handle "
 					  "LDAP connection error. Reconnection "
 					  "in %ds", inst->reconnect_interval);
-				sleep(inst->reconnect_interval);
+				if (!sane_sleep(inst, inst->reconnect_interval))
+					goto cleanup;
 			}
 			goto restart;
 		}
