@@ -34,6 +34,8 @@
 #include <dns/zt.h>
 #include <dns/byaddr.h>
 #include <dns/forward.h>
+#include <dns/soa.h>
+#include <isc/serial.h>
 
 #include <isc/buffer.h>
 #include <isc/lex.h>
@@ -173,6 +175,7 @@ struct ldap_instance {
 	isc_boolean_t		exiting;
 	isc_boolean_t		sync_ptr;
 	isc_boolean_t		dyn_update;
+	isc_boolean_t		serial_autoincrement;
 };
 
 struct ldap_pool {
@@ -343,6 +346,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		{ "ldap_hostname", default_string("")		},
 		{ "sync_ptr",	 default_boolean(ISC_FALSE) },
 		{ "dyn_update",	 default_boolean(ISC_FALSE) },
+		{ "serial_autoincrement",	 default_boolean(ISC_FALSE) },
 		end_of_settings
 	};
 
@@ -401,6 +405,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	ldap_settings[i++].target = ldap_inst->ldap_hostname;
 	ldap_settings[i++].target = &ldap_inst->sync_ptr;
 	ldap_settings[i++].target = &ldap_inst->dyn_update;
+	ldap_settings[i++].target = &ldap_inst->serial_autoincrement;
 	CHECK(set_settings(ldap_settings, argv));
 
 	/* Set timer for deadlock detection inside semaphore_wait_timed . */
@@ -462,6 +467,13 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		log_debug(1, "psearch needs at least 3 connections, "
 			  "increasing limit");
 		ldap_inst->connections = 3;
+	}
+	if (ldap_inst->serial_autoincrement == ISC_TRUE
+		&& ldap_inst->psearch != ISC_TRUE) {
+		log_error("SOA serial number auto-increment feature requires "
+				"persistent search");
+		result = ISC_R_FAILURE;
+		goto cleanup;
 	}
 
 	CHECK(new_ldap_cache(mctx, argv, &ldap_inst->cache, ldap_inst->psearch));
@@ -2787,6 +2799,82 @@ ldap_pscontrol_destroy(isc_mem_t *mctx, LDAPControl **ctrlp)
 	*ctrlp = NULL;
 }
 
+static inline isc_result_t
+soa_serial_get(ldap_instance_t *inst, dns_name_t *zone_name,
+				isc_uint32_t *serial) {
+	isc_result_t result;
+	dns_zone_t *zone = NULL;
+
+	CHECK(zr_get_zone_ptr(inst->zone_register, zone_name, &zone));
+	CHECK(dns_zone_getserial2(zone, serial));
+	dns_zone_detach(&zone);
+
+cleanup:
+	return result;
+}
+
+isc_result_t
+soa_serial_increment(isc_mem_t *mctx, ldap_instance_t *inst,
+		dns_name_t *zone_name) {
+	isc_result_t result = ISC_R_FAILURE;
+	ldap_connection_t * conn = NULL;
+	ld_string_t *zone_dn = NULL;
+	ldapdb_rdatalist_t rdatalist;
+	dns_rdatalist_t *rdlist = NULL;
+	dns_rdata_t *soa_rdata = NULL;
+	isc_uint32_t old_serial;
+	isc_uint32_t new_serial;
+	isc_time_t curr_time;
+
+	REQUIRE(inst != NULL);
+	REQUIRE(zone_name != NULL);
+
+	INIT_LIST(rdatalist);
+	CHECK(str_new(mctx, &zone_dn));
+	CHECK(dnsname_to_dn(inst->zone_register, zone_name, zone_dn));
+	log_debug(5, "incrementing SOA serial number in zone '%s'",
+				str_buf(zone_dn));
+
+	/* get original SOA rdata and serial value */
+	CHECK(ldapdb_rdatalist_get(mctx, inst, zone_name, zone_name, &rdatalist));
+	CHECK(ldapdb_rdatalist_findrdatatype(&rdatalist, dns_rdatatype_soa, &rdlist));
+	soa_rdata = ISC_LIST_HEAD(rdlist->rdata);
+	CHECK(soa_serial_get(inst, zone_name, &old_serial));
+
+	/* Compute the new SOA serial - use actual timestamp.
+	 * If timestamp <= oldSOAserial then increment old serial by one. */
+	isc_time_now(&curr_time);
+	new_serial = isc_time_seconds(&curr_time) & 0xFFFFFFFF;
+	if (!isc_serial_gt(new_serial, old_serial)) {
+		/* increment by one, RFC1982, from bind-9.8.2/bin/named/update.c */
+		new_serial = (old_serial + 1) & 0xFFFFFFFF;
+	}
+	if (new_serial == 0)
+		new_serial = 1;
+	log_debug(5,"zone '%s': old serial %u, new serial %u",
+				str_buf(zone_dn), old_serial, new_serial);
+	dns_soa_setserial(new_serial, soa_rdata);
+
+	/* write the new serial back to DB */
+	CHECK(ldap_pool_getconnection(inst->pool, &conn));
+	CHECK(modify_soa_record(conn, str_buf(zone_dn), soa_rdata));
+	CHECK(discard_from_cache(ldap_instance_getcache(inst), zone_name));
+
+	/* put the new SOA to inst->cache and compare old and new serials */
+	CHECK(soa_serial_get(inst, zone_name, &new_serial));
+	INSIST(isc_serial_gt(new_serial, old_serial) == ISC_TRUE);
+
+cleanup:
+	if (result != ISC_R_SUCCESS)
+		log_error("SOA serial number incrementation failed in zone '%s'",
+					str_buf(zone_dn));
+
+	ldap_pool_putconnection(inst->pool, &conn);
+	str_destroy(&zone_dn);
+	ldapdb_rdatalist_destroy(mctx, &rdatalist);
+	return result;
+}
+
 /*
  * update_action routine is processed asynchronously so it cannot assume
  * anything about state of ldap_inst from where it was sent. The ldap_inst
@@ -2942,7 +3030,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 	if (PSEARCH_DEL(pevent->chgtype)) {
 		log_debug(5, "psearch_update: Removing item from cache (%s)", 
 		          pevent->dn);
-	} 
+	}
 
 	/* Get cache instance & clean old record */
 	cache = ldap_instance_getcache(inst);
@@ -2965,6 +3053,10 @@ update_record(isc_task_t *task, isc_event_t *event)
 
 		/* Destroy rdatalist, it is now in the cache. */
 		ldapdb_rdatalist_destroy(mctx, &rdatalist);
+	}
+
+	if (inst->serial_autoincrement) {
+		CHECK(soa_serial_increment(mctx, inst, &origin));
 	}
 cleanup:
 	if (result != ISC_R_SUCCESS)
