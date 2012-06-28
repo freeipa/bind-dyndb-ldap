@@ -26,6 +26,7 @@
 
 #include <dns/rbt.h>
 #include <dns/result.h>
+#include <dns/log.h>
 
 #include <string.h>
 
@@ -207,6 +208,14 @@ ldap_cache_getrdatalist(isc_mem_t *mctx, ldap_cache_t *cache,
 
 cleanup:
 	UNLOCK(&cache->mutex);
+
+	if (isc_log_getdebuglevel(dns_lctx) >= 20) {
+		char dns_str[DNS_NAME_FORMATSIZE];
+		dns_name_format(name, dns_str, sizeof(dns_str));
+		log_debug(20, "cache search for '%s': %s", dns_str,
+					isc_result_totext(result));
+	}
+
 	return result;
 }
 
