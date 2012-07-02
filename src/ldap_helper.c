@@ -2723,6 +2723,7 @@ cleanup:
 #define LDAP_CONTROL_PERSISTENTSEARCH "2.16.840.1.113730.3.4.3"
 #define LDAP_CONTROL_ENTRYCHANGE "2.16.840.1.113730.3.4.7"
 
+#define LDAP_ENTRYCHANGE_NONE	0 /* entry change control is not present */
 #define LDAP_ENTRYCHANGE_ADD	1
 #define LDAP_ENTRYCHANGE_DEL	2
 #define LDAP_ENTRYCHANGE_MOD	4
@@ -2733,6 +2734,7 @@ cleanup:
 #define PSEARCH_DEL(chgtype) ((chgtype & LDAP_ENTRYCHANGE_DEL) != 0)
 #define PSEARCH_MOD(chgtype) ((chgtype & LDAP_ENTRYCHANGE_MOD) != 0)
 #define PSEARCH_MODDN(chgtype) ((chgtype & LDAP_ENTRYCHANGE_MODDN) != 0)
+#define PSEARCH_ANY(chgtype) ((chgtype & LDAP_ENTRYCHANGE_ALL) != 0)
 /*
  * Creates persistent search (aka psearch,
  * http://tools.ietf.org/id/draft-ietf-ldapext-psearch-03.txt) control.
@@ -3036,9 +3038,11 @@ update_record(isc_task_t *task, isc_event_t *event)
 	cache = ldap_instance_getcache(inst);
 	CHECK(discard_from_cache(cache, &name));
 
-	if (PSEARCH_ADD(pevent->chgtype) || PSEARCH_MOD(pevent->chgtype)) {
+	if (PSEARCH_ADD(pevent->chgtype) || PSEARCH_MOD(pevent->chgtype) ||
+			!PSEARCH_ANY(pevent->chgtype)) {
 		/* 
-		 * Find new data in LDAP. 
+		 * Find new data in LDAP. !PSEARCH_ANY indicates unchanged entry
+		 * found during initial lookup (i.e. database dump).
 		 *
 		 * @todo Change this to convert ldap_entry_t to ldapdb_rdatalist_t.
 		 */
@@ -3055,7 +3059,13 @@ update_record(isc_task_t *task, isc_event_t *event)
 		ldapdb_rdatalist_destroy(mctx, &rdatalist);
 	}
 
-	if (inst->serial_autoincrement) {
+	log_debug(20,"psearch change type: none%d, add%d, del%d, mod%d, moddn%d",
+				!PSEARCH_ANY(pevent->chgtype), PSEARCH_ADD(pevent->chgtype),
+				PSEARCH_DEL(pevent->chgtype), PSEARCH_MOD(pevent->chgtype),
+				PSEARCH_MODDN(pevent->chgtype));
+
+	/* Do not bump serial during initial database dump. */
+	if (inst->serial_autoincrement && PSEARCH_ANY(pevent->chgtype)) {
 		CHECK(soa_serial_increment(mctx, inst, &origin));
 	}
 cleanup:
@@ -3138,7 +3148,7 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 	ldap_entryclass_t class;
 	isc_result_t result = ISC_R_SUCCESS;
 	ldap_psearchevent_t *pevent = NULL;
-	int chgtype = LDAP_ENTRYCHANGE_ADD;
+	int chgtype = LDAP_ENTRYCHANGE_NONE;
 	char *moddn = NULL;
 	char *dn = NULL;
 	char *dbname = NULL;
