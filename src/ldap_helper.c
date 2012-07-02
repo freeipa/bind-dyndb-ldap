@@ -265,6 +265,8 @@ static isc_result_t ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry,
 		ldap_connection_t *conn, dns_name_t *origin,
 		const ld_string_t *fake_mname, ld_string_t *buf,
 		ldapdb_rdatalist_t *rdatalist);
+static inline isc_result_t ldap_get_zone_serial(ldap_instance_t *inst,
+		dns_name_t *zone_name, isc_uint32_t *serial);
 
 static isc_result_t ldap_connect(ldap_instance_t *ldap_inst,
 		ldap_connection_t *ldap_conn, isc_boolean_t force);
@@ -291,6 +293,8 @@ static isc_result_t ldap_rdata_to_char_array(isc_mem_t *mctx,
 static void free_char_array(isc_mem_t *mctx, char ***valsp);
 static isc_result_t modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		dns_rdatalist_t *rdlist, int mod_op, isc_boolean_t delete_node);
+static isc_result_t soa_serial_increment(isc_mem_t *mctx, ldap_instance_t *inst,
+		dns_name_t *zone_name);
 
 static isc_result_t
 ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock);
@@ -996,8 +1000,9 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	isc_result_t result;
 	isc_boolean_t unlock = ISC_FALSE;
 	isc_boolean_t publish = ISC_FALSE;
-	isc_boolean_t load = ISC_FALSE;
 	isc_task_t *task = inst->task;
+	isc_uint32_t ldap_serial;
+	isc_uint32_t zr_serial;
 
 	dns_name_init(&name, NULL);
 
@@ -1016,11 +1021,11 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	 * Fetch forwarders. 
 	 * Forwarding has top priority hence when the forwarders are properly
 	 * set up all others attributes are ignored.
-	 */ 
+	 */
 	result = ldap_entry_getvalues(entry, "idnsForwarders", &values);
 	if (result == ISC_R_SUCCESS) {
 		log_debug(2, "Setting forwarders for %s", dn);
-		CHECK(configure_zone_forwarders(entry, inst, &name, &values));		
+		CHECK(configure_zone_forwarders(entry, inst, &name, &values));
 		/* DO NOT CHANGE ANYTHING ELSE after forwarders are set up! */
 		goto cleanup;
 	} else {
@@ -1076,17 +1081,41 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 		/* Everything is set correctly, publish zone */
 		CHECK(publish_zone(inst, zone));
 	}
-	load = ISC_TRUE;
+
+	/*
+	 * Don't bother if load fails, server will return
+	 * SERVFAIL for queries beneath this zone. This is
+	 * admin's problem.
+	 */
+	result = dns_zone_load(zone);
+	if (result != ISC_R_SUCCESS && result != DNS_R_UPTODATE
+		&& result != DNS_R_DYNAMIC && result != DNS_R_CONTINUE)
+		goto cleanup;
+
+	result = ISC_R_SUCCESS;
+
+	/* initialize serial in zone register and always increment serial
+	 * for a new zone (typically after BIND start)
+	 * - the zone was possibly changed in meanwhile */
+	if (publish) {
+		CHECK(ldap_get_zone_serial(inst, &name, &ldap_serial));
+		CHECK(zr_set_zone_serial(inst->zone_register, &name, ldap_serial));
+	}
+
+	/* SOA serial autoincrement feature for SOA record:
+	 * 1) remember old SOA serial from zone register
+	 * 2) compare old and new SOA serial from LDAP DB
+	 * 3) if (old == new) then do autoincrement, remember new serial otherwise */
+	if (inst->serial_autoincrement) {
+		CHECK(ldap_get_zone_serial(inst, &name, &ldap_serial));
+		CHECK(zr_get_zone_serial(inst->zone_register, &name, &zr_serial));
+		if (ldap_serial == zr_serial)
+			CHECK(soa_serial_increment(inst->mctx, inst, &name));
+		else
+			CHECK(zr_set_zone_serial(inst->zone_register, &name, ldap_serial));
+	}
 
 cleanup:
-	if (load) {
-		/*
-		 * Don't bother if load fails, server will return
-		 * SERVFAIL for queries beneath this zone. This is
-		 * admin's problem.
-		 */
-		(void) dns_zone_load(zone);
-	}
 	if (unlock)
 		isc_task_endexclusive(task);
 	if (dns_name_dynamic(&name))
@@ -1094,7 +1123,7 @@ cleanup:
 	if (zone != NULL)
 		dns_zone_detach(&zone);
 
-	return ISC_R_SUCCESS;
+	return result;
 }
 
 /*
@@ -2802,7 +2831,7 @@ ldap_pscontrol_destroy(isc_mem_t *mctx, LDAPControl **ctrlp)
 }
 
 static inline isc_result_t
-soa_serial_get(ldap_instance_t *inst, dns_name_t *zone_name,
+ldap_get_zone_serial(ldap_instance_t *inst, dns_name_t *zone_name,
 				isc_uint32_t *serial) {
 	isc_result_t result;
 	dns_zone_t *zone = NULL;
@@ -2815,7 +2844,7 @@ cleanup:
 	return result;
 }
 
-isc_result_t
+static isc_result_t
 soa_serial_increment(isc_mem_t *mctx, ldap_instance_t *inst,
 		dns_name_t *zone_name) {
 	isc_result_t result = ISC_R_FAILURE;
@@ -2841,7 +2870,7 @@ soa_serial_increment(isc_mem_t *mctx, ldap_instance_t *inst,
 	CHECK(ldapdb_rdatalist_get(mctx, inst, zone_name, zone_name, &rdatalist));
 	CHECK(ldapdb_rdatalist_findrdatatype(&rdatalist, dns_rdatatype_soa, &rdlist));
 	soa_rdata = ISC_LIST_HEAD(rdlist->rdata);
-	CHECK(soa_serial_get(inst, zone_name, &old_serial));
+	CHECK(ldap_get_zone_serial(inst, zone_name, &old_serial));
 
 	/* Compute the new SOA serial - use actual timestamp.
 	 * If timestamp <= oldSOAserial then increment old serial by one. */
@@ -2863,7 +2892,7 @@ soa_serial_increment(isc_mem_t *mctx, ldap_instance_t *inst,
 	CHECK(discard_from_cache(ldap_instance_getcache(inst), zone_name));
 
 	/* put the new SOA to inst->cache and compare old and new serials */
-	CHECK(soa_serial_get(inst, zone_name, &new_serial));
+	CHECK(ldap_get_zone_serial(inst, zone_name, &new_serial));
 	INSIST(isc_serial_gt(new_serial, old_serial) == ISC_TRUE);
 
 cleanup:
@@ -2930,9 +2959,9 @@ update_action(isc_task_t *task, isc_event_t *event)
 
 cleanup:
 	if (result != ISC_R_SUCCESS)
-		log_error("update_action (psearch) failed for %s. "
+		log_error("update_action (psearch) failed for '%s': %s. "
 			  "Zones can be outdated, run `rndc reload`",
-			  pevent->dn);
+			  pevent->dn, isc_result_totext(result));
 
 	ldap_query_free(ISC_FALSE, &ldap_qresult);
 	ldap_pool_putconnection(inst->pool, &conn);

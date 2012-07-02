@@ -50,6 +50,7 @@ struct zone_register {
 typedef struct {
 	dns_zone_t	*zone;
 	char		*dn;
+	isc_uint32_t	serial; /* last value processed by plugin (!= value in DB) */
 } zone_info_t;
 
 /* Callback for dns_rbt_create(). */
@@ -136,6 +137,7 @@ create_zone_info(isc_mem_t *mctx, dns_zone_t *zone, const char *dn,
 
 	CHECKED_MEM_GET_PTR(mctx, zinfo);
 	CHECKED_MEM_STRDUP(mctx, dn, zinfo->dn);
+	zinfo->serial = 0;
 	zinfo->zone = NULL;
 	dns_zone_attach(zone, &zinfo->zone);
 
@@ -307,6 +309,63 @@ zr_get_zone_ptr(zone_register_t *zr, dns_name_t *name, dns_zone_t **zonep)
 	result = dns_rbt_findname(zr->rbt, name, 0, NULL, &zinfo);
 	if (result == ISC_R_SUCCESS)
 		dns_zone_attach(((zone_info_t *)zinfo)->zone, zonep);
+
+	RWUNLOCK(&zr->rwlock, isc_rwlocktype_read);
+
+	return result;
+}
+
+/**
+ * Return last SOA serial value processed by autoincrement feature.
+ */
+isc_result_t
+zr_get_zone_serial(zone_register_t *zr, dns_name_t *name, isc_uint32_t *serialp)
+{
+	isc_result_t result;
+	void *zinfo = NULL;
+
+	REQUIRE(zr != NULL);
+	REQUIRE(name != NULL);
+	REQUIRE(serialp != NULL);
+
+	if (!dns_name_isabsolute(name)) {
+		log_bug("trying to find zone with a relative name");
+		return ISC_R_FAILURE;
+	}
+
+	RWLOCK(&zr->rwlock, isc_rwlocktype_read);
+
+	result = dns_rbt_findname(zr->rbt, name, 0, NULL, &zinfo);
+	if (result == ISC_R_SUCCESS)
+		*serialp = ((zone_info_t *)zinfo)->serial;
+
+	RWUNLOCK(&zr->rwlock, isc_rwlocktype_read);
+
+	return result;
+}
+
+/**
+ * Set last SOA serial value processed by autoincrement feature.
+ */
+isc_result_t
+zr_set_zone_serial(zone_register_t *zr, dns_name_t *name, isc_uint32_t serial)
+{
+	isc_result_t result;
+	void *zinfo = NULL;
+
+	REQUIRE(zr != NULL);
+	REQUIRE(name != NULL);
+
+	if (!dns_name_isabsolute(name)) {
+		log_bug("trying to find zone with a relative name");
+		return ISC_R_FAILURE;
+	}
+
+	RWLOCK(&zr->rwlock, isc_rwlocktype_read);
+
+	result = dns_rbt_findname(zr->rbt, name, 0, NULL, &zinfo);
+	if (result == ISC_R_SUCCESS)
+		((zone_info_t *)zinfo)->serial = serial;
 
 	RWUNLOCK(&zr->rwlock, isc_rwlocktype_read);
 

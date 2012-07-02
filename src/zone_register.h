@@ -48,4 +48,10 @@ zr_get_rbt(zone_register_t *zr);
 isc_mem_t *
 zr_get_mctx(zone_register_t *zr);
 
+isc_result_t
+zr_set_zone_serial(zone_register_t *zr, dns_name_t *name, isc_uint32_t serial);
+
+isc_result_t
+zr_get_zone_serial(zone_register_t *zr, dns_name_t *name, isc_uint32_t *serialp);
+
 #endif /* !_LD_ZONE_REGISTER_H_ */
