@@ -110,7 +110,6 @@ static void *ldapdb_version = &dummy;
 
 static void free_ldapdb(ldapdb_t *ldapdb);
 static void detachnode(dns_db_t *db, dns_dbnode_t **targetp);
-static unsigned int rdatalist_length(const dns_rdatalist_t *rdlist);
 static isc_result_t clone_rdatalist_to_rdataset(isc_mem_t *mctx,
 						dns_rdatalist_t *rdlist,
 						dns_rdataset_t *rdataset);
@@ -545,6 +544,7 @@ found:
 		goto skipfind;
 
 	result = ldapdb_rdatalist_findrdatatype(&rdatalist, type, &rdlist);
+
 	if (result != ISC_R_SUCCESS) {
 		/* No exact rdtype match. Check CNAME */
 
@@ -1004,20 +1004,6 @@ cleanup:
 	}
 
 	return result;
-}
-
-static unsigned int
-rdatalist_length(const dns_rdatalist_t *rdlist)
-{
-	dns_rdata_t *ptr = HEAD(rdlist->rdata);
-	unsigned int length = 0;
-
-	while (ptr != NULL) {
-		length++;
-		ptr = NEXT(ptr, link);
-	}
-
-	return length;
 }
 
 static isc_result_t

@@ -21,6 +21,7 @@
 #include <isc/mem.h>
 #include <isc/rwlock.h>
 #include <isc/util.h>
+#include <isc/md5.h>
 
 #include <dns/rbt.h>
 #include <dns/result.h>
@@ -31,6 +32,7 @@
 #include "log.h"
 #include "util.h"
 #include "zone_register.h"
+#include "rdlist.h"
 
 /*
  * The zone register is a red-black tree that maps a dns name of a zone to the
@@ -51,6 +53,7 @@ typedef struct {
 	dns_zone_t	*zone;
 	char		*dn;
 	isc_uint32_t	serial; /* last value processed by plugin (!= value in DB) */
+	unsigned char digest[RDLIST_DIGESTLENGTH]; /* MD5 digest from all RRs in zone record */
 } zone_info_t;
 
 /* Callback for dns_rbt_create(). */
@@ -316,17 +319,19 @@ zr_get_zone_ptr(zone_register_t *zr, dns_name_t *name, dns_zone_t **zonep)
 }
 
 /**
- * Return last SOA serial value processed by autoincrement feature.
+ * Return last values processed by autoincrement feature.
  */
 isc_result_t
-zr_get_zone_serial(zone_register_t *zr, dns_name_t *name, isc_uint32_t *serialp)
+zr_get_zone_serial_digest(zone_register_t *zr, dns_name_t *name,
+		isc_uint32_t *serialp, unsigned char ** digestp)
 {
 	isc_result_t result;
-	void *zinfo = NULL;
+	zone_info_t *zinfo = NULL;
 
 	REQUIRE(zr != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(serialp != NULL);
+	REQUIRE(digestp != NULL && *digestp == NULL);
 
 	if (!dns_name_isabsolute(name)) {
 		log_bug("trying to find zone with a relative name");
@@ -335,9 +340,11 @@ zr_get_zone_serial(zone_register_t *zr, dns_name_t *name, isc_uint32_t *serialp)
 
 	RWLOCK(&zr->rwlock, isc_rwlocktype_read);
 
-	result = dns_rbt_findname(zr->rbt, name, 0, NULL, &zinfo);
-	if (result == ISC_R_SUCCESS)
-		*serialp = ((zone_info_t *)zinfo)->serial;
+	result = dns_rbt_findname(zr->rbt, name, 0, NULL, (void *)&zinfo);
+	if (result == ISC_R_SUCCESS) {
+		*serialp = zinfo->serial;
+		*digestp = zinfo->digest;
+	}
 
 	RWUNLOCK(&zr->rwlock, isc_rwlocktype_read);
 
@@ -345,16 +352,18 @@ zr_get_zone_serial(zone_register_t *zr, dns_name_t *name, isc_uint32_t *serialp)
 }
 
 /**
- * Set last SOA serial value processed by autoincrement feature.
+ * Set last SOA serial and digest from RRs processed by autoincrement feature.
  */
 isc_result_t
-zr_set_zone_serial(zone_register_t *zr, dns_name_t *name, isc_uint32_t serial)
+zr_set_zone_serial_digest(zone_register_t *zr, dns_name_t *name,
+		isc_uint32_t serial, unsigned char *digest)
 {
 	isc_result_t result;
-	void *zinfo = NULL;
+	zone_info_t *zinfo = NULL;
 
 	REQUIRE(zr != NULL);
 	REQUIRE(name != NULL);
+	REQUIRE(digest != NULL);
 
 	if (!dns_name_isabsolute(name)) {
 		log_bug("trying to find zone with a relative name");
@@ -363,9 +372,11 @@ zr_set_zone_serial(zone_register_t *zr, dns_name_t *name, isc_uint32_t serial)
 
 	RWLOCK(&zr->rwlock, isc_rwlocktype_read);
 
-	result = dns_rbt_findname(zr->rbt, name, 0, NULL, &zinfo);
-	if (result == ISC_R_SUCCESS)
-		((zone_info_t *)zinfo)->serial = serial;
+	result = dns_rbt_findname(zr->rbt, name, 0, NULL, (void *)&zinfo);
+	if (result == ISC_R_SUCCESS) {
+		zinfo->serial = serial;
+		memcpy(zinfo->digest, digest, RDLIST_DIGESTLENGTH);
+	}
 
 	RWUNLOCK(&zr->rwlock, isc_rwlocktype_read);
 

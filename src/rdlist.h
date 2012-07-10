@@ -22,6 +22,12 @@
 #ifndef _LD_RDLIST_H_
 #define _LD_RDLIST_H_
 
+#include <isc/md5.h>
+
+#include "types.h"
+
+#define RDLIST_DIGESTLENGTH ISC_MD5_DIGESTLENGTH
+
 isc_result_t
 rdatalist_clone(isc_mem_t *mctx, dns_rdatalist_t *source,
 		dns_rdatalist_t **targetp);
@@ -29,5 +35,12 @@ rdatalist_clone(isc_mem_t *mctx, dns_rdatalist_t *source,
 isc_result_t
 ldap_rdatalist_copy(isc_mem_t *mctx, ldapdb_rdatalist_t source,
 		    ldapdb_rdatalist_t *target);
+
+unsigned int
+rdatalist_length(const dns_rdatalist_t *rdlist);
+
+isc_result_t
+rdatalist_digest(isc_mem_t *mctx, ldapdb_rdatalist_t *rdlist,
+		unsigned char *digest);
 
 #endif /* !_LD_RDLIST_H_ */

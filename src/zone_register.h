@@ -49,9 +49,11 @@ isc_mem_t *
 zr_get_mctx(zone_register_t *zr);
 
 isc_result_t
-zr_set_zone_serial(zone_register_t *zr, dns_name_t *name, isc_uint32_t serial);
+zr_set_zone_serial_digest(zone_register_t *zr, dns_name_t *name,
+		isc_uint32_t serial, unsigned char *digest);
 
 isc_result_t
-zr_get_zone_serial(zone_register_t *zr, dns_name_t *name, isc_uint32_t *serialp);
+zr_get_zone_serial_digest(zone_register_t *zr, dns_name_t *name,
+		isc_uint32_t *serialp, unsigned char ** digestp);
 
 #endif /* !_LD_ZONE_REGISTER_H_ */

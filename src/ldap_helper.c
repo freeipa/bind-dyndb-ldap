@@ -71,6 +71,7 @@
 #include "ldap_entry.h"
 #include "ldap_helper.h"
 #include "log.h"
+#include "rdlist.h"
 #include "semaphore.h"
 #include "settings.h"
 #include "str.h"
@@ -1002,9 +1003,16 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	isc_boolean_t publish = ISC_FALSE;
 	isc_task_t *task = inst->task;
 	isc_uint32_t ldap_serial;
-	isc_uint32_t zr_serial;
+	isc_uint32_t zr_serial;	/* SOA serial value from in-memory zone register */
+	unsigned char ldap_digest[RDLIST_DIGESTLENGTH];
+	unsigned char *zr_digest = NULL;
+	ldapdb_rdatalist_t rdatalist;
+
+	REQUIRE(entry != NULL);
+	REQUIRE(inst != NULL);
 
 	dns_name_init(&name, NULL);
+	INIT_LIST(rdatalist);
 
 	/* Derive the dns name of the zone from the DN. */
 	dn = entry->dn;
@@ -1098,21 +1106,39 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	 * for a new zone (typically after BIND start)
 	 * - the zone was possibly changed in meanwhile */
 	if (publish) {
+		memset(ldap_digest, 0, RDLIST_DIGESTLENGTH);
 		CHECK(ldap_get_zone_serial(inst, &name, &ldap_serial));
-		CHECK(zr_set_zone_serial(inst->zone_register, &name, ldap_serial));
+		CHECK(zr_set_zone_serial_digest(inst->zone_register, &name, ldap_serial,
+				ldap_digest));
 	}
 
 	/* SOA serial autoincrement feature for SOA record:
-	 * 1) remember old SOA serial from zone register
-	 * 2) compare old and new SOA serial from LDAP DB
-	 * 3) if (old == new) then do autoincrement, remember new serial otherwise */
+	 * 1) Remember old (already processed) SOA serial and digest computed from
+	 *    zone root records in zone register.
+	 * 2) After each change notification compare the old and new SOA serials
+	 *    and recomputed digests. If:
+	 * 3a) Nothing was changed (false change notification received) - do nothing
+	 * 3b) Serial was changed - remember the new serial and recompute digest,
+	 *     do not autoincrement (respect external change).
+	 * 3c) The old and new serials are same: autoincrement only if something
+	 *     else was changed.
+	 */
 	if (inst->serial_autoincrement) {
 		CHECK(ldap_get_zone_serial(inst, &name, &ldap_serial));
-		CHECK(zr_get_zone_serial(inst->zone_register, &name, &zr_serial));
-		if (ldap_serial == zr_serial)
-			CHECK(soa_serial_increment(inst->mctx, inst, &name));
-		else
-			CHECK(zr_set_zone_serial(inst->zone_register, &name, ldap_serial));
+		CHECK(ldapdb_rdatalist_get(inst->mctx, inst, &name,
+				&name, &rdatalist));
+		CHECK(rdatalist_digest(inst->mctx, &rdatalist, ldap_digest));
+
+		CHECK(zr_get_zone_serial_digest(inst->zone_register, &name, &zr_serial,
+				&zr_digest));
+		if (ldap_serial == zr_serial) {
+			/* serials are same - increment only if something was changed */
+			if (memcmp(zr_digest, ldap_digest, RDLIST_DIGESTLENGTH) != 0)
+				CHECK(soa_serial_increment(inst->mctx, inst, &name));
+		} else { /* serial in LDAP was changed - update zone register */
+			CHECK(zr_set_zone_serial_digest(inst->zone_register, &name,
+					ldap_serial, ldap_digest));
+		}
 	}
 
 cleanup:
@@ -1122,6 +1148,7 @@ cleanup:
 		dns_name_free(&name, inst->mctx);
 	if (zone != NULL)
 		dns_zone_detach(&zone);
+	ldapdb_rdatalist_destroy(inst->mctx, &rdatalist);
 
 	return result;
 }
