@@ -1697,6 +1697,7 @@ ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 	ldap_qresult_t *ldap_qresult = NULL;
 	int cnt;
 	int ret;
+	int ldap_err_code;
 	int once = 0;
 
 	REQUIRE(ldap_conn != NULL);
@@ -1743,8 +1744,12 @@ retry:
 		return ISC_R_SUCCESS;
 	}
 
+	ret = ldap_get_option(ldap_conn->handle, LDAP_OPT_RESULT_CODE,
+			      (void *)&ldap_err_code);
+	if (ret == LDAP_OPT_SUCCESS && ldap_err_code == LDAP_NO_SUCH_OBJECT)
+		return ISC_R_NOTFOUND;
 	/* some error happened during ldap_search, try to recover */
-	if (!once) {
+	else if (!once) {
 		once++;
 		result = handle_connection_error(ldap_inst, ldap_conn,
 						 ISC_FALSE);
