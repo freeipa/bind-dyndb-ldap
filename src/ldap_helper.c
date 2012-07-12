@@ -555,6 +555,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 
 	dns_rbtnodechain_invalidate(&chain);
 
+	/* TODO: Terminate psearch watcher sooner? */
 	if (ldap_inst->psearch && ldap_inst->watcher != 0) {
 		ldap_inst->exiting = ISC_TRUE;
 		/*
@@ -645,9 +646,12 @@ destroy_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
 {
 	ldap_connection_t *ldap_conn;
 
-	REQUIRE(ldap_connp != NULL && *ldap_connp != NULL);
+	REQUIRE(ldap_connp != NULL);
 
 	ldap_conn = *ldap_connp;
+	if (ldap_conn == NULL)
+		return;
+
 	DESTROYLOCK(&ldap_conn->lock);
 	if (ldap_conn->handle != NULL)
 		ldap_unbind_ext_s(ldap_conn->handle, NULL, NULL);
@@ -2676,8 +2680,7 @@ ldap_pool_create(isc_mem_t *mctx, unsigned int connections, ldap_pool_t **poolp)
 	return ISC_R_SUCCESS;
 
 cleanup:
-	if (pool != NULL)
-		ldap_pool_destroy(&pool);
+	ldap_pool_destroy(&pool);
 	return result;
 }
 static void
@@ -2687,9 +2690,11 @@ ldap_pool_destroy(ldap_pool_t **poolp)
 	ldap_connection_t *ldap_conn;
 	unsigned int i;
 
-	REQUIRE(poolp != NULL && *poolp != NULL);
+	REQUIRE(poolp != NULL);
 
 	pool = *poolp;
+	if (pool == NULL)
+		return;
 
 	for (i = 0; i < pool->connections; i++) {
 		ldap_conn = pool->conns[i];
@@ -2703,6 +2708,7 @@ ldap_pool_destroy(ldap_pool_t **poolp)
 	semaphore_destroy(&pool->conn_semaphore);
 
 	MEM_PUT_AND_DETACH(pool);
+	*poolp = NULL;
 }
 
 static isc_result_t
@@ -2774,9 +2780,7 @@ ldap_pool_connect(ldap_pool_t *pool, ldap_instance_t *ldap_inst)
 
 cleanup:
 	for (i = 0; i < pool->connections; i++) {
-		ldap_conn = pool->conns[i];
-		if (ldap_conn != NULL)
-			destroy_ldap_connection(pool, &ldap_conn);
+		destroy_ldap_connection(pool, &pool->conns[i]);
 	}
 	return result;
 }
