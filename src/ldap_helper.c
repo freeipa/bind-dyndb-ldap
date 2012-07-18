@@ -2989,11 +2989,7 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	mctx = pevent->mctx;
 	dns_name_init(&prevname, NULL);
 
-	result = manager_get_ldap_instance(pevent->dbname, &inst);
-	/* TODO: Can it happen? */
-	if (result != ISC_R_SUCCESS)
-		goto cleanup;
-
+	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
 	CHECK(ldap_pool_getconnection(inst->pool, &conn));
 	CHECK(ldap_query(inst, conn, &ldap_qresult_zone, pevent->dn,
 			 LDAP_SCOPE_BASE, attrs_zone, 0,
@@ -3003,9 +2999,7 @@ update_zone(isc_task_t *task, isc_event_t *event)
 			entry_zone != NULL;
 			entry_zone = NEXT(entry_zone, link)) {
 		delete = ISC_FALSE;
-		result = ldap_parse_zoneentry(entry, inst);
-		if (result != ISC_R_SUCCESS)
-			goto cleanup;
+		CHECK(ldap_parse_zoneentry(entry_zone, inst));
 
 		if (PSEARCH_MODDN(pevent->chgtype)) {
 			if (dn_to_dnsname(inst->mctx, pevent->prevdn, &prevname, NULL)
