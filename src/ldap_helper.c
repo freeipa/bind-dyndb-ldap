@@ -239,6 +239,7 @@ struct ldap_psearchevent {
 	isc_mem_t *mctx;
 	char *dbname;
 	char *dn;
+	char *prevdn;
 	int chgtype;
 };
 
@@ -316,6 +317,9 @@ static isc_result_t ldap_pscontrol_create(isc_mem_t *mctx, LDAPControl **ctrlp);
 static void ldap_pscontrol_destroy(isc_mem_t *mctx, LDAPControl **ctrlp);
 
 static isc_threadresult_t ldap_psearch_watcher(isc_threadarg_t arg);
+static void psearch_update(ldap_instance_t *inst, ldap_entry_t *entry,
+		LDAPControl **ctrls);
+
 
 /* Persistent updates watcher */
 static isc_threadresult_t
@@ -796,6 +800,7 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock)
 		if (result == ISC_R_SUCCESS)
 			unlock = ISC_TRUE;
 
+		/* TODO: flush cache records belonging to deleted zone */
 		CHECK(discard_from_cache(inst->cache, name));
 	}
 
@@ -2964,18 +2969,25 @@ update_action(isc_task_t *task, isc_event_t *event)
 	isc_result_t result ;
 	ldap_instance_t *inst = NULL;
 	ldap_connection_t *conn = NULL;
-	ldap_qresult_t *ldap_qresult = NULL;
-	ldap_entry_t *entry;
+	ldap_qresult_t *ldap_qresult_zone = NULL;
+	ldap_qresult_t *ldap_qresult_record = NULL;
+	ldap_entry_t *entry_zone = NULL;
+	ldap_entry_t *entry_record = NULL;
 	isc_boolean_t delete = ISC_TRUE;
 	isc_mem_t *mctx;
-	char *attrs[] = {
+	dns_name_t prevname;
+	char *attrs_zone[] = {
 		"idnsName", "idnsUpdatePolicy", "idnsAllowQuery",
 		"idnsAllowTransfer", "idnsForwardPolicy", "idnsForwarders", NULL
+	};
+	char *attrs_record[] = {
+			"objectClass", "dn", NULL
 	};
 
 	UNUSED(task);
 
 	mctx = pevent->mctx;
+	dns_name_init(&prevname, NULL);
 
 	result = manager_get_ldap_instance(pevent->dbname, &inst);
 	/* TODO: Can it happen? */
@@ -2983,18 +2995,43 @@ update_action(isc_task_t *task, isc_event_t *event)
 		goto cleanup;
 
 	CHECK(ldap_pool_getconnection(inst->pool, &conn));
-
-	CHECK(ldap_query(inst, conn, &ldap_qresult, pevent->dn,
-			 LDAP_SCOPE_BASE, attrs, 0,
+	CHECK(ldap_query(inst, conn, &ldap_qresult_zone, pevent->dn,
+			 LDAP_SCOPE_BASE, attrs_zone, 0,
 			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
 
-	for (entry = HEAD(ldap_qresult->ldap_entries);
-             entry != NULL;
-             entry = NEXT(entry, link)) {
+	for (entry_zone = HEAD(ldap_qresult_zone->ldap_entries);
+			entry_zone != NULL;
+			entry_zone = NEXT(entry_zone, link)) {
 		delete = ISC_FALSE;
 		result = ldap_parse_zoneentry(entry, inst);
 		if (result != ISC_R_SUCCESS)
 			goto cleanup;
+
+		if (PSEARCH_MODDN(pevent->chgtype)) {
+			if (dn_to_dnsname(inst->mctx, pevent->prevdn, &prevname, NULL)
+					== ISC_R_SUCCESS) {
+				CHECK(ldap_delete_zone(inst, pevent->prevdn, ISC_TRUE));
+			} else {
+				log_debug(5, "update_action: old zone wasn't managed "
+						"by plugin, dn '%s'", pevent->prevdn);
+			}
+
+			/* fill the cache with records from renamed zone */
+			CHECK(ldap_query(inst, conn, &ldap_qresult_record, pevent->dn,
+					LDAP_SCOPE_ONELEVEL, attrs_record, 0,
+					"(objectClass=idnsRecord)"));
+
+			/* LDAP schema requires SOA record (at least) */
+			INSIST(HEAD(ldap_qresult_record->ldap_entries) != NULL);
+			for (entry_record = HEAD(ldap_qresult_record->ldap_entries);
+					entry_record != NULL;
+					entry_record = NEXT(entry_record, link)) {
+
+				psearch_update(inst, entry_record, NULL);
+			}
+		}
+
+		INSIST(NEXT(entry_zone, link) == NULL); /* no multiple zones with same DN */
 	}
 
 	if (delete)
@@ -3006,9 +3043,14 @@ cleanup:
 			  "Zones can be outdated, run `rndc reload`",
 			  pevent->dn, isc_result_totext(result));
 
-	ldap_query_free(ISC_FALSE, &ldap_qresult);
+	ldap_query_free(ISC_FALSE, &ldap_qresult_zone);
+	ldap_query_free(ISC_FALSE, &ldap_qresult_record);
 	ldap_pool_putconnection(inst->pool, &conn);
+	if (dns_name_dynamic(&prevname))
+		dns_name_free(&prevname, inst->mctx);
 	isc_mem_free(mctx, pevent->dbname);
+	if (pevent->prevdn != NULL)
+		isc_mem_free(mctx, pevent->prevdn);
 	isc_mem_free(mctx, pevent->dn);
 	isc_mem_detach(&mctx);
 	isc_event_free(&event);
@@ -3097,8 +3139,12 @@ update_record(isc_task_t *task, isc_event_t *event)
 	/* Convert domain name from text to struct dns_name_t. */
 	dns_name_t name;
 	dns_name_t origin;
+	dns_name_t prevname;
+	dns_name_t prevorigin;
 	dns_name_init(&name, NULL);
 	dns_name_init(&origin, NULL);
+	dns_name_init(&prevname, NULL);
+	dns_name_init(&prevorigin, NULL);
 	CHECK(dn_to_dnsname(mctx, pevent->dn, &name, &origin));
 
 	if (PSEARCH_DEL(pevent->chgtype)) {
@@ -3110,8 +3156,21 @@ update_record(isc_task_t *task, isc_event_t *event)
 	cache = ldap_instance_getcache(inst);
 	CHECK(discard_from_cache(cache, &name));
 
+	if (PSEARCH_MODDN(pevent->chgtype)) {
+		/* remove previous name only if it was inside DNS subtree */
+		if(dn_to_dnsname(mctx, pevent->prevdn, &prevname, &prevorigin)
+				== ISC_R_SUCCESS) {
+			log_debug(5, "psearch_update: removing name from cache, dn: '%s'",
+					  pevent->prevdn);
+			CHECK(discard_from_cache(cache, &prevname));
+		} else {
+			log_debug(5, "psearch_update: old name wasn't managed "
+					"by plugin, dn '%s'", pevent->prevdn);
+		}
+	}
+
 	if (PSEARCH_ADD(pevent->chgtype) || PSEARCH_MOD(pevent->chgtype) ||
-			!PSEARCH_ANY(pevent->chgtype)) {
+			PSEARCH_MODDN(pevent->chgtype) || !PSEARCH_ANY(pevent->chgtype)) {
 		/* 
 		 * Find new data in LDAP. !PSEARCH_ANY indicates unchanged entry
 		 * found during initial lookup (i.e. database dump).
@@ -3148,9 +3207,15 @@ cleanup:
 
 	if (dns_name_dynamic(&name))
 		dns_name_free(&name, inst->mctx);
+	if (dns_name_dynamic(&prevname))
+		dns_name_free(&prevname, inst->mctx);
 	if (dns_name_dynamic(&origin))
 		dns_name_free(&origin, inst->mctx);
+	if (dns_name_dynamic(&prevorigin))
+		dns_name_free(&prevorigin, inst->mctx);
 	isc_mem_free(mctx, pevent->dbname);
+	if (pevent->prevdn != NULL)
+		isc_mem_free(mctx, pevent->prevdn);
 	isc_mem_free(mctx, pevent->dn);
 	isc_mem_detach(&mctx);
 	isc_event_free(&event);
@@ -3221,8 +3286,9 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 	isc_result_t result = ISC_R_SUCCESS;
 	ldap_psearchevent_t *pevent = NULL;
 	int chgtype = LDAP_ENTRYCHANGE_NONE;
-	char *moddn = NULL;
 	char *dn = NULL;
+	char *prevdn_ldap = NULL;
+	char *prevdn = NULL;
 	char *dbname = NULL;
 	isc_mem_t *mctx = NULL;
 	isc_taskaction_t action = NULL;
@@ -3235,7 +3301,7 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 	}
 
 	if (ctrls != NULL)
-		CHECK(ldap_parse_entrychangectrl(ctrls, &chgtype, &moddn));
+		CHECK(ldap_parse_entrychangectrl(ctrls, &chgtype, &prevdn_ldap));
 
 	isc_mem_attach(inst->mctx, &mctx);
 
@@ -3250,11 +3316,12 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 		goto cleanup;
 	}
 
-	/* TODO: Handle moddn case. */
 	if (PSEARCH_MODDN(chgtype)) {
-		log_error("psearch moddn change is not implemented");
-		result = ISC_R_FAILURE;
-		goto cleanup;
+		prevdn = isc_mem_strdup(mctx, prevdn_ldap);
+		if (prevdn == NULL) {
+			result = ISC_R_NOMEMORY;
+			goto cleanup;
+		}
 	}
 
 	/*
@@ -3288,6 +3355,7 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 	pevent->mctx = mctx;
 	pevent->dbname = dbname;
 	pevent->dn = dn;
+	pevent->prevdn = prevdn;
 	pevent->chgtype = chgtype;
 	isc_task_send(inst->task, (isc_event_t **)&pevent);
 
@@ -3297,10 +3365,12 @@ cleanup:
 			isc_mem_free(mctx, dbname);
 		if (dn != NULL)
 			isc_mem_free(mctx, dn);
+		if (prevdn != NULL)
+			isc_mem_free(mctx, prevdn);
 		if (mctx != NULL)
 			isc_mem_detach(&mctx);
-		if (moddn != NULL)
-			ldap_memfree(moddn);
+		if (prevdn_ldap != NULL)
+			ldap_memfree(prevdn);
 
 		log_error("psearch_update failed for %s zone. "
 			  "Zone can be outdated, run `rndc reload`",
