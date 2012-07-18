@@ -481,6 +481,12 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		result = ISC_R_FAILURE;
 		goto cleanup;
 	}
+	if (ldap_inst->serial_autoincrement == ISC_TRUE
+			&& ldap_inst->connections < 4) {
+		log_error("serial_autoincrement needs at least 4 connections, "
+			  "increasing limit");
+		ldap_inst->connections = 4;
+	}
 
 	CHECK(new_ldap_cache(mctx, argv, &ldap_inst->cache, ldap_inst->psearch));
 	CHECK(ldap_pool_create(mctx, ldap_inst->connections, &ldap_inst->pool));
