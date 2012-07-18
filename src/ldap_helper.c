@@ -454,7 +454,8 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 					result = ISC_R_FAILURE;
 					goto cleanup;
 				} else {
-					str_sprintf(ldap_inst->krb5_principal, "DNS/%s", hostname);
+					CHECK(str_sprintf(ldap_inst->krb5_principal,
+							"DNS/%s", hostname));
 					log_debug(2, "SASL mech GSSAPI defined but krb5_principal"
 						"and sasl_user are empty, using default %s",
 						str_buf(ldap_inst->krb5_principal));
