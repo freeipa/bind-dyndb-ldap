@@ -3141,8 +3141,8 @@ update_record(isc_task_t *task, isc_event_t *event)
 	dns_name_init(&prevorigin, NULL);
 	CHECK(dn_to_dnsname(mctx, pevent->dn, &name, &origin));
 
-	if (PSEARCH_DEL(pevent->chgtype)) {
-		log_debug(5, "psearch_update: Removing item from cache (%s)", 
+	if (PSEARCH_DEL(pevent->chgtype) || PSEARCH_MODDN(pevent->chgtype)) {
+		log_debug(5, "psearch_update: removing name from cache, dn: '%s'",
 		          pevent->dn);
 	}
 
@@ -3171,7 +3171,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 		 *
 		 * @todo Change this to convert ldap_entry_t to ldapdb_rdatalist_t.
 		 */
-		log_debug(5, "psearch_update: Updating item in cache (%s)", 
+		log_debug(5, "psearch_update: updating name in cache, dn: '%s'",
 		          pevent->dn);
 		CHECK(ldapdb_rdatalist_get(mctx, inst, &name, &origin, &rdatalist));
 	
@@ -3184,18 +3184,13 @@ update_record(isc_task_t *task, isc_event_t *event)
 		ldapdb_rdatalist_destroy(mctx, &rdatalist);
 	}
 
-	log_debug(20,"psearch change type: none%d, add%d, del%d, mod%d, moddn%d",
-				!PSEARCH_ANY(pevent->chgtype), PSEARCH_ADD(pevent->chgtype),
-				PSEARCH_DEL(pevent->chgtype), PSEARCH_MOD(pevent->chgtype),
-				PSEARCH_MODDN(pevent->chgtype));
-
 	/* Do not bump serial during initial database dump. */
 	if (inst->serial_autoincrement && PSEARCH_ANY(pevent->chgtype)) {
 		CHECK(soa_serial_increment(mctx, inst, &origin));
 	}
 cleanup:
 	if (result != ISC_R_SUCCESS)
-		log_error("update_record (psearch) failed for %s. "
+		log_error("update_record (psearch) failed, dn '%s'. "
 			  "Records can be outdated, run `rndc reload`",
 			  pevent->dn);
 
@@ -3289,13 +3284,19 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 
 	class = ldap_entry_getclass(entry);
 	if (class == LDAP_ENTRYCLASS_NONE) {
-		log_error("psearch_update: ignoring unknown entry [dn %s]",
+		log_error("psearch_update: ignoring entry with unknown class, dn '%s'",
 			  entry->dn);
 		return; /* ignore it, it's OK */
 	}
 
 	if (ctrls != NULL)
 		CHECK(ldap_parse_entrychangectrl(ctrls, &chgtype, &prevdn_ldap));
+
+
+	log_debug(20,"psearch change type: none%d, add%d, del%d, mod%d, moddn%d",
+				!PSEARCH_ANY(chgtype), PSEARCH_ADD(chgtype),
+				PSEARCH_DEL(chgtype), PSEARCH_MOD(chgtype),
+				PSEARCH_MODDN(chgtype));
 
 	isc_mem_attach(inst->mctx, &mctx);
 
