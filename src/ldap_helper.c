@@ -2963,7 +2963,7 @@ cleanup:
  * operation but zones don't change often.
  */
 static void
-update_action(isc_task_t *task, isc_event_t *event)
+update_zone(isc_task_t *task, isc_event_t *event)
 {
 	ldap_psearchevent_t *pevent = (ldap_psearchevent_t *)event;
 	isc_result_t result ;
@@ -3334,7 +3334,7 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 	if ((class & LDAP_ENTRYCLASS_CONFIG) != 0)
 		action = update_config;
 	else if ((class & LDAP_ENTRYCLASS_ZONE) != 0)
-		action = update_action;
+		action = update_zone;
 	else if ((class & LDAP_ENTRYCLASS_RR) != 0)
 		action = update_record;
 	else {
