@@ -28,31 +28,13 @@
 #include "log.h"
 
 void
-log_debug(int level, const char *format, ...)
-{
-	va_list args;
-
-	va_start(args, format);
-#ifdef LOG_AS_ERROR
-	UNUSED(level);
-	isc_log_vwrite(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
-		       ISC_LOG_ERROR, format, args);
-#else
-	isc_log_vwrite(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
-		       ISC_LOG_DEBUG(level), format, args);
-#endif
-
-	va_end(args);
-}
-
-void
-log_error(const char *format, ...)
+log_write(int level, const char *format, ...)
 {
 	va_list args;
 
 	va_start(args, format);
 	isc_log_vwrite(dns_lctx, DNS_LOGCATEGORY_DATABASE, DNS_LOGMODULE_DYNDB,
-		       ISC_LOG_ERROR, format, args);
+		       level, format, args);
 	va_end(args);
 
 }

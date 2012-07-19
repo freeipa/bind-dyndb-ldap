@@ -22,6 +22,13 @@
 #define _LD_LOG_H_
 
 #include <isc/error.h>
+#include <dns/log.h>
+
+#ifdef LOG_AS_ERROR
+#define GET_LOG_LEVEL(level)	ISC_LOG_ERROR
+#else
+#define GET_LOG_LEVEL(level)	(level)
+#endif
 
 #define fatal_error(...) \
     isc_error_fatal(__FILE__, __LINE__, __VA_ARGS__)
@@ -30,10 +37,16 @@
 	log_error("bug in %s(): " fmt, __func__,##__VA_ARGS__)
 
 #define log_error_r(fmt, ...) \
-	log_error(fmt ": %s", ##__VA_ARGS__, isc_result_totext(result))
+	log_error(fmt ": %s", ##__VA_ARGS__, dns_result_totext(result))
 
 /* Basic logging functions */
-void log_debug(int level, const char *format, ...) ISC_FORMAT_PRINTF(2, 3);
-void log_error(const char *format, ...) ISC_FORMAT_PRINTF(1, 2);
+#define log_error(format, ...)	\
+	log_write(GET_LOG_LEVEL(ISC_LOG_ERROR), format, ##__VA_ARGS__)
+
+#define log_debug(level, format, ...)	\
+	log_write(GET_LOG_LEVEL(level), format, ##__VA_ARGS__)
+
+void
+log_write(int level, const char *format, ...) ISC_FORMAT_PRINTF(2, 3);
 
 #endif /* !_LD_LOG_H_ */
