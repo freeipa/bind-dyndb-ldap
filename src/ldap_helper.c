@@ -1753,19 +1753,21 @@ retry:
 					       &ldap_qresult->ldap_entries);
 		if (result != ISC_R_SUCCESS) {
 			log_error("failed to save LDAP query results");
-			return result;
+			goto cleanup;
 		}
 
 		*ldap_qresultp = ldap_qresult;
 		return ISC_R_SUCCESS;
+	} else {
+		result = ISC_R_FAILURE;
 	}
 
 	ret = ldap_get_option(ldap_conn->handle, LDAP_OPT_RESULT_CODE,
 			      (void *)&ldap_err_code);
-	if (ret == LDAP_OPT_SUCCESS && ldap_err_code == LDAP_NO_SUCH_OBJECT)
-		return ISC_R_NOTFOUND;
-	/* some error happened during ldap_search, try to recover */
-	else if (!once) {
+	if (ret == LDAP_OPT_SUCCESS && ldap_err_code == LDAP_NO_SUCH_OBJECT) {
+		result = ISC_R_NOTFOUND;
+	} else if (!once) {
+		/* some error happened during ldap_search, try to recover */
 		once++;
 		result = handle_connection_error(ldap_inst, ldap_conn,
 						 ISC_FALSE);
@@ -1774,7 +1776,7 @@ retry:
 	}
 cleanup:
 	ldap_query_free(ISC_FALSE, &ldap_qresult);
-	return ISC_R_FAILURE;
+	return result;
 }
 
 /**
