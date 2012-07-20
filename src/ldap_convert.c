@@ -192,16 +192,23 @@ cleanup:
 }
 
 /**
+ * WARNING! This function is used to mangle input from network
+ *          and it is security sensitive.
+ *
  * Convert a string from DNS escaping to LDAP escaping.
  * The Input string dns_str is expected to be the result of dns_name_tostring().
  * The DNS label can contain any binary data as described in
  * http://tools.ietf.org/html/rfc2181#section-11 .
  *
- * DNS escaping uses form   "\123" = ASCII value 123 (decimal)
+ * DNS escaping uses 2 forms: (see dns_name_totext2() in bind/lib/dns/name.c)
+ *     form "\123" = ASCII value 123 (decimal)
+ *     form "\$" = character '$' is escaped with '\'
+ *     WARNING! Some characters are not escaped at all (e.g. ',').
+ *
  * LDAP escaping users form "\7b"  = ASCII value 7b (hexadecimal)
  *
- * Input (DNS escaped) example  : _aaa,bbb\255\000ccc.555.ddd-eee
- * Output (LDAP escaped) example: _aaa\2cbbb\ff\00ccc.555.ddd-eee
+ * Input  (DNS escaped)  example: \$.\255_aaa,bbb\127\000ccc.555.ddd-eee
+ * Output (LDAP escaped) example: \24.\ff_aaa\2cbbb\7f\00ccc.555.ddd-eee
  *
  * The DNS to text functions from ISC libraries do not convert certain
  * characters (e.g. ","). This function converts \123 form to \7b form in all
@@ -248,13 +255,23 @@ dns_to_ldap_dn_escape(isc_mem_t *mctx, const char const * dns_str, char ** ldap_
 			}
 			if (dns_str[dns_idx] != '\\') { /* not nice raw value, e.g. ',' */
 				ascii_val = dns_str[dns_idx];
-			} else { /* not nice value in DNS \123 decimal format */
-				/* check if input length <= expected size */
-				REQUIRE (dns_str_len > dns_idx + 3); /* this problem should never happen */
-				ascii_val = 100 * (dns_str[dns_idx + 1] - '0')
-						+ 10 * (dns_str[dns_idx + 2] - '0')
-						+ (dns_str[dns_idx + 3] - '0');
-				dns_idx += 3;
+			} else { /* DNS escaped value, it starts with '\' */
+				if (!(dns_idx + 1 < dns_str_len)) {
+					CHECK(DNS_R_BADESCAPE); /* this problem should never happen */
+				}
+				if (isdigit(dns_str[dns_idx + 1])) { /* \123 decimal format */
+					/* check if input length <= expected size */
+					if (!(dns_idx + 3 < dns_str_len)) {
+						CHECK(DNS_R_BADESCAPE); /* this problem should never happen */
+					}
+					ascii_val = 100 * (dns_str[dns_idx + 1] - '0')
+							+ 10 * (dns_str[dns_idx + 2] - '0')
+							+ (dns_str[dns_idx + 3] - '0');
+					dns_idx += 3;
+				} else { /* \$ single char format */
+					ascii_val = dns_str[dns_idx + 1];
+					dns_idx += 1;
+				}
 			}
 			/* LDAP uses \xy escaping. "xy" represent two hexadecimal digits.*/
 			/* TODO: optimize to bit mask & rotate & dec->hex table? */
@@ -272,8 +289,13 @@ dns_to_ldap_dn_escape(isc_mem_t *mctx, const char const * dns_str, char ** ldap_
 	return ISC_R_SUCCESS;
 
 cleanup:
-	if (*ldap_name)
+	if (result == DNS_R_BADESCAPE)
+		log_bug("improperly escaped DNS string: '%s'", dns_str);
+
+	if (*ldap_name) {
 		isc_mem_free(mctx, *ldap_name);
+		*ldap_name = NULL;
+	}
 	return result;
 }
 
