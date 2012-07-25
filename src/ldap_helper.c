@@ -823,7 +823,7 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock)
 
 	/* Do not unload partially loaded zones, they have incomplete structures. */
 	dns_db_t *dbp = NULL;
-	if (dns_zone_getdb(zone, &dbp) != DNS_R_NOTLOADED) {
+	if (dns_zone_getdb(zone, &dbp) == ISC_R_SUCCESS) {
 		dns_db_detach(&dbp); /* dns_zone_getdb() attaches DB implicitly */
 		dns_zone_unload(zone);
 	}
