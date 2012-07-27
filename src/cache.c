@@ -38,7 +38,7 @@
 #include "util.h"
 
 struct ldap_cache {
-	isc_mutex_t	mutex;
+	isc_mutex_t	mutex; /* TODO: RWLOCK? */
 	isc_mem_t	*mctx;
 	dns_rbt_t	*rbt;
 	isc_interval_t	cache_ttl;
@@ -301,5 +301,28 @@ discard_from_cache(ldap_cache_t *cache, dns_name_t *name)
 	if (result == ISC_R_NOTFOUND)
 		result = ISC_R_SUCCESS;
 
+	return result;
+}
+
+isc_result_t
+flush_ldap_cache(ldap_cache_t *cache)
+{
+	isc_result_t result;
+
+	REQUIRE(cache != NULL);
+
+	LOCK(&cache->mutex);
+	if (!ldap_cache_enabled(cache)) {
+		result = ISC_R_SUCCESS;
+	} else {
+		dns_rbt_destroy(&cache->rbt);
+		CHECK(dns_rbt_create(cache->mctx, cache_node_deleter, NULL,
+				&cache->rbt));
+	}
+
+cleanup:
+	if (result != ISC_R_SUCCESS)
+		log_error_r("cache flush failed");
+	UNLOCK(&cache->mutex);
 	return result;
 }

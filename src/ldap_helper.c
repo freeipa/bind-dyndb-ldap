@@ -1167,11 +1167,14 @@ cleanup:
  * added. In that case, only modify the zone's properties, like the update
  * policy.
  *
+ * @param delete_only Do LDAP vs. zone register cross-check and delete zones
+ *                    which aren't in LDAP, but do not load new zones.
+ *
  * Returns ISC_R_SUCCESS if we found and successfully added at least one zone.
  * Returns ISC_R_FAILURE otherwise.
  */
 isc_result_t
-refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
+refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
 {
 	isc_result_t result = ISC_R_SUCCESS;
 	ldap_connection_t *ldap_conn = NULL;
@@ -1194,8 +1197,8 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 
 	REQUIRE(ldap_inst != NULL);
 
-	if (ldap_inst->psearch) {
-		/* Watcher does the work for us */
+	if (ldap_inst->psearch && !delete_only) {
+		/* Watcher does the work for us, but deletion is allowed. */
 		return ISC_R_SUCCESS;
 	}
 
@@ -1246,7 +1249,8 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 			continue;
 		}
 
-		CHECK(ldap_parse_zoneentry(entry, ldap_inst));
+		if (!delete_only)
+			CHECK(ldap_parse_zoneentry(entry, ldap_inst));
 		zone_count++;
 	}
 
@@ -1272,10 +1276,16 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst)
 		node = NULL;
 		
 		result = dns_rbtnodechain_current(&chain, &fname, &forig, &node);
-		if (result != ISC_R_SUCCESS)
+		if (result != ISC_R_SUCCESS) {
+			if (result != ISC_R_NOTFOUND)
+				log_error_r(
+					"unable to walk through RB-tree during zone_refresh");
 			goto next;
+		}
 
-		if (dns_name_concatenate(&fname, &forig, &aname, aname.buffer) != ISC_R_SUCCESS) {
+		if (dns_name_concatenate(&fname, &forig, &aname, aname.buffer)
+				!= ISC_R_SUCCESS) {
+			log_error_r("unable to concatenate DNS names during zone_refresh");
 			goto next;	
 		}
 
@@ -3450,6 +3460,7 @@ ldap_psearch_watcher(isc_threadarg_t arg)
 	int ret, cnt;
 	isc_result_t result;
 	sigset_t sigset;
+	isc_boolean_t flush_required;
 
 	log_debug(1, "Entering ldap_psearch_watcher");
 
@@ -3489,6 +3500,7 @@ ldap_psearch_watcher(isc_threadarg_t arg)
 
 restart:
 	/* Perform initial lookup */
+	flush_required = ISC_TRUE;
 	if (inst->psearch) {
 		log_debug(1, "Sending initial psearch lookup");
 		ret = ldap_search_ext(conn->handle,
@@ -3527,6 +3539,14 @@ restart:
 			}
 			ldap_query_free(ISC_TRUE, &ldap_qresult);
 			goto restart;
+		} else if (flush_required == ISC_TRUE) {
+			/* First LDAP result after (re)start was received successfully:
+			 * Unload old zones and flush record cache.
+			 * We want to save cache in case of search timeout during restart.
+			 */
+			CHECK(refresh_zones_from_ldap(inst, ISC_TRUE));
+			CHECK(flush_ldap_cache(inst->cache));
+			flush_required = ISC_FALSE;
 		}
 
 		switch (ret) {

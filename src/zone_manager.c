@@ -180,7 +180,7 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 	APPEND(instance_list, db_inst, link);
 	UNLOCK(&instance_list_lock);
 
-	result = refresh_zones_from_ldap(db_inst->ldap_inst);
+	result = refresh_zones_from_ldap(db_inst->ldap_inst, ISC_FALSE);
 	if (result != ISC_R_SUCCESS) {
 		/* In case we don't find any zones, we at least return
 		 * ISC_R_SUCCESS so BIND won't exit because of this. */
@@ -221,7 +221,7 @@ refresh_zones_action(isc_task_t *task, isc_event_t *event)
 
 	UNUSED(task);
 
-	refresh_zones_from_ldap(db_inst->ldap_inst);
+	refresh_zones_from_ldap(db_inst->ldap_inst, ISC_FALSE);
 
 	isc_event_free(&event);
 }

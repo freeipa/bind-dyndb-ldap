@@ -77,4 +77,11 @@ ldap_cache_enabled(ldap_cache_t *cache);
 isc_result_t
 discard_from_cache(ldap_cache_t *cache, dns_name_t *name);
 
+/**
+ * Discard all names from the cache and re-initialize internal RB-tree.
+ * @return ISC_R_SUCCESS even if cache is disabled.
+ */
+isc_result_t
+flush_ldap_cache(ldap_cache_t *cache);
+
 #endif /* !_LD_CACHE_H_ */
