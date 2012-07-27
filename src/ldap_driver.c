@@ -1213,8 +1213,12 @@ static dns_dbmethods_t ldapdb_methods = {
 #endif /* LIBDNS_VERSION_MAJOR >= 45 */
 #if LIBDNS_VERSION_MAJOR >= 82
 	NULL,			/* rpz_enabled */
-	NULL			/* rpz_findips */
+	NULL,			/* rpz_findips */
 #endif /* LIBDNS_VERSION_MAJOR >= 82 */
+#if LIBDNS_VERSION_MAJOR >= 90
+	NULL,			/* findnodeext */
+	NULL			/* findext */
+#endif /* LIBDNS_VERSION_MAJOR >= 90 */
 };
 
 static isc_result_t
