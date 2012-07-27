@@ -309,6 +309,11 @@ free_ldapdb(ldapdb_t *ldapdb)
 	isc_mem_putanddetach(&ldapdb->common.mctx, ldapdb, sizeof(*ldapdb));
 }
 
+
+/**
+ * This method should never be called, because LDAP DB is "persistent".
+ * See ispersistent() function.
+ */
 static isc_result_t
 beginload(dns_db_t *db, dns_addrdatasetfunc_t *addp, dns_dbload_t **dbloadp)
 {
@@ -323,6 +328,10 @@ beginload(dns_db_t *db, dns_addrdatasetfunc_t *addp, dns_dbload_t **dbloadp)
 	return ISC_R_SUCCESS;
 }
 
+/**
+ * This method should never be called, because LDAP DB is "persistent".
+ * See ispersistent() function.
+ */
 static isc_result_t
 endload(dns_db_t *db, dns_dbload_t **dbloadp)
 {
@@ -1114,12 +1123,16 @@ nodecount(dns_db_t *db)
 	return ISC_R_NOTIMPLEMENTED;
 }
 
+/**
+ * Return TRUE, because database does not need to be loaded from disk
+ * or written to disk.
+ */
 static isc_boolean_t
 ispersistent(dns_db_t *db)
 {
 	UNUSED(db);
 
-	return ISC_R_NOTIMPLEMENTED;
+	return ISC_TRUE;
 }
 
 static void
