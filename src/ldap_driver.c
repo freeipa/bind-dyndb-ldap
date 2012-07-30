@@ -689,7 +689,7 @@ createiterator(dns_db_t *db,
 
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
 	result = ldapdb_nodelist_get(ldapdb->common.mctx, ldapdb->ldap_inst,
-	                             &ldapdb->common.origin, NULL,
+	                             &ldapdb->common.origin, &ldapdb->common.origin,
 	                             &ldapiter->nodelist);
 
 	*iteratorp = (dns_dbiterator_t *) ldapiter;
