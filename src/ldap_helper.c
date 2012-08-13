@@ -473,11 +473,11 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 
 	ldap_inst->task = task;
 
-	if (ldap_inst->psearch && ldap_inst->connections < 3) {
-		/* watcher needs one and update_action() can acquire two */
-		log_debug(1, "psearch needs at least 3 connections, "
+	if (ldap_inst->psearch && ldap_inst->connections < 2) {
+		/* watcher needs one and update_*() will request second */
+		log_error("psearch needs at least 2 connections, "
 			  "increasing limit");
-		ldap_inst->connections = 3;
+		ldap_inst->connections = 2;
 	}
 	if (ldap_inst->serial_autoincrement == ISC_TRUE
 		&& ldap_inst->psearch != ISC_TRUE) {
@@ -485,12 +485,6 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 				"persistent search");
 		result = ISC_R_FAILURE;
 		goto cleanup;
-	}
-	if (ldap_inst->serial_autoincrement == ISC_TRUE
-			&& ldap_inst->connections < 4) {
-		log_error("serial_autoincrement needs at least 4 connections, "
-			  "increasing limit");
-		ldap_inst->connections = 4;
 	}
 
 	CHECK(new_ldap_cache(mctx, argv, &ldap_inst->cache, ldap_inst->psearch));
