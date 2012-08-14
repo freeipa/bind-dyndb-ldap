@@ -1295,6 +1295,7 @@ isc_result_t
 dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 		    dns_dyndb_arguments_t *dyndb_args)
 {
+	dns_dbimplementation_t *ldapdb_imp_new = NULL;
 	isc_result_t result;
 
 	REQUIRE(name != NULL);
@@ -1322,11 +1323,12 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 	}
 
 	/* Register new DNS DB implementation. */
-	ldapdb_imp = NULL;
 	result = dns_db_register(ldapdb_impname, &ldapdb_create, NULL, mctx,
-				 &ldapdb_imp);
+				 &ldapdb_imp_new);
 	if (result != ISC_R_SUCCESS && result != ISC_R_EXISTS)
 		return result;
+	else if (result == ISC_R_SUCCESS)
+		ldapdb_imp = ldapdb_imp_new;
 
 	/* Finally, create the instance. */
 	result = manager_create_db_instance(mctx, name, argv, dyndb_args);
