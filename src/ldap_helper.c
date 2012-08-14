@@ -314,8 +314,7 @@ static isc_result_t ldap_pool_connect(ldap_pool_t *pool,
 		ldap_instance_t *ldap_inst);
 
 /* Functions for manipulating LDAP persistent search control */
-static isc_result_t ldap_pscontrol_create(isc_mem_t *mctx, LDAPControl **ctrlp);
-static void ldap_pscontrol_destroy(isc_mem_t *mctx, LDAPControl **ctrlp);
+static isc_result_t ldap_pscontrol_create(LDAPControl **ctrlp);
 
 static isc_threadresult_t ldap_psearch_watcher(isc_threadarg_t arg);
 static void psearch_update(ldap_instance_t *inst, ldap_entry_t *entry,
@@ -632,8 +631,7 @@ new_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
 
 	isc_mem_attach(pool->mctx, &ldap_conn->mctx);
 
-	CHECK(ldap_pscontrol_create(ldap_conn->mctx,
-				    &ldap_conn->serverctrls[0]));
+	CHECK(ldap_pscontrol_create(&ldap_conn->serverctrls[0]));
 
 	*ldap_connp = ldap_conn;
 
@@ -661,8 +659,7 @@ destroy_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
 		ldap_unbind_ext_s(ldap_conn->handle, NULL, NULL);
 
 	if (ldap_conn->serverctrls[0] != NULL) {
-		ldap_pscontrol_destroy(ldap_conn->mctx,
-				       &ldap_conn->serverctrls[0]);
+		ldap_control_free(ldap_conn->serverctrls[0]);
 	}
 
 	isc_mem_detach(&ldap_conn->mctx);
@@ -2859,10 +2856,10 @@ cleanup:
  * http://tools.ietf.org/id/draft-ietf-ldapext-psearch-03.txt) control.
  */
 static isc_result_t
-ldap_pscontrol_create(isc_mem_t *mctx, LDAPControl **ctrlp)
+ldap_pscontrol_create(LDAPControl **ctrlp)
 {
 	BerElement *ber;
-	LDAPControl *ctrl = NULL;
+	struct berval *berval;
 	isc_result_t result = ISC_R_FAILURE;
 
 	REQUIRE(ctrlp != NULL && *ctrlp == NULL);
@@ -2881,43 +2878,23 @@ ldap_pscontrol_create(isc_mem_t *mctx, LDAPControl **ctrlp)
 	if (ber_printf(ber, "{ibb}", LDAP_ENTRYCHANGE_ALL, 0, 1) == -1)
 		goto cleanup;
 
-	CHECKED_MEM_GET(mctx, ctrl, sizeof(*ctrl));
-	ZERO_PTR(ctrl);
-	ctrl->ldctl_iscritical = 1;
-	ctrl->ldctl_oid = strdup(LDAP_CONTROL_PERSISTENTSEARCH);
-	if (ctrl->ldctl_oid == NULL)
+	if (ber_flatten(ber, &berval) < 0)
 		goto cleanup;
 
-	if (ber_flatten2(ber, &ctrl->ldctl_value, 1) < 0)
+	if (ldap_control_create(LDAP_CONTROL_PERSISTENTSEARCH, 1, berval, 1, ctrlp)
+			!= LDAP_SUCCESS)
 		goto cleanup;
 
 	ber_free(ber, 1);
-	*ctrlp = ctrl;
+	ber_bvfree(berval);
 
 	return ISC_R_SUCCESS;
 
 cleanup:
 	ber_free(ber, 1);
-	ldap_pscontrol_destroy(mctx, &ctrl);
+	ber_bvfree(berval);
 
 	return result;
-}
-
-static void
-ldap_pscontrol_destroy(isc_mem_t *mctx, LDAPControl **ctrlp)
-{
-	LDAPControl *ctrl;
-
-	REQUIRE(ctrlp != NULL);
-
-	if (*ctrlp == NULL)
-		return;
-
-	ctrl = *ctrlp;
-	if (ctrl->ldctl_oid != NULL)
-		free(ctrl->ldctl_oid);
-	SAFE_MEM_PUT(mctx, ctrl, sizeof(*ctrl));
-	*ctrlp = NULL;
 }
 
 static inline isc_result_t
@@ -3387,6 +3364,8 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 	isc_task_send(inst->task, (isc_event_t **)&pevent);
 
 cleanup:
+	if (ctrls != NULL)
+		ldap_controls_free(ctrls);
 	if (result != ISC_R_SUCCESS) {
 		if (dbname != NULL)
 			isc_mem_free(mctx, dbname);
