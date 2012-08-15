@@ -43,6 +43,9 @@
 #define log_error(format, ...)	\
 	log_write(GET_LOG_LEVEL(ISC_LOG_ERROR), format, ##__VA_ARGS__)
 
+#define log_info(format, ...)	\
+	log_write(GET_LOG_LEVEL(ISC_LOG_INFO), format, ##__VA_ARGS__)
+
 #define log_debug(level, format, ...)	\
 	log_write(GET_LOG_LEVEL(level), format, ##__VA_ARGS__)
 
