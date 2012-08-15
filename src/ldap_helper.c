@@ -1982,7 +1982,7 @@ ldap_reconnect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 		result = isc_time_now(&now);
 		time_cmp = isc_time_compare(&now, &ldap_conn->next_reconnect);
 		if (result == ISC_R_SUCCESS && time_cmp < 0)
-			return ISC_R_FAILURE;
+			return ISC_R_SOFTQUOTA;
 	}
 
 	/* If either bind_dn or the password is not set, we will use
@@ -2061,6 +2061,8 @@ force_reconnect:
 			return ISC_R_NOPERM;
 		case LDAP_SERVER_DOWN:
 			return ISC_R_NOTCONNECTED;
+		case LDAP_TIMEOUT:
+			return ISC_R_TIMEDOUT;
 		default:
 			return ISC_R_FAILURE;
 		}
@@ -2095,13 +2097,16 @@ handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn
 	switch (err_code) {
 	case LDAP_NO_SUCH_OBJECT:
 		ldap_conn->tries = 0;
-		return ISC_R_SUCCESS;
+		result = ISC_R_SUCCESS;
+		break;
 	case LDAP_TIMEOUT:
 		log_error("LDAP query timed out. Try to adjust \"timeout\" parameter");
+		result = ISC_R_TIMEDOUT;
 		break;
 	case LDAP_INVALID_DN_SYNTAX:
 	case LDAP_INVALID_SYNTAX:
 		log_bug("Invalid syntax in handle_connection_error indicates a bug");
+		result = ISC_R_UNEXPECTEDTOKEN;
 		break;
 	default:
 		/* Try to reconnect on other errors. */
