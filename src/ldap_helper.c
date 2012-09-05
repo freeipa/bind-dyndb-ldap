@@ -1725,7 +1725,7 @@ ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 		 * successful
 		 * TODO: handle this case inside ldap_pool_getconnection()?
 		 */
-		CHECK(ldap_connect(ldap_inst, ldap_conn, ISC_FALSE));
+		CHECK(handle_connection_error(ldap_inst, ldap_conn, ISC_FALSE));
 	}
 
 retry:
@@ -1914,14 +1914,16 @@ ldap_connect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 	int ret;
 	int version;
 	struct timeval timeout;
+	isc_result_t result = ISC_R_FAILURE;
 
+	REQUIRE(ldap_inst != NULL);
 	REQUIRE(ldap_conn != NULL);
 
 	ret = ldap_initialize(&ld, str_buf(ldap_inst->uri));
 	if (ret != LDAP_SUCCESS) {
 		log_error("LDAP initialization failed: %s",
 			  ldap_err2string(ret));
-		goto cleanup;
+		CLEANUP_WITH(ISC_R_FAILURE);
 	}
 
 	version = LDAP_VERSION3;
@@ -1943,11 +1945,12 @@ ldap_connect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 	if (ldap_conn->handle != NULL)
 		ldap_unbind_ext_s(ldap_conn->handle, NULL, NULL);
 	ldap_conn->handle = ld;
+	ld = NULL; /* prevent double-unbind from ldap_reconnect() and cleanup: */
 
-	return ldap_reconnect(ldap_inst, ldap_conn, force);
+	CHECK(ldap_reconnect(ldap_inst, ldap_conn, force));
+	return result;
 
 cleanup:
-
 	if (ld != NULL)
 		ldap_unbind_ext_s(ld, NULL, NULL);
 	
@@ -1957,7 +1960,7 @@ cleanup:
 		ldap_conn->handle = NULL;
 	}
 
-	return ISC_R_FAILURE;
+	return result;
 }
 
 static isc_result_t
@@ -2075,10 +2078,15 @@ handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn
 {
 	int ret;
 	int err_code;
+	isc_result_t result = ISC_R_FAILURE;
+
+	REQUIRE(ldap_conn != NULL);
+
+	if (ldap_conn->handle == NULL)
+		goto reconnect;
 
 	ret = ldap_get_option(ldap_conn->handle, LDAP_OPT_RESULT_CODE,
-			      (void *)&err_code);
-
+				(void *)&err_code);
 	if (ret != LDAP_OPT_SUCCESS) {
 		log_error("handle_connection_error failed to obtain ldap error code");
 		goto reconnect;
@@ -2101,11 +2109,13 @@ handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn
 reconnect:
 		if (ldap_conn->tries == 0)
 			log_error("connection to the LDAP server was lost");
-		return ldap_connect(ldap_inst, ldap_conn, force);
-		
+		result = ldap_connect(ldap_inst, ldap_conn, force);
+		if (result == ISC_R_SUCCESS)
+			log_info("successfully reconnected to LDAP server");
+		break;
 	}
 
-	return ISC_R_FAILURE;
+	return result;
 }
 
 static isc_result_t
@@ -3486,7 +3496,7 @@ ldap_psearch_watcher(isc_threadarg_t arg)
 		          "Next try in %ds", inst->reconnect_interval);
 		if (!sane_sleep(inst, inst->reconnect_interval))
 			goto cleanup;
-		ldap_connect(inst, conn, ISC_TRUE);
+		handle_connection_error(inst, conn, ISC_TRUE);
 	}
 
 	CHECK(ldap_query_create(conn->mctx, &ldap_qresult));
