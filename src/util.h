@@ -21,6 +21,12 @@
 #ifndef _LD_UTIL_H_
 #define _LD_UTIL_H_
 
+#define CLEANUP_WITH(result_code)				\
+	do {							\
+		result = (result_code);				\
+		goto cleanup;					\
+	} while(0)
+
 #define CHECK(op)						\
 	do {							\
 		result = (op);					\
