@@ -1971,7 +1971,7 @@ ldap_reconnect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 	if (force)
 		goto force_reconnect;
 
-		if (ldap_conn->tries > 0) {
+	if (ldap_conn->tries > 0) {
 		isc_time_t now;
 		int time_cmp;
 		isc_result_t result;
