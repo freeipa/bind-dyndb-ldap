@@ -2931,6 +2931,7 @@ soa_serial_increment(isc_mem_t *mctx, ldap_instance_t *inst,
 		dns_name_t *zone_name) {
 	isc_result_t result = ISC_R_FAILURE;
 	ld_string_t *zone_dn = NULL;
+	const char *zone_dn_char = "INACTIVE/UNKNOWN";
 	ldapdb_rdatalist_t rdatalist;
 	dns_rdatalist_t *rdlist = NULL;
 	dns_rdata_t *soa_rdata = NULL;
@@ -2944,6 +2945,7 @@ soa_serial_increment(isc_mem_t *mctx, ldap_instance_t *inst,
 	INIT_LIST(rdatalist);
 	CHECK(str_new(mctx, &zone_dn));
 	CHECK(dnsname_to_dn(inst->zone_register, zone_name, zone_dn));
+	zone_dn_char = str_buf(zone_dn);
 	log_debug(5, "incrementing SOA serial number in zone '%s'",
 				str_buf(zone_dn));
 
@@ -2978,7 +2980,7 @@ cleanup:
 	if (result != ISC_R_SUCCESS ||
 	    isc_serial_gt(new_serial, old_serial) != ISC_TRUE)
 		log_error("SOA serial number incrementation failed in zone '%s'",
-					str_buf(zone_dn));
+				zone_dn_char);
 
 	str_destroy(&zone_dn);
 	ldapdb_rdatalist_destroy(mctx, &rdatalist);
