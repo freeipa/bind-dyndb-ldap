@@ -936,6 +936,7 @@ addrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	dns_rdatalist_t diff;
 	isc_result_t result;
 	isc_boolean_t rdatalist_exists = ISC_FALSE;
+	isc_boolean_t soa_simulated_write = ISC_FALSE;
 
 	UNUSED(now);
 	UNUSED(db);
@@ -975,12 +976,11 @@ addrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 			rdatalist_removedups(found_rdlist, new_rdlist,
 					     ISC_FALSE, &diff);
 
-			if ((options & DNS_DBADD_MERGE) != 0)
+			if ((options & DNS_DBADD_MERGE) == 0 &&
+			    (rdatalist_length(&diff) != 0)) {
+				CLEANUP_WITH(DNS_R_NOTEXACT);
+			} else {
 				free_rdatalist(ldapdb->common.mctx, &diff);
-			else if (rdatalist_length(&diff) != 0) {
-				free_rdatalist(ldapdb->common.mctx, &diff);
-				result = DNS_R_NOTEXACT;
-				goto cleanup;
 			}
 		} else {
 			/* Replace existing rdataset */
@@ -988,12 +988,36 @@ addrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 		}
 	}
 
-	CHECK(write_to_ldap(&ldapdbnode->owner, ldapdb->ldap_inst, new_rdlist));
+	/* HACK: SOA addition will never fail with DNS_R_UNCHANGED.
+	 * This prevents warning from BIND's diff_apply(), it has too strict
+	 * checks for us.
+	 *
+	 * Reason: There is a race condition between SOA serial update
+	 * from BIND's update_action() and our persistent search watcher, because
+	 * they don't know about each other.
+	 * BIND's update_action() changes data with first addrdataset() call and
+	 * then changes serial with second addrdataset() call.
+	 * It can lead to empty diff if persistent search watcher
+	 * incremented serial in meanwhile.
+	 */
+	if (HEAD(new_rdlist->rdata) == NULL) {
+		if (rdlist->type == dns_rdatatype_soa)
+			soa_simulated_write = ISC_TRUE;
+		else
+			CLEANUP_WITH(DNS_R_UNCHANGED);
+	} else {
+		CHECK(write_to_ldap(&ldapdbnode->owner, ldapdb->ldap_inst, new_rdlist));
+	}
+
 
 	if (addedrdataset != NULL) {
-		result = dns_rdatalist_tordataset(new_rdlist, addedrdataset);
-		/* Use strong condition here, returns only SUCCESS */
-		INSIST(result == ISC_R_SUCCESS);
+		if (soa_simulated_write) {
+			dns_rdataset_clone(rdataset, addedrdataset);
+		} else {
+			result = dns_rdatalist_tordataset(new_rdlist, addedrdataset);
+			/* Use strong condition here, returns only SUCCESS */
+			INSIST(result == ISC_R_SUCCESS);
+		}
 	}
 
 	if (rdatalist_exists) {
@@ -1003,7 +1027,6 @@ addrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	} else
 		APPEND(ldapdbnode->rdatalist, new_rdlist, link);
 
-
 	return ISC_R_SUCCESS;
 
 cleanup:
@@ -1011,6 +1034,7 @@ cleanup:
 		free_rdatalist(ldapdb->common.mctx, new_rdlist);
 		SAFE_MEM_PUT_PTR(ldapdb->common.mctx, new_rdlist);
 	}
+	free_rdatalist(ldapdb->common.mctx, &diff);
 
 	return result;
 }

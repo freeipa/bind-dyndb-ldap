@@ -2973,10 +2973,10 @@ soa_serial_increment(isc_mem_t *mctx, ldap_instance_t *inst,
 
 	/* put the new SOA to inst->cache and compare old and new serials */
 	CHECK(ldap_get_zone_serial(inst, zone_name, &new_serial));
-	INSIST(isc_serial_gt(new_serial, old_serial) == ISC_TRUE);
 
 cleanup:
-	if (result != ISC_R_SUCCESS)
+	if (result != ISC_R_SUCCESS ||
+	    isc_serial_gt(new_serial, old_serial) != ISC_TRUE)
 		log_error("SOA serial number incrementation failed in zone '%s'",
 					str_buf(zone_dn));
 
