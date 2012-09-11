@@ -2149,11 +2149,24 @@ ldap_modify_do(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 		CHECK(ldap_connect(ldap_inst, ldap_conn, ISC_FALSE));
 	}
 
+	/* Any mod_op can be ORed with LDAP_MOD_BVALUES. */
+	if ((mods[0]->mod_op & ~LDAP_MOD_BVALUES) == LDAP_MOD_ADD)
+		operation_str = "modifying(add)";
+	else if ((mods[0]->mod_op & ~LDAP_MOD_BVALUES) == LDAP_MOD_DELETE)
+		operation_str = "modifying(del)";
+	else if ((mods[0]->mod_op & ~LDAP_MOD_BVALUES) == LDAP_MOD_REPLACE)
+		operation_str = "modifying(replace)";
+	else {
+		operation_str = "modifying(unknown operation)";
+		log_bug("%s: 0x%x", operation_str, mods[0]->mod_op);
+		CHECK(ISC_R_NOTIMPLEMENTED);
+	}
+
 	if (delete_node) {
 		log_debug(2, "deleting whole node: '%s'", dn);
 		ret = ldap_delete_ext_s(ldap_conn->handle, dn, NULL, NULL);
 	} else {
-		log_debug(2, "writing to '%s'", dn);
+		log_debug(2, "writing to '%s': %s", dn, operation_str);
 		ret = ldap_modify_ext_s(ldap_conn->handle, dn, mods, NULL, NULL);
 	}
 
@@ -2161,21 +2174,13 @@ ldap_modify_do(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 	if (ret == LDAP_SUCCESS)
 		goto cleanup;
 
-	if (mods[0]->mod_op == LDAP_MOD_ADD)
-		operation_str = "modifying(add)";
-	else if (mods[0]->mod_op == LDAP_MOD_DELETE)
-		operation_str = "modifying(del)";
-	else {
-		operation_str = "modifying(unknown operation)";
-		CHECK(ISC_R_NOTIMPLEMENTED);
-	}
-
 	LDAP_OPT_CHECK(ldap_get_option(ldap_conn->handle, LDAP_OPT_RESULT_CODE,
 			&err_code), "ldap_modify_do(%s) failed to obtain ldap error code",
 			operation_str);
 
 	/* If there is no object yet, create it with an ldap add operation. */
-	if (mods[0]->mod_op == LDAP_MOD_ADD && err_code == LDAP_NO_SUCH_OBJECT) {
+	if ((mods[0]->mod_op & ~LDAP_MOD_BVALUES) == LDAP_MOD_ADD &&
+	     err_code == LDAP_NO_SUCH_OBJECT) {
 		int i;
 		LDAPMod **new_mods;
 		char *obj_str[] = { "idnsRecord", NULL };
@@ -2211,7 +2216,7 @@ ldap_modify_do(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 
 	/* do not error out if we are trying to delete an
 	 * unexisting attribute */
-	if (mods[0]->mod_op != LDAP_MOD_DELETE ||
+	if ((mods[0]->mod_op & ~LDAP_MOD_BVALUES) != LDAP_MOD_DELETE ||
 	    err_code != LDAP_NO_SUCH_ATTRIBUTE) {
 		result = ISC_R_FAILURE;
 	}
