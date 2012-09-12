@@ -2878,8 +2878,8 @@ cleanup:
 static isc_result_t
 ldap_pscontrol_create(LDAPControl **ctrlp)
 {
-	BerElement *ber;
-	struct berval *berval;
+	BerElement *ber = NULL;
+	struct berval *berval = NULL;
 	isc_result_t result = ISC_R_FAILURE;
 
 	REQUIRE(ctrlp != NULL && *ctrlp == NULL);
@@ -2905,14 +2905,13 @@ ldap_pscontrol_create(LDAPControl **ctrlp)
 			!= LDAP_SUCCESS)
 		goto cleanup;
 
-	ber_free(ber, 1);
-	ber_bvfree(berval);
-
-	return ISC_R_SUCCESS;
+	result = ISC_R_SUCCESS;
 
 cleanup:
-	ber_free(ber, 1);
-	ber_bvfree(berval);
+	if (ber != NULL)
+		ber_free(ber, 1);
+	if (berval != NULL)
+		ber_bvfree(berval);
 
 	return result;
 }
