@@ -3069,9 +3069,9 @@ update_zone(isc_task_t *task, isc_event_t *event)
 
 cleanup:
 	if (result != ISC_R_SUCCESS)
-		log_error("update_action (psearch) failed for '%s': %s. "
+		log_error_r("update_zone (psearch) failed for '%s'. "
 			  "Zones can be outdated, run `rndc reload`",
-			  pevent->dn, isc_result_totext(result));
+			  pevent->dn);
 
 	ldap_query_free(ISC_FALSE, &ldap_qresult_zone);
 	ldap_query_free(ISC_FALSE, &ldap_qresult_record);
@@ -3125,7 +3125,7 @@ update_config(isc_task_t *task, isc_event_t *event)
 
 cleanup:
 	if (result != ISC_R_SUCCESS)
-		log_error("update_config (psearch) failed for %s. "
+		log_error_r("update_config (psearch) failed for '%s'. "
 			  "Configuration can be outdated, run `rndc reload`",
 			  pevent->dn);
 
@@ -3221,9 +3221,9 @@ update_record(isc_task_t *task, isc_event_t *event)
 	}
 cleanup:
 	if (result != ISC_R_SUCCESS)
-		log_error("update_record (psearch) failed, dn '%s'. "
+		log_error_r("update_record (psearch) failed, dn '%s' change type 0x%x. "
 			  "Records can be outdated, run `rndc reload`",
-			  pevent->dn);
+			  pevent->dn, pevent->chgtype);
 
 	if (dns_name_dynamic(&name))
 		dns_name_free(&name, inst->mctx);
@@ -3400,7 +3400,7 @@ cleanup:
 		if (prevdn_ldap != NULL)
 			ldap_memfree(prevdn);
 
-		log_error("psearch_update failed for %s zone. "
+		log_error_r("psearch_update failed for '%s' zone. "
 			  "Zone can be outdated, run `rndc reload`",
 			  entry->dn);
 	}
@@ -3586,7 +3586,7 @@ restart:
 				 * Error means inconsistency of our zones
 				 * data.
 				 */
-				log_error("ldap_psearch_watcher failed, zones "
+				log_error_r("ldap_psearch_watcher failed, zones "
 					  "might be outdated. Run `rndc reload`");
 				goto soft_err;
 			}
