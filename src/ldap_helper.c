@@ -517,45 +517,68 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	ldap_instance_t *ldap_inst;
 	dns_rbtnodechain_t chain;
 	dns_rbt_t *rbt;
-	isc_result_t result;
+	isc_result_t result = ISC_R_SUCCESS;
+	const char *db_name;
 
 	REQUIRE(ldap_instp != NULL && *ldap_instp != NULL);
 
 	ldap_inst = *ldap_instp;
+	db_name = ldap_inst->db_name; /* points to DB instance: outside ldap_inst */
 
 	/*
 	 * Unregister all zones already registered in BIND.
 	 *
 	 * NOTE: This should be probably done in zone_register.c
 	 */
-	dns_rbtnodechain_init(&chain, ldap_inst->mctx);
 	rbt = zr_get_rbt(ldap_inst->zone_register);
 
 	/* Potentially ISC_R_NOSPACE can occur. Destroy codepath has no way to
 	 * return errors, so kill BIND.
 	 * DNS_R_NAMETOOLONG should never happen, because all names were checked
 	 * while loading. */
-	result = dns_rbtnodechain_first(&chain, rbt, NULL, NULL);
-	RUNTIME_CHECK(result == ISC_R_SUCCESS || result == DNS_R_NEWORIGIN
-			|| result == ISC_R_NOTFOUND);
 
+	dns_rbtnodechain_init(&chain, ldap_inst->mctx);
 	while (result != ISC_R_NOMORE && result != ISC_R_NOTFOUND) {
 		dns_fixedname_t name;
+		dns_fixedname_t origin;
+		dns_fixedname_t concat;
 		dns_fixedname_init(&name);
-		result = dns_rbtnodechain_current(&chain, NULL,
-						  dns_fixedname_name(&name),
-						  NULL);
-                RUNTIME_CHECK(result == ISC_R_SUCCESS);
+		dns_fixedname_init(&origin);
+		dns_fixedname_init(&concat);
+
+		dns_rbtnodechain_reset(&chain);
+		result = dns_rbtnodechain_first(&chain, rbt, NULL, NULL);
+		RUNTIME_CHECK(result == ISC_R_SUCCESS || result == DNS_R_NEWORIGIN ||
+			      result == ISC_R_NOTFOUND);
+
+		/* Search for first zone in zone register and omit auxiliary nodes. */
+		while (result != ISC_R_NOMORE && result != ISC_R_NOTFOUND) {
+			dns_rbtnode_t *node = NULL;
+
+			result = dns_rbtnodechain_current(&chain, dns_fixedname_name(&name),
+							  dns_fixedname_name(&origin), &node);
+			RUNTIME_CHECK(result == ISC_R_SUCCESS);
+
+			if (node->data != NULL) { /* Auxiliary nodes have data == NULL. */
+				result = dns_name_concatenate(dns_fixedname_name(&name),
+							      dns_fixedname_name(&origin),
+							      dns_fixedname_name(&concat),
+							      NULL);
+				RUNTIME_CHECK(result == ISC_R_SUCCESS);
+				break;
+			}
+
+			result = dns_rbtnodechain_next(&chain, NULL, NULL);
+			RUNTIME_CHECK(result == ISC_R_SUCCESS || result == DNS_R_NEWORIGIN ||
+				      result == ISC_R_NOMORE);
+		}
+		if (result == ISC_R_NOMORE || result == ISC_R_NOTFOUND)
+			break;
 
 		result = ldap_delete_zone2(ldap_inst,
-					   dns_fixedname_name(&name),
+					   dns_fixedname_name(&concat),
 					   ISC_TRUE);
-                RUNTIME_CHECK(result == ISC_R_SUCCESS);
-
-		result = dns_rbtnodechain_next(&chain, NULL, NULL);
-		RUNTIME_CHECK(result == ISC_R_SUCCESS ||
-			      result == DNS_R_NEWORIGIN ||
-			      result == ISC_R_NOMORE);
+		RUNTIME_CHECK(result == ISC_R_SUCCESS);
 	}
 
 	dns_rbtnodechain_invalidate(&chain);
@@ -606,6 +629,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	isc_mem_putanddetach(&ldap_inst->mctx, ldap_inst, sizeof(ldap_instance_t));
 
 	*ldap_instp = NULL;
+	log_debug(1, "LDAP instance '%s' destroyed", db_name);
 }
 
 static isc_result_t
@@ -776,7 +800,10 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock)
 	isc_boolean_t freeze = ISC_FALSE;
 	dns_zone_t *zone = NULL;
 	dns_zone_t *foundzone = NULL;
+	char zone_name_char[DNS_NAME_FORMATSIZE];
 
+	dns_name_format(name, zone_name_char, DNS_NAME_FORMATSIZE);
+	log_debug(1, "deleting zone '%s'", zone_name_char);
 	if (lock) {
 		result = isc_task_beginexclusive(inst->task);
 		RUNTIME_CHECK(result == ISC_R_SUCCESS ||
@@ -790,6 +817,7 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock)
 
 	result = zr_get_zone_ptr(inst->zone_register, name, &zone);
 	if (result == ISC_R_NOTFOUND) {
+		log_debug(1, "zone '%s' not found in zone register", zone_name_char);
 		result = ISC_R_SUCCESS;
 		goto cleanup;
 	} else if (result != ISC_R_SUCCESS)
@@ -810,7 +838,11 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock)
 	if (dns_zone_getdb(zone, &dbp) == ISC_R_SUCCESS) {
 		dns_db_detach(&dbp); /* dns_zone_getdb() attaches DB implicitly */
 		dns_zone_unload(zone);
+		log_debug(1, "zone '%s' unloaded", zone_name_char);
+	} else {
+		log_debug(1, "zone '%s' not loaded - unload skipped", zone_name_char);
 	}
+
 	CHECK(dns_zt_unmount(inst->view->zonetable, zone));
 	CHECK(zr_del_zone(inst->zone_register, name));
 	dns_zonemgr_releasezone(inst->zmgr, zone);
