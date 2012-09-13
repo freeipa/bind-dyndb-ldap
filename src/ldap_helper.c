@@ -333,6 +333,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	unsigned int i;
 	isc_result_t result;
 	ldap_instance_t *ldap_inst;
+	dns_view_t *view = NULL;
 	ld_string_t *auth_method_str = NULL;
 	setting_t ldap_settings[] = {
 		{ "uri",	 no_default_string		},
@@ -369,10 +370,9 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 
 	isc_mem_attach(mctx, &ldap_inst->mctx);
 	ldap_inst->db_name = db_name;
-	ldap_inst->view = dns_dyndb_get_view(dyndb_args);
+	view = dns_dyndb_get_view(dyndb_args);
+	dns_view_attach(view, &ldap_inst->view);
 	ldap_inst->zmgr = dns_dyndb_get_zonemgr(dyndb_args);
-	/* commented out for now, cause named to hang */
-	//dns_view_attach(view, &ldap_inst->view);
 
 	CHECK(zr_create(mctx, &ldap_inst->zone_register));
 
@@ -616,8 +616,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	str_destroy(&ldap_inst->fake_mname);
 	str_destroy(&ldap_inst->ldap_hostname);
 
-	/* commented out for now, causes named to hang */
-	//dns_view_detach(&ldap_inst->view);
+	dns_view_detach(&ldap_inst->view);
 
 	DESTROYLOCK(&ldap_inst->kinit_lock);
 
