@@ -102,7 +102,7 @@ str_alloc(ld_string_t *str, size_t len)
 		return ISC_R_NOMEMORY;
 
 	if (str->data != NULL) {
-		memcpy(new_buffer, str->data, len);
+		memcpy(new_buffer, str->data, str->allocated);
 		new_buffer[len] = '\0';
 		isc_mem_put(str->mctx, str->data, str->allocated);
 	} else {
