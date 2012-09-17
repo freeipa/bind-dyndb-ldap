@@ -1035,9 +1035,10 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	isc_task_t *task = inst->task;
 	isc_uint32_t ldap_serial;
 	isc_uint32_t zr_serial;	/* SOA serial value from in-memory zone register */
-	unsigned char ldap_digest[RDLIST_DIGESTLENGTH];
+	unsigned char ldap_digest[RDLIST_DIGESTLENGTH] = {0};
 	unsigned char *zr_digest = NULL;
 	ldapdb_rdatalist_t rdatalist;
+	isc_boolean_t zone_dynamic = ISC_FALSE;
 
 	REQUIRE(entry != NULL);
 	REQUIRE(inst != NULL);
@@ -1131,13 +1132,13 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 		&& result != DNS_R_DYNAMIC && result != DNS_R_CONTINUE)
 		goto cleanup;
 
+	zone_dynamic = (result == DNS_R_DYNAMIC);
 	result = ISC_R_SUCCESS;
 
 	/* initialize serial in zone register and always increment serial
 	 * for a new zone (typically after BIND start)
 	 * - the zone was possibly changed in meanwhile */
 	if (publish) {
-		memset(ldap_digest, 0, RDLIST_DIGESTLENGTH);
 		CHECK(ldap_get_zone_serial(inst, &name, &ldap_serial));
 		CHECK(zr_set_zone_serial_digest(inst->zone_register, &name, ldap_serial,
 				ldap_digest));
@@ -1154,22 +1155,27 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	 * 3c) The old and new serials are same: autoincrement only if something
 	 *     else was changed.
 	 */
+	CHECK(ldap_get_zone_serial(inst, &name, &ldap_serial));
+	CHECK(zr_get_zone_serial_digest(inst->zone_register, &name, &zr_serial,
+			&zr_digest));
 	if (inst->serial_autoincrement) {
-		CHECK(ldap_get_zone_serial(inst, &name, &ldap_serial));
 		CHECK(ldapdb_rdatalist_get(inst->mctx, inst, &name,
 				&name, &rdatalist));
 		CHECK(rdatalist_digest(inst->mctx, &rdatalist, ldap_digest));
 
-		CHECK(zr_get_zone_serial_digest(inst->zone_register, &name, &zr_serial,
-				&zr_digest));
 		if (ldap_serial == zr_serial) {
 			/* serials are same - increment only if something was changed */
 			if (memcmp(zr_digest, ldap_digest, RDLIST_DIGESTLENGTH) != 0)
 				CHECK(soa_serial_increment(inst->mctx, inst, &name));
-		} else { /* serial in LDAP was changed - update zone register */
-			CHECK(zr_set_zone_serial_digest(inst->zone_register, &name,
-					ldap_serial, ldap_digest));
 		}
+	}
+	if (ldap_serial != zr_serial) {
+		/* serial in LDAP was changed - update zone register */
+		CHECK(zr_set_zone_serial_digest(inst->zone_register, &name,
+				ldap_serial, ldap_digest));
+
+		if (zone_dynamic)
+			dns_zone_notify(zone);
 	}
 
 cleanup:
