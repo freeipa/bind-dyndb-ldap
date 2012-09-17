@@ -1475,6 +1475,8 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry,
 	dns_rdata_t *rdata = NULL;
 	dns_rdatalist_t *rdlist = NULL;
 	ldap_attribute_t *attr;
+	const char *dn = "<NULL entry>";
+	const char *data = "<NULL data>";
 
 	result = add_soa_record(mctx, qresult, origin, entry,
 				rdatalist, fake_mname);
@@ -1503,6 +1505,11 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry,
 	return ISC_R_SUCCESS;
 
 cleanup:
+	if (entry != NULL)
+		dn = entry->dn;
+	if (buf != NULL && str_buf(buf) != NULL)
+		data = str_buf(buf);
+	log_error_r("failed to parse RR entry: dn '%s': data '%s'", dn, data);
 	return result;
 }
 
@@ -1541,7 +1548,6 @@ ldapdb_nodelist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *nam
 		dns_name_init(&node_name, NULL);
 		if (dn_to_dnsname(mctx, entry->dn,  &node_name, NULL)
 		    != ISC_R_SUCCESS) {
-			log_error("Failed to parse dn %s", entry->dn);
 			continue;
 		}
 
@@ -1553,7 +1559,6 @@ ldapdb_nodelist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *nam
 		                       string, &node->rdatalist);
 		}
 		if (result != ISC_R_SUCCESS) {
-			log_error("Failed to parse RR entry (%s)", str_buf(string));
 			/* node cleaning */	
 			dns_name_reset(&node->owner);
 			ldapdb_rdatalist_destroy(mctx, &node->rdatalist);
@@ -1611,11 +1616,9 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 	for (entry = HEAD(ldap_qresult->ldap_entries);
 		entry != NULL;
 		entry = NEXT(entry, link)) {
-		if (ldap_parse_rrentry(mctx, entry, ldap_qresult,
-		                       origin, ldap_inst->fake_mname,
-		                       string, rdatalist) != ISC_R_SUCCESS ) {
-			log_error("Failed to parse RR entry (%s)", str_buf(string));
-		}
+		CHECK(ldap_parse_rrentry(mctx, entry, ldap_qresult,
+				   origin, ldap_inst->fake_mname,
+				   string, rdatalist));
 	}
 
 	if (!EMPTY(*rdatalist)) {
