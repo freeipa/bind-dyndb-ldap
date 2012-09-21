@@ -2966,9 +2966,10 @@ ldap_get_zone_serial(ldap_instance_t *inst, dns_name_t *zone_name,
 
 	CHECK(zr_get_zone_ptr(inst->zone_register, zone_name, &zone));
 	CHECK(dns_zone_getserial2(zone, serial));
-	dns_zone_detach(&zone);
 
 cleanup:
+	if (zone != NULL)
+		dns_zone_detach(&zone);
 	return result;
 }
 
