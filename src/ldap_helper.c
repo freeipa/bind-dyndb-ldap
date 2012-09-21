@@ -1275,9 +1275,11 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
 			goto next;
 		}
 
-		if (dns_name_concatenate(&fname, &forig, &aname, aname.buffer)
-				!= ISC_R_SUCCESS) {
-			log_error_r("unable to concatenate DNS names during zone_refresh");
+		result = dns_name_concatenate(&fname, &forig, &aname,
+					      aname.buffer);
+		if (result != ISC_R_SUCCESS) {
+			log_error_r("unable to concatenate DNS names"
+				    "during zone_refresh");
 			goto next;	
 		}
 
