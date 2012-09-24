@@ -1300,10 +1300,10 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
 	result = dns_rbtnodechain_first(&chain, zr_get_rbt(ldap_inst->zone_register), NULL, NULL);
 	
 	while (result == DNS_R_NEWORIGIN || result == ISC_R_SUCCESS) {
-		
+		dns_name_reset(&aname);
 		delete = ISC_FALSE;	
 		node = NULL;
-		
+
 		result = dns_rbtnodechain_current(&chain, &fname, &forig, &node);
 		if (result != ISC_R_SUCCESS) {
 			if (result != ISC_R_NOTFOUND)
@@ -1315,7 +1315,7 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
 		result = dns_name_concatenate(&fname, &forig, &aname,
 					      aname.buffer);
 		if (result != ISC_R_SUCCESS) {
-			log_error_r("unable to concatenate DNS names"
+			log_error_r("unable to concatenate DNS names "
 				    "during zone_refresh");
 			goto next;	
 		}
