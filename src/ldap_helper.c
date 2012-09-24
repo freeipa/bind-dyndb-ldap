@@ -3093,8 +3093,6 @@ update_zone(isc_task_t *task, isc_event_t *event)
 					LDAP_SCOPE_ONELEVEL, attrs_record, 0,
 					"(objectClass=idnsRecord)"));
 
-			/* LDAP schema requires SOA record (at least) */
-			INSIST(HEAD(ldap_qresult_record->ldap_entries) != NULL);
 			for (entry_record = HEAD(ldap_qresult_record->ldap_entries);
 					entry_record != NULL;
 					entry_record = NEXT(entry_record, link)) {
