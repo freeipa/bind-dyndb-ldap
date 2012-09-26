@@ -370,7 +370,7 @@ zr_set_zone_serial_digest(zone_register_t *zr, dns_name_t *name,
 		return ISC_R_FAILURE;
 	}
 
-	RWLOCK(&zr->rwlock, isc_rwlocktype_read);
+	RWLOCK(&zr->rwlock, isc_rwlocktype_write);
 
 	result = dns_rbt_findname(zr->rbt, name, 0, NULL, (void *)&zinfo);
 	if (result == ISC_R_SUCCESS) {
@@ -378,7 +378,7 @@ zr_set_zone_serial_digest(zone_register_t *zr, dns_name_t *name,
 		memcpy(zinfo->digest, digest, RDLIST_DIGESTLENGTH);
 	}
 
-	RWUNLOCK(&zr->rwlock, isc_rwlocktype_read);
+	RWUNLOCK(&zr->rwlock, isc_rwlocktype_write);
 
 	return result;
 }
