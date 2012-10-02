@@ -516,7 +516,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 {
 	ldap_instance_t *ldap_inst;
 	dns_rbtnodechain_t chain;
-	dns_rbt_t *rbt;
+	dns_rbt_t *rbt = NULL;
 	isc_result_t result = ISC_R_SUCCESS;
 	const char *db_name;
 
@@ -530,7 +530,10 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	 *
 	 * NOTE: This should be probably done in zone_register.c
 	 */
-	rbt = zr_get_rbt(ldap_inst->zone_register);
+	if (ldap_inst->zone_register != NULL)
+		rbt = zr_get_rbt(ldap_inst->zone_register);
+	if (rbt == NULL)
+		result = ISC_R_NOTFOUND;
 
 	/* Potentially ISC_R_NOSPACE can occur. Destroy codepath has no way to
 	 * return errors, so kill BIND.
