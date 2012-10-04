@@ -2522,7 +2522,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	entry = HEAD(ldap_qresult->ldap_entries);
 	if (entry == NULL) {
 		log_debug(3, "Active zone %s not found", zone_dn);
-		result = ISC_R_NOTFOUND;
+		result = DNS_R_NOTAUTH;
 		goto cleanup;
 	}
 
@@ -2534,7 +2534,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 
 	if (!zone_dyn_update) {
 		log_debug(3, "Dynamic Update is not allowed in zone %s", zone_dn);
-		result = ISC_R_NOPERM;
+		result = DNS_R_REFUSED;
 		goto cleanup;
 	}
 
