@@ -349,7 +349,7 @@ ldap_entry_nextrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
 }
 
 isc_result_t
-ldap_entry_getfakesoa(ldap_entry_t *entry, const ld_string_t *fake_mname,
+ldap_entry_getfakesoa(ldap_entry_t *entry, const char *fake_mname,
 		      ld_string_t *target)
 {
 	isc_result_t result = ISC_R_NOTFOUND;
@@ -367,9 +367,9 @@ ldap_entry_getfakesoa(ldap_entry_t *entry, const ld_string_t *fake_mname,
 	REQUIRE(target != NULL);
              
 	str_clear(target);
-	if (str_len(fake_mname) > 0) {
+	if (strlen(fake_mname) > 0) {
 		i = 1;  
-		CHECK(str_cat(target, fake_mname));
+		CHECK(str_cat_char(target, fake_mname));
 		CHECK(str_cat_char(target, " "));
 	}
 	for (; soa_attrs[i] != NULL; i++) {

@@ -1,7 +1,7 @@
 /*
  * Authors: Martin Nagy <mnagy@redhat.com>
  *
- * Copyright (C) 2009  Red Hat
+ * Copyright (C) 2009-2012  Red Hat
  * see file 'COPYING' for use and warranty information
  *
  * This program is free software; you can redistribute it and/or
@@ -23,28 +23,42 @@
 
 #include <isc/types.h>
 #include "types.h"
+#include "str.h"
+#include "ldap_entry.h"
+
+#define SETTING_LINE_MAXLENGTH 255
+#define SETTING_NAME_SEPARATORS " \t"
+#define SETTING_SET_NAME_LOCAL  "named.conf"
+#define SETTING_SET_NAME_GLOBAL "LDAP idnsConfig object"
+#define SETTING_SET_NAME_ZONE   "LDAP idnsZone object"
 
 typedef struct setting	setting_t;
+typedef struct settings_set	settings_set_t;
 
+/* Make sure that cases in get_value_ptr() are synchronized */
 typedef enum {
-	ST_LD_STRING,
-	ST_SIGNED_INTEGER,
+	ST_STRING,
 	ST_UNSIGNED_INTEGER,
 	ST_BOOLEAN,
 } setting_type_t;
 
 struct setting {
 	const char	*name;
-	int		set;
-	int		has_a_default;
 	setting_type_t	type;
 	union {
-		const char	*value_char;
-		signed int	value_sint;
-		unsigned int	value_uint;
+		char		*value_char;
+		isc_uint32_t	value_uint;
 		isc_boolean_t	value_boolean;
-	} default_value;
-	void		*target;
+	} value;
+	isc_boolean_t	filled;
+	isc_boolean_t	is_dynamic;
+};
+
+struct settings_set {
+	isc_mem_t		*mctx;
+	char			*name;
+	const settings_set_t	*parent_set;
+	setting_t		*first_setting;
 };
 
 /*
@@ -59,24 +73,56 @@ struct setting {
  *         "name", no_default_string, &target_variable
  * }
  */
-#define default_string(val)	0, 1, ST_LD_STRING, { .value_char = (val) }, NULL
-#define default_sint(val)	0, 1, ST_SIGNED_INTEGER, { .value_sint = (val) }, NULL
-#define default_uint(val)	0, 1, ST_UNSIGNED_INTEGER, { .value_uint = (val) }, NULL
-#define default_boolean(val)	0, 1, ST_BOOLEAN, { .value_boolean = (val) }, NULL
+#define default_string(val)	ST_STRING, { .value_char = (val) }, ISC_TRUE, ISC_FALSE
+#define default_uint(val)	ST_UNSIGNED_INTEGER, { .value_uint = (val) }, ISC_TRUE, ISC_FALSE
+#define default_boolean(val)	ST_BOOLEAN, { .value_boolean = (val) }, ISC_TRUE, ISC_FALSE
 /* No defaults. */
-#define no_default_string	0, 0, ST_LD_STRING, { .value_char = NULL }, NULL
-#define no_default_sint		0, 0, ST_SIGNED_INTEGER, { .value_sint = 0 }, NULL
-#define no_default_uint		0, 0, ST_UNSIGNED_INTEGER, { .value_uint = 0 }, NULL
-#define no_default_boolean	0, 1, ST_BOOLEAN, { .value_boolean = ISC_FALSE }, NULL
+#define no_default_string	ST_STRING, { .value_char = NULL }, ISC_FALSE, ISC_FALSE
+#define no_default_uint		ST_UNSIGNED_INTEGER, { .value_uint = 0 }, ISC_FALSE, ISC_FALSE
+#define no_default_boolean	ST_BOOLEAN, { .value_boolean = ISC_FALSE }, ISC_FALSE, ISC_FALSE
 
 /* This is used in the end of setting_t arrays. */
-#define end_of_settings	{ NULL, default_sint(0) }
+#define end_of_settings	{ NULL, default_uint(0) }
 
 /*
  * Prototypes.
  */
 isc_result_t
-set_settings(setting_t *settings, const char * const* argv);
+settings_set_create(isc_mem_t *mctx, const setting_t default_settings[],
+		    const unsigned int default_set_length, const char *set_name,
+		    const settings_set_t *const parent_set,
+		    settings_set_t **target);
+
+void
+settings_set_free(settings_set_t **set);
+
+isc_result_t
+settings_set_fill(settings_set_t *set, const char *const *argv,
+		  isc_task_t *task);
+
+isc_boolean_t
+settings_set_isfilled(settings_set_t *set);
+
+isc_result_t
+setting_get_uint(const char * const name, const settings_set_t * const set,
+		 isc_uint32_t * target);
+
+isc_result_t
+setting_get_str(const char * const name, const settings_set_t * const set,
+		const char ** target);
+
+isc_result_t
+setting_get_bool(const char * const name, const settings_set_t * const set,
+		 isc_boolean_t * target);
+
+isc_result_t
+setting_set(const char *const name, const settings_set_t *set,
+	    const char *const value, isc_task_t *task);
+
+isc_result_t
+setting_update_from_ldap_entry(const char *name, settings_set_t *set,
+			       const char *attr_name, ldap_entry_t *entry,
+			       isc_task_t *task);
 
 isc_result_t
 get_enum_description(const enum_txt_assoc_t *map, int value, const char **desc);

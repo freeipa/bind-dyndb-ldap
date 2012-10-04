@@ -22,18 +22,18 @@
 #define _LD_ZONE_REGISTER_H_
 
 #include "cache.h"
+#include "settings.h"
 
 typedef struct zone_register zone_register_t;
 
 isc_result_t
-zr_create(isc_mem_t *mctx, zone_register_t **zrp);
+zr_create(isc_mem_t *mctx, settings_set_t *glob_settings, zone_register_t **zrp);
 
 void
 zr_destroy(zone_register_t **zrp);
 
 isc_result_t
-zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn,
-	    const isc_interval_t *cache_ttl, const isc_boolean_t *psearch);
+zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn);
 
 isc_result_t
 zr_del_zone(zone_register_t *zr, dns_name_t *origin);
@@ -50,6 +50,9 @@ zr_get_zone_dn(zone_register_t *zr, dns_name_t *name, const char **dn,
 
 isc_result_t
 zr_get_zone_ptr(zone_register_t *zr, dns_name_t *name, dns_zone_t **zonep);
+
+isc_result_t
+zr_get_zone_settings(zone_register_t *zr, dns_name_t *name, settings_set_t **set);
 
 dns_rbt_t *
 zr_get_rbt(zone_register_t *zr);

@@ -90,4 +90,9 @@ isc_result_t write_to_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,
 isc_result_t remove_from_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		dns_rdatalist_t *rdlist, isc_boolean_t delete_node);
 
+/* Get cache associated with ldap_inst */
+ldap_cache_t *ldap_instance_getcache(ldap_instance_t *ldap_inst);
+
+settings_set_t * ldap_instance_getsettings_local(ldap_instance_t *ldap_inst);
+
 #endif /* !_LD_LDAP_HELPER_H_ */

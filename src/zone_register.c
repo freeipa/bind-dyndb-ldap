@@ -27,12 +27,14 @@
 #include <dns/result.h>
 #include <dns/zone.h>
 
+#include <isc/string.h>
 #include <string.h>
 
 #include "log.h"
 #include "util.h"
 #include "zone_register.h"
 #include "rdlist.h"
+#include "settings.h"
 
 /*
  * The zone register is a red-black tree that maps a dns name of a zone to the
@@ -47,6 +49,7 @@ struct zone_register {
 	isc_mem_t	*mctx;
 	isc_rwlock_t	rwlock;
 	dns_rbt_t	*rbt;
+	settings_set_t	*global_settings;
 };
 
 typedef struct {
@@ -55,10 +58,35 @@ typedef struct {
 	isc_uint32_t	serial; /* last value processed by plugin (!= value in DB) */
 	unsigned char	digest[RDLIST_DIGESTLENGTH]; /* MD5 digest from all RRs in zone record */
 	ldap_cache_t	*cache;
+	settings_set_t	*settings;
 } zone_info_t;
 
 /* Callback for dns_rbt_create(). */
 static void delete_zone_info(void *arg1, void *arg2);
+
+/**
+ * Zone specific settings from idnsZone object:
+ * NAME 'idnsZone'
+ * MUST ( idnsName $ idnsZoneActive $ idnsSOAmName $ idnsSOArName $
+ *        idnsSOAserial $ idnsSOArefresh $ idnsSOAretry $ idnsSOAexpire $
+ *        idnsSOAminimum
+ * )
+ * MAY ( idnsUpdatePolicy $ idnsAllowQuery $ idnsAllowTransfer $
+ *       idnsAllowSyncPTR $ idnsForwardPolicy $ idnsForwarders
+ * )
+ *
+ * These structures are templates. They will be copied for each zone instance.
+ */
+static const setting_t zone_settings[] = {
+	{ "dyn_update",			no_default_boolean	},
+	{ "update_policy",		no_default_string	},
+	{ "allow_query",		no_default_string	},
+	{ "allow_transfer",		no_default_string	},
+	{ "sync_ptr",			no_default_boolean	},
+	{ "forward_policy",		no_default_string	},
+	{ "forwarders",			no_default_string	},
+	end_of_settings
+};
 
 dns_rbt_t *
 zr_get_rbt(zone_register_t *zr)
@@ -77,7 +105,7 @@ zr_get_mctx(zone_register_t *zr) {
  * Create a new zone register.
  */
 isc_result_t
-zr_create(isc_mem_t *mctx, zone_register_t **zrp)
+zr_create(isc_mem_t *mctx, settings_set_t *glob_settings, zone_register_t **zrp)
 {
 	isc_result_t result;
 	zone_register_t *zr = NULL;
@@ -89,6 +117,7 @@ zr_create(isc_mem_t *mctx, zone_register_t **zrp)
 	isc_mem_attach(mctx, &zr->mctx);
 	CHECK(dns_rbt_create(mctx, delete_zone_info, mctx, &zr->rbt));
 	CHECK(isc_rwlock_init(&zr->rwlock, 0, 0));
+	zr->global_settings = glob_settings;
 
 	*zrp = zr;
 	return ISC_R_SUCCESS;
@@ -128,13 +157,14 @@ zr_destroy(zone_register_t **zrp)
 /*
  * Create a new zone info structure.
  */
+#define PRINT_BUFF_SIZE 255
 static isc_result_t
 create_zone_info(isc_mem_t *mctx, dns_zone_t *zone, const char *dn,
-		 const isc_interval_t *cache_ttl, const isc_boolean_t *psearch,
-		 zone_info_t **zinfop)
+		settings_set_t *global_settings, zone_info_t **zinfop)
 {
 	isc_result_t result;
 	zone_info_t *zinfo;
+	char settings_name[PRINT_BUFF_SIZE];
 
 	REQUIRE(zone != NULL);
 	REQUIRE(dn != NULL);
@@ -143,8 +173,15 @@ create_zone_info(isc_mem_t *mctx, dns_zone_t *zone, const char *dn,
 	CHECKED_MEM_GET_PTR(mctx, zinfo);
 	ZERO_PTR(zinfo);
 	CHECKED_MEM_STRDUP(mctx, dn, zinfo->dn);
-	CHECK(new_ldap_cache(mctx, cache_ttl, psearch, &zinfo->cache));
+	CHECK(new_ldap_cache(mctx, global_settings, &zinfo->cache));
 	dns_zone_attach(zone, &zinfo->zone);
+	zinfo->settings = NULL;
+	isc_string_printf_truncate(settings_name, PRINT_BUFF_SIZE,
+				   SETTING_SET_NAME_ZONE " %s",
+				   dn);
+	CHECK(settings_set_create(mctx, zone_settings, sizeof(zone_settings),
+				  settings_name, global_settings,
+				  &zinfo->settings));
 
 	*zinfop = zinfo;
 	return ISC_R_SUCCESS;
@@ -168,6 +205,7 @@ delete_zone_info(void *arg1, void *arg2)
 		return;
 
 	destroy_ldap_cache(&zinfo->cache);
+	settings_set_free(&zinfo->settings);
 	isc_mem_free(mctx, zinfo->dn);
 	dns_zone_detach(&zinfo->zone);
 	SAFE_MEM_PUT_PTR(mctx, zinfo);
@@ -178,8 +216,7 @@ delete_zone_info(void *arg1, void *arg2)
  * must be absolute and the zone cannot already be in the zone register.
  */
 isc_result_t
-zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn,
-	    const isc_interval_t *cache_ttl, const isc_boolean_t *psearch)
+zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn)
 {
 	isc_result_t result;
 	dns_name_t *name;
@@ -210,7 +247,7 @@ zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn,
 		goto cleanup;
 	}
 
-	CHECK(create_zone_info(zr->mctx, zone, dn, cache_ttl, psearch,
+	CHECK(create_zone_info(zr->mctx, zone, dn, zr->global_settings,
 			       &new_zinfo));
 	CHECK(dns_rbt_addname(zr->rbt, name, new_zinfo));
 
@@ -406,6 +443,37 @@ zr_get_zone_serial_digest(zone_register_t *zr, dns_name_t *name,
 		*serialp = zinfo->serial;
 		*digestp = zinfo->digest;
 	}
+
+	RWUNLOCK(&zr->rwlock, isc_rwlocktype_read);
+
+	return result;
+}
+
+/*
+ * Find a zone with origin 'name' within in the zone register 'zr'. If an
+ * exact match is found, the pointer to the zone's settings is returned through
+ * 'set'.
+ */
+isc_result_t
+zr_get_zone_settings(zone_register_t *zr, dns_name_t *name, settings_set_t **set)
+{
+	isc_result_t result;
+	void *zinfo = NULL;
+
+	REQUIRE(zr != NULL);
+	REQUIRE(name != NULL);
+	REQUIRE(set != NULL && *set == NULL);
+
+	if (!dns_name_isabsolute(name)) {
+		log_bug("trying to find zone with a relative name");
+		return ISC_R_FAILURE;
+	}
+
+	RWLOCK(&zr->rwlock, isc_rwlocktype_read);
+
+	result = dns_rbt_findname(zr->rbt, name, 0, NULL, &zinfo);
+	if (result == ISC_R_SUCCESS)
+		*set = ((zone_info_t *)zinfo)->settings;
 
 	RWUNLOCK(&zr->rwlock, isc_rwlocktype_read);
 

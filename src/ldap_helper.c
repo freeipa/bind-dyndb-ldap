@@ -157,32 +157,13 @@ struct ldap_instance {
 	/* krb5 kinit mutex */
 	isc_mutex_t		kinit_lock;
 
-	/* Settings. */
-	ld_string_t		*uri;
-	ld_string_t		*base;
-	unsigned int		connections;
-	unsigned int		reconnect_interval;
-	unsigned int		timeout;
-	ldap_auth_t		auth_method;
-	ld_string_t		*bind_dn;
-	ld_string_t		*password;
-	ld_string_t		*krb5_principal;
-	ld_string_t		*sasl_mech;
-	ld_string_t		*sasl_user;
-	ld_string_t		*sasl_auth_name;
-	ld_string_t		*sasl_realm;
-	ld_string_t		*sasl_password;
-	ld_string_t		*krb5_keytab;
-	ld_string_t		*fake_mname;
-	isc_boolean_t		psearch;
-	isc_interval_t		cache_ttl;
-	ld_string_t		*ldap_hostname;
 	isc_task_t		*task;
 	isc_thread_t		watcher;
 	isc_boolean_t		exiting;
-	isc_boolean_t		sync_ptr;
-	isc_boolean_t		dyn_update;
-	isc_boolean_t		serial_autoincrement;
+
+	/* Settings. */
+	settings_set_t		*local_settings;
+	settings_set_t		*global_settings;
 	dns_forwarders_t	orig_global_forwarders; /* from named.conf */
 };
 
@@ -250,6 +231,47 @@ struct ldap_psearchevent {
 	int chgtype;
 };
 
+extern const settings_set_t const settings_default_set;
+
+/** Local configuration file */
+static const setting_t settings_local_default[] = {
+	{ "uri",			no_default_string	},
+	{ "connections",		no_default_uint		},
+	{ "reconnect_interval",		no_default_uint		},
+	{ "timeout",			no_default_uint		},
+	{ "cache_ttl",			no_default_uint		},
+	{ "base",			no_default_string	},
+	{ "auth_method",		no_default_string	},
+	{ "auth_method_enum",		no_default_uint		},
+	{ "bind_dn",			no_default_string	},
+	{ "password",			no_default_string	},
+	{ "krb5_principal",		no_default_string	},
+	{ "sasl_mech",			no_default_string	},
+	{ "sasl_user",			no_default_string	},
+	{ "sasl_auth_name",		no_default_string	},
+	{ "sasl_realm",			no_default_string	},
+	{ "sasl_password",		no_default_string	},
+	{ "krb5_keytab",		no_default_string	},
+	{ "fake_mname",			no_default_string	},
+	{ "zone_refresh",		no_default_uint		},
+	{ "psearch",			no_default_boolean	},
+	{ "ldap_hostname",		no_default_string	},
+	{ "sync_ptr",			no_default_boolean	},
+	{ "dyn_update",			no_default_boolean	},
+	{ "serial_autoincrement",	no_default_boolean	},
+	{ "verbose_checks",		no_default_boolean	},
+	end_of_settings
+};
+
+/** Global settings from idnsConfig object. */
+static setting_t settings_global_default[] = {
+	{ "dyn_update",		no_default_boolean	},
+	{ "sync_ptr",		no_default_boolean	},
+	{ "zone_refresh",	no_default_uint		},
+/*	{ "psearch",		no_default_boolean	}, unsupported */
+	end_of_settings
+};
+
 /*
  * Forward declarations.
  */
@@ -264,14 +286,14 @@ static isc_result_t findrdatatype_or_create(isc_mem_t *mctx,
 		dns_rdatatype_t rdtype, dns_ttl_t ttl, dns_rdatalist_t **rdlistp);
 static isc_result_t add_soa_record(isc_mem_t *mctx, ldap_qresult_t *qresult,
 		dns_name_t *origin, ldap_entry_t *entry,
-		ldapdb_rdatalist_t *rdatalist, const ld_string_t *fake_mname);
+		ldapdb_rdatalist_t *rdatalist, const char *fake_mname);
 static isc_result_t parse_rdata(isc_mem_t *mctx, ldap_qresult_t *qresult,
 		dns_rdataclass_t rdclass, dns_rdatatype_t rdtype,
 		dns_name_t *origin, const char *rdata_text,
 		dns_rdata_t **rdatap);
 static isc_result_t ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry,
 		ldap_qresult_t *qresult, dns_name_t *origin,
-		const ld_string_t *fake_mname, ld_string_t *buf,
+		const char *fake_mname, ld_string_t *buf,
 		ldapdb_rdatalist_t *rdatalist);
 static inline isc_result_t ldap_get_zone_serial(ldap_instance_t *inst,
 		dns_name_t *zone_name, isc_uint32_t *serial);
@@ -332,43 +354,136 @@ static void psearch_update(ldap_instance_t *inst, ldap_entry_t *entry,
 static isc_threadresult_t
 ldap_psearch_watcher(isc_threadarg_t arg);
 
+#define PRINT_BUFF_SIZE 10 /* for unsigned int 2^32 */
+isc_result_t
+validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
+	isc_result_t result;
+
+	isc_boolean_t psearch;
+	isc_boolean_t serial_autoincrement;
+	isc_uint32_t uint;
+	const char *sasl_mech = NULL;
+	const char *sasl_user = NULL;
+	const char *krb5_principal = NULL;
+	ld_string_t *buff = NULL;
+
+	char print_buff[PRINT_BUFF_SIZE];
+	const char *auth_method_str = NULL;
+	ldap_auth_t auth_method_enum = AUTH_INVALID;
+
+	/* Set timer for deadlock detection inside semaphore_wait_timed . */
+	CHECK(setting_get_uint("timeout", set, &uint));
+	if (semaphore_wait_timeout.seconds < uint*SEM_WAIT_TIMEOUT_MUL)
+		semaphore_wait_timeout.seconds = uint*SEM_WAIT_TIMEOUT_MUL;
+
+	CHECK(setting_get_bool("psearch", set, &psearch));
+	CHECK(setting_get_uint("connections", set, &uint));
+	if (!psearch && uint < 1) {
+		log_error("zone refresh mode requires one connection at least");
+		CLEANUP_WITH(ISC_R_RANGE);
+	}
+	else if (psearch && uint < 2) {
+		log_error("persistent search mode requires two connections "
+			  "at least");
+		/* watcher needs one and update_*() requests second connection */
+		CLEANUP_WITH(ISC_R_RANGE);
+	}
+
+	CHECK(setting_get_bool("serial_autoincrement", set, &serial_autoincrement));
+	if (serial_autoincrement && !psearch) {
+		log_error("SOA serial number auto-increment feature requires "
+			  "persistent search");
+		CLEANUP_WITH(ISC_R_FAILURE);
+	}
+
+	CHECK(setting_get_uint("zone_refresh", set, &uint));
+	if (uint != 0 && psearch) {
+		log_error("zone refresh and persistent search "
+			  "cannot be enabled at same time");
+		CLEANUP_WITH(ISC_R_FAILURE);
+	}
+
+	/* Select authentication method. */
+	CHECK(setting_get_str("auth_method", set, &auth_method_str));
+	auth_method_enum = AUTH_INVALID;
+	for (int i = 0; supported_ldap_auth[i].name != NULL; i++) {
+		if (!strcasecmp(auth_method_str, supported_ldap_auth[i].name)) {
+			auth_method_enum = supported_ldap_auth[i].value;
+			break;
+		}
+	}
+	if (auth_method_enum == AUTH_INVALID) {
+		log_error("unknown authentication method '%s'",
+			  auth_method_str);
+		CLEANUP_WITH(ISC_R_FAILURE);
+	}
+	CHECK(isc_string_printf(print_buff, PRINT_BUFF_SIZE, "%u", auth_method_enum));
+	CHECK(setting_set("auth_method_enum", inst->local_settings, print_buff,
+			  inst->task));
+
+	/* check we have the right data when SASL/GSSAPI is selected */
+	CHECK(setting_get_str("sasl_mech", set, &sasl_mech));
+	CHECK(setting_get_str("krb5_principal", set, &krb5_principal));
+	CHECK(setting_get_str("sasl_user", set, &sasl_user));
+
+	if ((auth_method_enum == AUTH_SASL) &&
+	    (strcasecmp(sasl_mech, "GSSAPI") == 0)) {
+		if ((krb5_principal == NULL) || (strlen(krb5_principal) == 0)) {
+			if ((sasl_user == NULL) || (strlen(sasl_user) == 0)) {
+				char hostname[HOST_NAME_MAX];
+				if (gethostname(hostname, HOST_NAME_MAX) != 0) {
+					log_error("SASL mech GSSAPI defined "
+						  "but krb5_principal and "
+						  "sasl_user are empty and"
+						  "gethostname() failed");
+					CLEANUP_WITH(ISC_R_FAILURE);
+				} else {
+					CHECK(str_sprintf(buff,
+							  "DNS/%s", hostname));
+					log_debug(2, "SASL mech GSSAPI defined "
+						  "but krb5_principal and "
+						  "sasl_user are empty, using "
+						  "default '%s'",
+						  str_buf(buff));
+					CHECK(setting_set("krb5_principal", set,
+							  str_buf(buff),
+							  inst->task));
+				}
+			} else {
+				CHECK(setting_set("krb5_principal", set,
+						  sasl_user,
+						  inst->task));
+			}
+		}
+	} else if (auth_method_enum == AUTH_SASL) {
+		log_info("SASL mechanisms other than GSSAPI+Kerberos "
+			 "are untested; expect problems");
+	}
+
+	if (settings_set_isfilled(set) != ISC_TRUE)
+		result = ISC_R_FAILURE;
+
+cleanup:
+	if (result != ISC_R_SUCCESS)
+		log_error_r("LDAP config validation failed for database '%s'",
+			    inst->db_name);
+	return result;
+}
+#undef PRINT_BUFF_SIZE
+
+#define PRINT_BUFF_SIZE 255
 isc_result_t
 new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		  const char * const *argv, dns_dyndb_arguments_t *dyndb_args,
 		  isc_task_t *task, ldap_instance_t **ldap_instp)
 {
-	unsigned int i;
 	isc_result_t result;
 	ldap_instance_t *ldap_inst;
 	dns_view_t *view = NULL;
-	ld_string_t *auth_method_str = NULL;
 	dns_forwarders_t *orig_global_forwarders = NULL;
-	isc_uint32_t cache_ttl_seconds;
-	setting_t ldap_settings[] = {
-		{ "uri",	 no_default_string		},
-		{ "connections", default_uint(2)		},
-		{ "reconnect_interval", default_uint(60)	},
-		{ "timeout",	 default_uint(10)		},
-		{ "base",	 no_default_string		},
-		{ "auth_method", default_string("none")		},
-		{ "bind_dn",	 default_string("")		},
-		{ "password",	 default_string("")		},
-		{ "krb5_principal", default_string("")		},
-		{ "sasl_mech",	 default_string("GSSAPI")	},
-		{ "sasl_user",	 default_string("")		},
-		{ "sasl_auth_name", default_string("")		},
-		{ "sasl_realm",	 default_string("")		},
-		{ "sasl_password", default_string("")		},
-		{ "krb5_keytab", default_string("")		},
-		{ "fake_mname",	 default_string("")		},
-		{ "psearch",	 default_boolean(ISC_FALSE)	},
-		{ "cache_ttl",	 default_uint(120)		},
-		{ "ldap_hostname", default_string("")		},
-		{ "sync_ptr",	 default_boolean(ISC_FALSE) },
-		{ "dyn_update",	 default_boolean(ISC_FALSE) },
-		{ "serial_autoincrement",	 default_boolean(ISC_FALSE) },
-		end_of_settings
-	};
+	isc_boolean_t psearch;
+	isc_uint32_t connections;
+	char settings_name[PRINT_BUFF_SIZE];
 
 	REQUIRE(ldap_instp != NULL && *ldap_instp == NULL);
 
@@ -381,123 +496,35 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	dns_view_attach(view, &ldap_inst->view);
 	ldap_inst->zmgr = dns_dyndb_get_zonemgr(dyndb_args);
 	ISC_LIST_INIT(ldap_inst->orig_global_forwarders.addrs);
+	ldap_inst->task = task;
+	ldap_inst->watcher = 0;
 
-	CHECK(zr_create(mctx, &ldap_inst->zone_register));
+	isc_string_printf_truncate(settings_name, PRINT_BUFF_SIZE,
+				   SETTING_SET_NAME_LOCAL " for database %s",
+				   db_name);
+	CHECK(settings_set_create(mctx, settings_local_default,
+	      sizeof(settings_local_default), settings_name,
+	      &settings_default_set, &ldap_inst->local_settings));
+
+	isc_string_printf_truncate(settings_name, PRINT_BUFF_SIZE,
+				   SETTING_SET_NAME_GLOBAL " for database %s",
+				   db_name);
+	CHECK(settings_set_create(mctx, settings_global_default,
+	      sizeof(settings_global_default), settings_name,
+	      ldap_inst->local_settings, &ldap_inst->global_settings));
+
+	CHECK(settings_set_fill(ldap_inst->local_settings, argv, task));
+	CHECK(validate_local_instance_settings(ldap_inst, ldap_inst->local_settings));
+	if (settings_set_isfilled(ldap_inst->global_settings) != ISC_TRUE)
+		CLEANUP_WITH(ISC_R_FAILURE);
+
+	CHECK(setting_get_bool("psearch", ldap_inst->local_settings, &psearch));
+	CHECK(setting_get_uint("connections", ldap_inst->local_settings, &connections));
+
+	CHECK(zr_create(mctx, ldap_inst->global_settings,
+			&ldap_inst->zone_register));
 
 	CHECK(isc_mutex_init(&ldap_inst->kinit_lock));
-
-	CHECK(str_new(mctx, &auth_method_str));
-	CHECK(str_new(mctx, &ldap_inst->uri));
-	CHECK(str_new(mctx, &ldap_inst->base));
-	CHECK(str_new(mctx, &ldap_inst->bind_dn));
-	CHECK(str_new(mctx, &ldap_inst->password));
-	CHECK(str_new(mctx, &ldap_inst->krb5_principal));
-	CHECK(str_new(mctx, &ldap_inst->sasl_mech));
-	CHECK(str_new(mctx, &ldap_inst->sasl_user));
-	CHECK(str_new(mctx, &ldap_inst->sasl_auth_name));
-	CHECK(str_new(mctx, &ldap_inst->sasl_realm));
-	CHECK(str_new(mctx, &ldap_inst->sasl_password));
-	CHECK(str_new(mctx, &ldap_inst->krb5_keytab));
-	CHECK(str_new(mctx, &ldap_inst->fake_mname));
-	CHECK(str_new(mctx, &ldap_inst->ldap_hostname));
-
-	i = 0;
-	ldap_settings[i++].target = ldap_inst->uri;
-	ldap_settings[i++].target = &ldap_inst->connections;
-	ldap_settings[i++].target = &ldap_inst->reconnect_interval;
-	ldap_settings[i++].target = &ldap_inst->timeout;
-	ldap_settings[i++].target = ldap_inst->base;
-	ldap_settings[i++].target = auth_method_str;
-	ldap_settings[i++].target = ldap_inst->bind_dn;
-	ldap_settings[i++].target = ldap_inst->password;
-	ldap_settings[i++].target = ldap_inst->krb5_principal;
-	ldap_settings[i++].target = ldap_inst->sasl_mech;
-	ldap_settings[i++].target = ldap_inst->sasl_user;
-	ldap_settings[i++].target = ldap_inst->sasl_auth_name;
-	ldap_settings[i++].target = ldap_inst->sasl_realm;
-	ldap_settings[i++].target = ldap_inst->sasl_password;
-	ldap_settings[i++].target = ldap_inst->krb5_keytab;
-	ldap_settings[i++].target = ldap_inst->fake_mname;
-	ldap_settings[i++].target = &ldap_inst->psearch;
-	ldap_settings[i++].target = &cache_ttl_seconds;
-	ldap_settings[i++].target = ldap_inst->ldap_hostname;
-	ldap_settings[i++].target = &ldap_inst->sync_ptr;
-	ldap_settings[i++].target = &ldap_inst->dyn_update;
-	ldap_settings[i++].target = &ldap_inst->serial_autoincrement;
-	CHECK(set_settings(ldap_settings, argv));
-	isc_interval_set(&ldap_inst->cache_ttl, cache_ttl_seconds, 0);
-
-	/* Set timer for deadlock detection inside semaphore_wait_timed . */
-	if (semaphore_wait_timeout.seconds < ldap_inst->timeout*SEM_WAIT_TIMEOUT_MUL)
-		semaphore_wait_timeout.seconds = ldap_inst->timeout*SEM_WAIT_TIMEOUT_MUL;
-
-	/* Validate and check settings. */
-	str_toupper(ldap_inst->sasl_mech);
-	if (ldap_inst->connections < 1) {
-		log_error("at least one connection is required");
-		result = ISC_R_FAILURE;
-		goto cleanup;
-	}
-	/* Select authentication method. */
-	ldap_inst->auth_method = AUTH_INVALID;
-	for (i = 0; supported_ldap_auth[i].name != NULL; i++) {
-		if (!str_casecmp_char(auth_method_str,
-				      supported_ldap_auth[i].name)) {
-			ldap_inst->auth_method = supported_ldap_auth[i].value;
-			break;
-		}
-	}
-	if (ldap_inst->auth_method == AUTH_INVALID) {
-		log_error("unknown authentication method '%s'",
-			  str_buf(auth_method_str));
-		result = ISC_R_FAILURE;
-		goto cleanup;
-	}
-
-	/* check we have the right data when SASL/GSSAPI is selected */
-	if ((ldap_inst->auth_method == AUTH_SASL) &&
-	     (str_casecmp_char(ldap_inst->sasl_mech, "GSSAPI") == 0)) {
-		if ((ldap_inst->krb5_principal == NULL) ||
-		    (str_len(ldap_inst->krb5_principal) == 0)) {
-			if ((ldap_inst->sasl_user == NULL) ||
-			    (str_len(ldap_inst->sasl_user) == 0)) {
-				char hostname[255];
-				if (gethostname(hostname, 255) != 0) {
-					log_error("SASL mech GSSAPI defined but krb5_principal"
-						"and sasl_user are empty. Could not get hostname");
-					result = ISC_R_FAILURE;
-					goto cleanup;
-				} else {
-					CHECK(str_sprintf(ldap_inst->krb5_principal,
-							"DNS/%s", hostname));
-					log_debug(2, "SASL mech GSSAPI defined but krb5_principal"
-						"and sasl_user are empty, using default %s",
-						str_buf(ldap_inst->krb5_principal));
-				}
-			} else {
-				str_copy(ldap_inst->krb5_principal, ldap_inst->sasl_user);
-			}
-		}
-	}
-
-	ldap_inst->task = task;
-
-	if (ldap_inst->psearch && ldap_inst->connections < 2) {
-		/* watcher needs one and update_*() will request second */
-		log_error("psearch needs at least 2 connections, "
-			  "increasing limit");
-		ldap_inst->connections = 2;
-	}
-	if (ldap_inst->serial_autoincrement == ISC_TRUE
-		&& ldap_inst->psearch != ISC_TRUE) {
-		log_error("SOA serial number auto-increment feature requires "
-				"persistent search");
-		result = ISC_R_FAILURE;
-		goto cleanup;
-	}
-
-	CHECK(ldap_pool_create(mctx, ldap_inst->connections, &ldap_inst->pool));
-	CHECK(ldap_pool_connect(ldap_inst->pool, ldap_inst));
 
 	/* copy global forwarders setting for configuration roll back in
 	 * configure_zone_forwarders() */
@@ -521,12 +548,14 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	} else if (result == ISC_R_NOTFOUND) {
 		/* global forwarders are not configured */
 		ldap_inst->orig_global_forwarders.fwdpolicy = dns_fwdpolicy_none;
-		result = ISC_R_SUCCESS;
 	} else {
 		goto cleanup;
 	}
 
-	if (ldap_inst->psearch) {
+	CHECK(ldap_pool_create(mctx, connections, &ldap_inst->pool));
+	CHECK(ldap_pool_connect(ldap_inst->pool, ldap_inst));
+
+	if (psearch) {
 		/* Start the watcher thread */
 		result = isc_thread_create(ldap_psearch_watcher, ldap_inst,
 					   &ldap_inst->watcher);
@@ -542,10 +571,9 @@ cleanup:
 	else
 		*ldap_instp = ldap_inst;
 
-	str_destroy(&auth_method_str);
-
 	return result;
 }
+#undef PRINT_BUFF_SIZE
 
 void
 destroy_ldap_instance(ldap_instance_t **ldap_instp)
@@ -627,7 +655,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	dns_rbtnodechain_invalidate(&chain);
 
 	/* TODO: Terminate psearch watcher sooner? */
-	if (ldap_inst->psearch && ldap_inst->watcher != 0) {
+	if (ldap_inst->watcher != 0) {
 		ldap_inst->exiting = ISC_TRUE;
 		/*
 		 * Wake up the watcher thread. This might look like a hack
@@ -644,21 +672,6 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	}
 
 	ldap_pool_destroy(&ldap_inst->pool);
-
-	str_destroy(&ldap_inst->uri);
-	str_destroy(&ldap_inst->base);
-	str_destroy(&ldap_inst->bind_dn);
-	str_destroy(&ldap_inst->password);
-	str_destroy(&ldap_inst->krb5_principal);
-	str_destroy(&ldap_inst->sasl_mech);
-	str_destroy(&ldap_inst->sasl_user);
-	str_destroy(&ldap_inst->sasl_auth_name);
-	str_destroy(&ldap_inst->sasl_realm);
-	str_destroy(&ldap_inst->sasl_password);
-	str_destroy(&ldap_inst->krb5_keytab);
-	str_destroy(&ldap_inst->fake_mname);
-	str_destroy(&ldap_inst->ldap_hostname);
-
 	dns_view_detach(&ldap_inst->view);
 
 	DESTROYLOCK(&ldap_inst->kinit_lock);
@@ -670,6 +683,9 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 		ISC_LIST_UNLINK(ldap_inst->orig_global_forwarders.addrs, addr, link);
 		SAFE_MEM_PUT_PTR(ldap_inst->mctx, addr);
 	}
+
+	settings_set_free(&ldap_inst->global_settings);
+	settings_set_free(&ldap_inst->local_settings);
 
 	MEM_PUT_AND_DETACH(ldap_inst);
 
@@ -1157,14 +1173,13 @@ static isc_result_t
 ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst)
 {
 	isc_result_t result;
-	ldap_valuelist_t values;
-	isc_boolean_t sync_ptr_new;
 	isc_timer_t *timer_inst;
 	isc_interval_t timer_interval;
 	isc_uint32_t interval_sec;
 	isc_timertype_t timer_type;
 
-	/* BIND functions are thread safe, lock only ldap instance 'inst'. */
+	/* BIND functions are thread safe, ldap instance 'inst' is locked
+	 * inside setting* functions. */
 
 	log_debug(3, "Parsing configuration object");
 
@@ -1174,47 +1189,46 @@ ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst)
 		log_error_r("global forwarder could not be set up");
 	}
 
-	result = ldap_entry_getvalues(entry, "idnsAllowSyncPTR", &values);
+	result = setting_update_from_ldap_entry("dyn_update",
+						inst->global_settings,
+						"idnsAllowDynUpdate",
+						entry, inst->task);
+	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
+		goto cleanup;
+
+	result = setting_update_from_ldap_entry("sync_ptr",
+						inst->global_settings,
+						"idnsAllowSyncPTR",
+						entry, inst->task);
+	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
+		goto cleanup;
+
+	result = setting_update_from_ldap_entry("zone_refresh",
+						inst->global_settings,
+						"idnsZoneRefresh",
+						entry, inst->task);
 	if (result == ISC_R_SUCCESS) {
-		log_debug(2, "Setting global AllowSyncPTR = %s", HEAD(values)->value);
-		sync_ptr_new = (strcmp(HEAD(values)->value, "TRUE") == 0)
-						? ISC_TRUE : ISC_FALSE;
-
-		if (inst->sync_ptr != sync_ptr_new) { /* lock BIND only if necessary */
-			result = isc_task_beginexclusive(inst->task);
-			RUNTIME_CHECK(result == ISC_R_SUCCESS ||
-							result == ISC_R_LOCKBUSY);
-			inst->sync_ptr = sync_ptr_new;
-			if (result == ISC_R_SUCCESS) {
-				isc_task_endexclusive(inst->task);
-			}
-		}
-	}
-
-	result = ldap_entry_getvalues(entry, "idnsZoneRefresh", &values);
-	if (result == ISC_R_SUCCESS) {
-		log_debug(2, "Setting global ZoneRefresh timer = %s", HEAD(values)->value);
-		RUNTIME_CHECK(manager_get_db_timer(inst->db_name, &timer_inst) == ISC_R_SUCCESS);
-
-		result = isc_parse_uint32(&interval_sec, HEAD(values)->value, 10);
-		if (result != ISC_R_SUCCESS) {
-			log_error("Could not parse ZoneRefresh interval");
-			goto cleanup;
-		}
+		RUNTIME_CHECK(manager_get_db_timer(inst->db_name, &timer_inst)
+			      == ISC_R_SUCCESS);
+		CHECK(setting_get_uint("zone_refresh", inst->global_settings,
+				       &interval_sec));
 		isc_interval_set(&timer_interval, interval_sec, 0);
 		/* update interval only, not timer type */
 		timer_type = isc_timer_gettype(timer_inst);
 		result = isc_timer_reset(timer_inst, timer_type, NULL,
 				&timer_interval, ISC_TRUE);
 		if (result != ISC_R_SUCCESS) {
-			log_error("Could not adjust ZoneRefresh timer");
+			log_error_r("could not adjust ZoneRefresh timer");
 			goto cleanup;
 		}
+	} else if (result != ISC_R_IGNORE) {
+		goto cleanup;
 	}
 
 cleanup:
 	/* Configuration errors are not fatal. */
-	return ISC_R_SUCCESS;   
+	/* TODO: log something? */
+	return ISC_R_SUCCESS;
 }
 
 /* Parse the zone entry */
@@ -1237,6 +1251,8 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	ldapdb_rdatalist_t rdatalist;
 	isc_boolean_t zone_dynamic = ISC_FALSE;
 	ldap_cache_t *cache = NULL;
+	settings_set_t *zone_settings = NULL;
+	isc_boolean_t serial_autoincrement;
 
 	REQUIRE(entry != NULL);
 	REQUIRE(inst != NULL);
@@ -1283,11 +1299,22 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	result = zr_get_zone_ptr(inst->zone_register, &name, &zone);
 	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
 		CHECK(create_zone(inst, &name, &zone));
-		CHECK(zr_add_zone(inst->zone_register, zone, dn,
-				  &inst->cache_ttl, &inst->psearch));
+		CHECK(zr_add_zone(inst->zone_register, zone, dn));
 		publish = ISC_TRUE;
 		log_debug(2, "created zone %p: %s", zone, dn);
 	} else if (result != ISC_R_SUCCESS)
+		goto cleanup;
+
+	CHECK(zr_get_zone_settings(inst->zone_register, &name, &zone_settings));
+
+	result = setting_update_from_ldap_entry("dyn_update", zone_settings,
+				       "idnsAllowDynUpdate", entry, inst->task);
+	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
+		goto cleanup;
+
+	result = setting_update_from_ldap_entry("sync_ptr", zone_settings,
+				       "idnsAllowSyncPTR", entry, inst->task);
+	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
 		goto cleanup;
 
 	log_debug(2, "Setting SSU table for %p: %s", zone, dn);
@@ -1372,7 +1399,9 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	CHECK(ldap_get_zone_serial(inst, &name, &ldap_serial));
 	CHECK(zr_get_zone_serial_digest(inst->zone_register, &name, &zr_serial,
 			&zr_digest));
-	if (inst->serial_autoincrement) {
+	CHECK(setting_get_bool("serial_autoincrement", zone_settings,
+			       &serial_autoincrement));
+	if (serial_autoincrement) {
 		CHECK(ldapdb_rdatalist_get(inst->mctx, inst, &name,
 				&name, &rdatalist));
 		CHECK(rdatalist_digest(inst->mctx, &rdatalist, ldap_digest));
@@ -1434,6 +1463,8 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
 	ldap_entry_t *entry;
 	dns_rbt_t *rbt = NULL;
 	isc_boolean_t invalidate_nodechain = ISC_FALSE;
+	isc_boolean_t psearch;
+	const char *base = NULL;
 	char *config_attrs[] = {
 		"idnsForwardPolicy", "idnsForwarders", 
 		"idnsAllowSyncPTR", "idnsZoneRefresh",
@@ -1441,13 +1472,15 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
 	};
 	char *zone_attrs[] = {
 		"idnsName", "idnsUpdatePolicy", "idnsAllowQuery",
-		"idnsAllowTransfer", "idnsForwardPolicy", 
-		"idnsForwarders", NULL
+		"idnsAllowTransfer", "idnsForwardPolicy", "idnsForwarders",
+		"idnsAllowDynUpdate", "idnsAllowSyncPTR", NULL
 	};
 
 	REQUIRE(ldap_inst != NULL);
 
-	if (ldap_inst->psearch && !delete_only) {
+	CHECK(setting_get_bool("psearch", ldap_inst->global_settings,
+			       &psearch));
+	if (psearch && !delete_only) {
 		/* Watcher does the work for us, but deletion is allowed. */
 		return ISC_R_SUCCESS;
 	}
@@ -1457,11 +1490,12 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
 	/* Query for configuration and zones from LDAP and release LDAP connection
 	 * before processing them. It prevents deadlock in situations where
 	 * ldap_parse_zoneentry() requests another connection. */
+	CHECK(setting_get_str("base", ldap_inst->global_settings, &base));
 	CHECK(ldap_pool_getconnection(ldap_inst->pool, &ldap_conn));
-	CHECK(ldap_query(ldap_inst, ldap_conn, &ldap_config_qresult, str_buf(ldap_inst->base),
+	CHECK(ldap_query(ldap_inst, ldap_conn, &ldap_config_qresult, base,
 			 LDAP_SCOPE_SUBTREE, config_attrs, 0,
 			 "(objectClass=idnsConfigObject)"));
-	CHECK(ldap_query(ldap_inst, ldap_conn, &ldap_zones_qresult, str_buf(ldap_inst->base),
+	CHECK(ldap_query(ldap_inst, ldap_conn, &ldap_zones_qresult, base,
 			 LDAP_SCOPE_SUBTREE, zone_attrs, 0,
 			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
 	ldap_pool_putconnection(ldap_inst->pool, &ldap_conn);
@@ -1689,7 +1723,7 @@ free_rdatalist(isc_mem_t *mctx, dns_rdatalist_t *rdlist)
 static isc_result_t
 ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry,
 		   ldap_qresult_t *qresult, dns_name_t *origin,
-		   const ld_string_t *fake_mname, ld_string_t *buf,
+		   const char *fake_mname, ld_string_t *buf,
 		   ldapdb_rdatalist_t *rdatalist)
 {
 	isc_result_t result;
@@ -1746,6 +1780,7 @@ ldapdb_nodelist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *nam
 	ld_string_t *string = NULL;
 	ldapdb_node_t *node;
 	dns_name_t node_name;
+	const char *fake_mname = NULL;
 
 	REQUIRE(ldap_inst != NULL);
 	REQUIRE(name != NULL);
@@ -1764,6 +1799,8 @@ ldapdb_nodelist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *nam
 		goto cleanup;
 	}
 
+	CHECK(setting_get_str("fake_mname", ldap_inst->local_settings,
+			      &fake_mname));
 	for (entry = HEAD(ldap_qresult->ldap_entries);
 		entry != NULL;
 		entry = NEXT(entry, link)) {
@@ -1778,7 +1815,7 @@ ldapdb_nodelist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *nam
 		dns_name_free(&node_name, mctx);
 		if (result == ISC_R_SUCCESS) {
 			result = ldap_parse_rrentry(mctx, entry, ldap_qresult,
-		                       origin, ldap_inst->fake_mname,
+		                       origin, fake_mname,
 		                       string, &node->rdatalist);
 		}
 		if (result != ISC_R_SUCCESS) {
@@ -1810,6 +1847,7 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 	ldap_entry_t *entry;
 	ld_string_t *string = NULL;
 	ldap_cache_t *cache = NULL;
+	const char *fake_mname = NULL;
 
 	REQUIRE(ldap_inst != NULL);
 	REQUIRE(name != NULL);
@@ -1836,11 +1874,13 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 		goto cleanup;
 	}
 
+	CHECK(setting_get_str("fake_mname", ldap_inst->local_settings,
+			      &fake_mname));
 	for (entry = HEAD(ldap_qresult->ldap_entries);
 		entry != NULL;
 		entry = NEXT(entry, link)) {
 		CHECK(ldap_parse_rrentry(mctx, entry, ldap_qresult,
-				   origin, ldap_inst->fake_mname,
+				   origin, fake_mname,
 				   string, rdatalist));
 	}
 
@@ -1864,7 +1904,7 @@ cleanup:
 static isc_result_t
 add_soa_record(isc_mem_t *mctx, ldap_qresult_t *qresult, dns_name_t *origin,
 	       ldap_entry_t *entry, ldapdb_rdatalist_t *rdatalist,
-	       const ld_string_t *fake_mname)
+	       const char *fake_mname)
 {
 	isc_result_t result;
 	ld_string_t *string = NULL;
@@ -2122,6 +2162,7 @@ ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
 	sasl_interact_t *in;
 	ldap_instance_t *ldap_inst = defaults;
 	int ret = LDAP_OTHER;
+	isc_result_t result;
 
 	REQUIRE(ldap_inst != NULL);
 	UNUSED(flags);
@@ -2134,36 +2175,47 @@ ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
 		switch (in->id) {
 		case SASL_CB_USER:
 			log_debug(4, "got request for SASL_CB_USER");
-			in->result = str_buf(ldap_inst->sasl_user);
-			in->len = str_len(ldap_inst->sasl_user);
+			CHECK(setting_get_str("sasl_user",
+					      ldap_inst->global_settings,
+					      (const char **)&in->result));
+			in->len = strlen(in->result);
 			ret = LDAP_SUCCESS;
 			break;
 		case SASL_CB_GETREALM:
 			log_debug(4, "got request for SASL_CB_GETREALM");
-			in->result = str_buf(ldap_inst->sasl_realm);
-			in->len = str_len(ldap_inst->sasl_realm);
+			CHECK(setting_get_str("sasl_realm",
+					      ldap_inst->global_settings,
+					      (const char **)&in->result));
+			in->len = strlen(in->result);
 			ret = LDAP_SUCCESS;
 			break;
 		case SASL_CB_AUTHNAME:
 			log_debug(4, "got request for SASL_CB_AUTHNAME");
-			in->result = str_buf(ldap_inst->sasl_auth_name);
-			in->len = str_len(ldap_inst->sasl_auth_name);
+			CHECK(setting_get_str("sasl_auth_name",
+					      ldap_inst->global_settings,
+					      (const char **)&in->result));
+			in->len = strlen(in->result);
 			ret = LDAP_SUCCESS;
 			break;
 		case SASL_CB_PASS:
 			log_debug(4, "got request for SASL_CB_PASS");
-			in->result = str_buf(ldap_inst->sasl_password);
-			in->len = str_len(ldap_inst->sasl_password);
+			CHECK(setting_get_str("sasl_password",
+					      ldap_inst->global_settings,
+					      (const char **)&in->result));
+			in->len = strlen(in->result);
 			ret = LDAP_SUCCESS;
 			break;
 		default:
-			in->result = NULL;
-			in->len = 0;
-			ret = LDAP_OTHER;
+			goto cleanup;
 		}
 	}
 
 	return ret;
+
+cleanup:
+	in->result = NULL;
+	in->len = 0;
+	return LDAP_OTHER;
 }
 
 /*
@@ -2174,16 +2226,20 @@ static isc_result_t
 ldap_connect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 	     isc_boolean_t force)
 {
-	LDAP *ld;
+	LDAP *ld = NULL;
 	int ret;
 	int version;
 	struct timeval timeout;
 	isc_result_t result = ISC_R_FAILURE;
+	const char *uri = NULL;
+	const char *ldap_hostname = NULL;
+	isc_uint32_t timeout_sec;
 
 	REQUIRE(ldap_inst != NULL);
 	REQUIRE(ldap_conn != NULL);
 
-	ret = ldap_initialize(&ld, str_buf(ldap_inst->uri));
+	CHECK(setting_get_str("uri", ldap_inst->local_settings, &uri));
+	ret = ldap_initialize(&ld, uri);
 	if (ret != LDAP_SUCCESS) {
 		log_error("LDAP initialization failed: %s",
 			  ldap_err2string(ret));
@@ -2194,15 +2250,18 @@ ldap_connect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 	ret = ldap_set_option(ld, LDAP_OPT_PROTOCOL_VERSION, &version);
 	LDAP_OPT_CHECK(ret, "failed to set LDAP version");
 
-	timeout.tv_sec = ldap_inst->timeout;
+	CHECK(setting_get_uint("timeout", ldap_inst->global_settings,
+			       &timeout_sec));
+	timeout.tv_sec = timeout_sec;
 	timeout.tv_usec = 0;
 
 	ret = ldap_set_option(ld, LDAP_OPT_TIMEOUT, &timeout);
 	LDAP_OPT_CHECK(ret, "failed to set timeout");
 
-	if (str_len(ldap_inst->ldap_hostname) > 0) {
-		ret = ldap_set_option(ld, LDAP_OPT_HOST_NAME,
-				      str_buf(ldap_inst->ldap_hostname));
+	CHECK(setting_get_str("ldap_hostname", ldap_inst->local_settings,
+			      &ldap_hostname));
+	if (strlen(ldap_hostname) > 0) {
+		ret = ldap_set_option(ld, LDAP_OPT_HOST_NAME, ldap_hostname);
 		LDAP_OPT_CHECK(ret, "failed to set LDAP_OPT_HOST_NAME");
 	}
 
@@ -2231,9 +2290,16 @@ static isc_result_t
 ldap_reconnect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 	       isc_boolean_t force)
 {
+	isc_result_t result;
 	int ret = 0;
 	const char *bind_dn = NULL;
 	const char *password = NULL;
+	const char *uri = NULL;
+	const char *sasl_mech = NULL;
+	const char *krb5_principal = NULL;
+	const char *krb5_keytab = NULL;
+	ldap_auth_t auth_method_enum = AUTH_INVALID;
+	isc_uint32_t reconnect_interval;
 
 	if (force)
 		goto force_reconnect;
@@ -2251,9 +2317,11 @@ ldap_reconnect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 
 	/* If either bind_dn or the password is not set, we will use
 	 * password-less bind. */
-	if (str_len(ldap_inst->bind_dn) > 0 && str_len(ldap_inst->password) > 0) {
-		bind_dn = str_buf(ldap_inst->bind_dn);
-		password = str_buf(ldap_inst->password);
+	CHECK(setting_get_str("bind_dn", ldap_inst->global_settings, &bind_dn));
+	CHECK(setting_get_str("password", ldap_inst->global_settings, &password));
+	if (strlen(bind_dn) == 0 || strlen(password) == 0) {
+		bind_dn = NULL;
+		password = NULL;
 	}
 
 	/* Set the next possible reconnect time. */
@@ -2265,17 +2333,22 @@ ldap_reconnect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 		const size_t ntimes = sizeof(intervals) / sizeof(intervals[0]);
 
 		i = ISC_MIN(ntimes - 1, ldap_conn->tries);
-		seconds = ISC_MIN(intervals[i], ldap_inst->reconnect_interval);
+		CHECK(setting_get_uint("reconnect_interval",
+				       ldap_inst->global_settings,
+				       &reconnect_interval));
+		seconds = ISC_MIN(intervals[i], reconnect_interval);
 		isc_interval_set(&delay, seconds, 0);
 		isc_time_nowplusinterval(&ldap_conn->next_reconnect, &delay);
 	}
 
 	ldap_conn->tries++;
 force_reconnect:
-	log_debug(2, "trying to establish LDAP connection to %s",
-		  str_buf(ldap_inst->uri));
+	CHECK(setting_get_str("uri", ldap_inst->local_settings, &uri));
+	log_debug(2, "trying to establish LDAP connection to %s", uri);
 
-	switch (ldap_inst->auth_method) {
+	CHECK(setting_get_uint("auth_method_enum", ldap_inst->local_settings,
+			       &auth_method_enum));
+	switch (auth_method_enum) {
 	case AUTH_NONE:
 		ret = ldap_simple_bind_s(ldap_conn->handle, NULL, NULL);
 		break;
@@ -2283,21 +2356,29 @@ force_reconnect:
 		ret = ldap_simple_bind_s(ldap_conn->handle, bind_dn, password);
 		break;
 	case AUTH_SASL:
-		if (strcmp(str_buf(ldap_inst->sasl_mech), "GSSAPI") == 0) {
+		CHECK(setting_get_str("sasl_mech", ldap_inst->local_settings,
+				      &sasl_mech));
+		if (strcmp(sasl_mech, "GSSAPI") == 0) {
 			isc_result_t result;
+			CHECK(setting_get_str("krb5_principal",
+					      ldap_inst->local_settings,
+					      &krb5_principal));
+			CHECK(setting_get_str("krb5_keytab",
+					      ldap_inst->local_settings,
+					      &krb5_keytab));
 			LOCK(&ldap_inst->kinit_lock);
 			result = get_krb5_tgt(ldap_inst->mctx,
-					      str_buf(ldap_inst->krb5_principal),
-					      str_buf(ldap_inst->krb5_keytab));
+					      krb5_principal,
+					      krb5_keytab);
 			UNLOCK(&ldap_inst->kinit_lock);
 			if (result != ISC_R_SUCCESS)
 				return ISC_R_NOTCONNECTED;
 		}
 
-		log_debug(4, "trying interactive bind using %s mechanism",
-			  str_buf(ldap_inst->sasl_mech));
+		log_debug(4, "trying interactive bind using '%s' mechanism",
+			  sasl_mech);
 		ret = ldap_sasl_interactive_bind_s(ldap_conn->handle, NULL,
-						   str_buf(ldap_inst->sasl_mech),
+						   sasl_mech,
 						   NULL, NULL, LDAP_SASL_QUIET,
 						   ldap_sasl_interact,
 						   ldap_inst);
@@ -2336,6 +2417,9 @@ force_reconnect:
 	ldap_conn->tries = 0;
 
 	return ISC_R_SUCCESS;
+
+cleanup:
+	return result;
 }
 
 static isc_result_t
@@ -2704,30 +2788,33 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	isc_result_t result;
 	isc_mem_t *mctx = ldap_inst->mctx;
 	ldap_connection_t *ldap_conn = NULL;
-	ldap_qresult_t *ldap_qresult = NULL;
 	ld_string_t *owner_dn = NULL;
 	LDAPMod *change[3] = { NULL };
 	LDAPMod *change_ptr = NULL;
 	ldap_cache_t *cache = NULL;
-	ldap_entry_t *entry;
-	ldap_valuelist_t values;
-	isc_boolean_t zone_dyn_update = ldap_inst->dyn_update;
-	isc_boolean_t zone_sync_ptr = ldap_inst->sync_ptr;
+	isc_boolean_t zone_dyn_update;
+	isc_boolean_t zone_sync_ptr;
 	ld_string_t *owner_dn_ptr = NULL;
-	char *attrs[] = {"idnsAllowSyncPTR", "idnsAllowDynUpdate", NULL};
 	ld_string_t *str_ptr = NULL;
 	ldapdb_rdatalist_t rdlist_search;
 	dns_rdatalist_t *rdlist_ptr = NULL;
 	char **vals = NULL;
+	dns_name_t zone_name;
+	struct dns_fixedname ptr_name;
+	char *zone_dn = NULL;
+	settings_set_t *zone_settings = NULL;
 
 	/*
 	 * Find parent zone entry and check if Dynamic Update is allowed.
 	 * @todo Try the cache first and improve split: SOA records are problematic.
 	 */
 	ISC_LIST_INIT(rdlist_search);
+	dns_name_init(&zone_name, NULL);
+	dns_fixedname_init(&ptr_name);
 	CHECK(str_new(mctx, &owner_dn));
+
 	CHECK(dnsname_to_dn(ldap_inst->zone_register, owner, owner_dn));
-	char *zone_dn = strstr(str_buf(owner_dn),", ");
+	zone_dn = strstr(str_buf(owner_dn),", ");
 
 	if (zone_dn == NULL) { /* SOA record; owner = zone => owner_dn = zone_dn */
 		zone_dn = (char *)str_buf(owner_dn);
@@ -2735,38 +2822,31 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		zone_dn += 1; /* skip whitespace */
 	}
 
-	CHECK(ldap_pool_getconnection(ldap_inst->pool, &ldap_conn));
-	CHECK(ldap_query(ldap_inst, ldap_conn, &ldap_qresult, zone_dn,
-					 LDAP_SCOPE_BASE, attrs, 0,
-					 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
+	CHECK(dn_to_dnsname(mctx, zone_dn, &zone_name, NULL));
 
-	/* only 0 or 1 active zone can be returned from query */
-	entry = HEAD(ldap_qresult->ldap_entries);
-	if (entry == NULL) {
-		log_debug(3, "Active zone %s not found", zone_dn);
-		result = DNS_R_NOTAUTH;
-		goto cleanup;
+	result = zr_get_zone_settings(ldap_inst->zone_register, &zone_name,
+				      &zone_settings);
+	if (result != ISC_R_SUCCESS) {
+		if (result == ISC_R_NOTFOUND)
+			log_debug(3, "active zone '%s' not found", zone_dn);
+		CLEANUP_WITH(DNS_R_NOTAUTH);
 	}
 
-	result = ldap_entry_getvalues(entry, "idnsAllowDynUpdate", &values);
-	if (result == ISC_R_SUCCESS) { /* zone specific setting found */
-		zone_dyn_update = (strcmp(HEAD(values)->value, "TRUE") == 0 )
-			? ISC_TRUE : ISC_FALSE;
-	}
-
+	CHECK(setting_get_bool("dyn_update", zone_settings, &zone_dyn_update));
 	if (!zone_dyn_update) {
-		log_debug(3, "Dynamic Update is not allowed in zone %s", zone_dn);
-		result = DNS_R_REFUSED;
-		goto cleanup;
+		log_debug(3, "dynamic update is not allowed in zone '%s'",
+			  zone_dn);
+		CLEANUP_WITH(DNS_R_REFUSED);
 	}
 
-	if (rdlist->type == dns_rdatatype_soa && mod_op == LDAP_MOD_DELETE) {
-		result = ISC_R_SUCCESS;
-		goto cleanup;
-	}
+	if (rdlist->type == dns_rdatatype_soa && mod_op == LDAP_MOD_DELETE)
+		CLEANUP_WITH(ISC_R_SUCCESS);
+
 	/* Flush modified record from the cache */
 	CHECK(zr_get_zone_cache(ldap_inst->zone_register, owner, &cache));
 	CHECK(discard_from_cache(cache, owner));
+
+	CHECK(ldap_pool_getconnection(ldap_inst->pool, &ldap_conn));
 
 	if (rdlist->type == dns_rdatatype_soa) {
 		result = modify_soa_record(ldap_inst, ldap_conn, str_buf(owner_dn),
@@ -2789,18 +2869,12 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		 * use global plugin configuration: option "sync_ptr"
 		 */
 
-		result = ldap_entry_getvalues(entry, "idnsAllowSyncPTR", &values);
-		if (result == ISC_R_SUCCESS) { /* zone specific setting found */
-			zone_sync_ptr = (strcmp(HEAD(values)->value, "TRUE") == 0)
-				? ISC_TRUE : ISC_FALSE;
-		}
-
+		CHECK(setting_get_bool("sync_ptr", zone_settings, &zone_sync_ptr));
 		if (!zone_sync_ptr) {
-			log_debug(3, "Sync PTR is not allowed in zone %s", zone_dn);
-			result = ISC_R_SUCCESS;
-			goto cleanup;
+			log_debug(3, "sync PTR is not allowed in zone '%s'", zone_dn);
+			CLEANUP_WITH(ISC_R_SUCCESS);
 		}
-		log_debug(3, "Sync PTR is allowed for zone %s", zone_dn);
+		log_debug(3, "sync PTR is allowed for zone '%s'", zone_dn);
 
 		/* Get string with IP address from change request
 		 * and convert it to in_addr structure. */
@@ -2824,13 +2898,11 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		 * 192.168.0.1 -> 1.0.168.192.in-addr.arpa
 		 *
 		 * @todo Check if it works for IPv6 correctly.
-		 */ 
-		struct dns_fixedname name;
-		dns_fixedname_init(&name);
-		CHECK(dns_byaddr_createptrname2(&isc_ip, 0, dns_fixedname_name(&name)));
+		 */
+		CHECK(dns_byaddr_createptrname2(&isc_ip, 0, dns_fixedname_name(&ptr_name)));
 	   
 		/* Find PTR entry in LDAP. */
-		result = ldapdb_rdatalist_get(mctx, ldap_inst, dns_fixedname_name(&name), 
+		result = ldapdb_rdatalist_get(mctx, ldap_inst, dns_fixedname_name(&ptr_name),
 									  NULL, &rdlist_search); 
 	
 		/* Check the value of PTR entry. */	
@@ -2840,10 +2912,8 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		}
 
 		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {
-			log_error("Can not synchronize PTR record, ldapdb_rdatalist_get = %d", 
-			          result);
-			result = ISC_R_FAILURE; /* Synchronization required: report error. */
-			goto cleanup;
+			log_error_r("can not synchronize PTR record, ldapdb_rdatalist_get");
+			CLEANUP_WITH(ISC_R_FAILURE); /* Synchronization required: report error. */
 		}
 
 		/* 
@@ -2859,9 +2929,9 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		}
 
 		/* Get LDAP entry indentifier. */ 
-		CHECK(str_new(mctx, &owner_dn_ptr));   
-		CHECK(dnsname_to_dn(ldap_inst->zone_register, dns_fixedname_name(&name),
-		      owner_dn_ptr));
+		CHECK(str_new(mctx, &owner_dn_ptr));
+		CHECK(dnsname_to_dn(ldap_inst->zone_register, dns_fixedname_name(&ptr_name),
+				    owner_dn_ptr));
 	
 		/*
 		 * @example 
@@ -2871,34 +2941,26 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		char *owner_zone_dn_ptr = strstr(str_buf(owner_dn_ptr),", ") + 1;
 		
 		/* Get attribute "idnsAllowDynUpdate" for reverse zone or use default. */
-		ldap_query_free(ISC_FALSE, &ldap_qresult);
-		zone_dyn_update = ldap_inst->dyn_update;
-		CHECK(ldap_query(ldap_inst, ldap_conn, &ldap_qresult, owner_zone_dn_ptr,
-						 LDAP_SCOPE_BASE, attrs, 0,
-						 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
+		dns_name_free(&zone_name, mctx);
+		dns_name_init(&zone_name, NULL);
+		CHECK(dn_to_dnsname(mctx, owner_zone_dn_ptr, &zone_name, NULL));
 
-		/* Only 0 or 1 active zone can be returned from query. */
-		entry = HEAD(ldap_qresult->ldap_entries);
-		if (entry == NULL) {
-			log_debug(3, "Active zone %s not found", zone_dn);
-			result = ISC_R_NOTFOUND;
+		zone_settings = NULL;
+		result = zr_get_zone_settings(ldap_inst->zone_register, &zone_name,
+					      &zone_settings);
+		if (result != ISC_R_SUCCESS) {
+			if (result == ISC_R_NOTFOUND)
+				log_debug(3, "active zone '%s' not found", zone_dn);
 			goto cleanup;
 		}
 
-		result = ldap_entry_getvalues(entry, "idnsAllowDynUpdate", &values);
-		if (result == ISC_R_SUCCESS) { /* zone specific setting found */
-			zone_dyn_update = (strcmp(HEAD(values)->value, "TRUE") == 0)
-				? ISC_TRUE : ISC_FALSE;
-		}
-
+		CHECK(setting_get_bool("dyn_update", zone_settings, &zone_dyn_update));
 		if (!zone_dyn_update) {
-			log_debug(3, "Dynamic Update is not allowed in zone %s", owner_zone_dn_ptr);
-			result = ISC_R_NOPERM;
-			goto cleanup;
+			log_debug(3, "dynamic update is not allowed in zone "
+				     "'%s'", zone_dn);
+			CLEANUP_WITH(ISC_R_NOPERM);
 		}
 
-		log_debug(3, "Dynamic Update is allowed for zone %s", owner_zone_dn_ptr);
-		
 		/* 
 		 * Get string representation of PTR record value.
 		 * 
@@ -2956,15 +3018,15 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		change_ptr = NULL;
 
 		/* Modify PTR record. */
-		CHECK(ldap_modify_do(ldap_inst, ldap_conn, str_buf(owner_dn_ptr), change, delete_node));
+		CHECK(ldap_modify_do(ldap_inst, ldap_conn, str_buf(owner_dn_ptr),
+				     change, delete_node));
 		cache = NULL;
 		CHECK(zr_get_zone_cache(ldap_inst->zone_register,
-					dns_fixedname_name(&name), &cache));
-		CHECK(discard_from_cache(cache, dns_fixedname_name(&name)));
+					dns_fixedname_name(&ptr_name), &cache));
+		CHECK(discard_from_cache(cache, dns_fixedname_name(&ptr_name)));
 	}
 
 cleanup:
-	ldap_query_free(ISC_FALSE, &ldap_qresult);
 	ldap_pool_putconnection(ldap_inst->pool, &ldap_conn);
 	str_destroy(&owner_dn_ptr);
 	str_destroy(&owner_dn);
@@ -2974,6 +3036,7 @@ cleanup:
 	if (change_ptr != NULL) free_ldapmod(mctx, &change_ptr);
 	ldapdb_rdatalist_destroy(mctx, &rdlist_search);
 	free_char_array(mctx, &vals);
+	dns_name_free(&zone_name, mctx);
 
 	return result;
 }
@@ -3280,7 +3343,8 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	dns_name_t prevname;
 	char *attrs_zone[] = {
 		"idnsName", "idnsUpdatePolicy", "idnsAllowQuery",
-		"idnsAllowTransfer", "idnsForwardPolicy", "idnsForwarders", NULL
+		"idnsAllowTransfer", "idnsForwardPolicy", "idnsForwarders",
+		"idnsAllowDynUpdate", "idnsAllowSyncPTR", NULL
 	};
 	char *attrs_record[] = {
 			"objectClass", "dn", NULL
@@ -3416,7 +3480,8 @@ update_record(isc_task_t *task, isc_event_t *event)
 	ldap_psearchevent_t *pevent = (ldap_psearchevent_t *)event;
 	isc_result_t result;
 	ldap_instance_t *inst = NULL;
-	ldap_cache_t *cache;
+	ldap_cache_t *cache = NULL;
+	isc_boolean_t serial_autoincrement;
 	isc_mem_t *mctx;
 	dns_zone_t *zone_ptr = NULL;
 	isc_boolean_t zone_found = ISC_FALSE;
@@ -3430,6 +3495,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 	ldapdb_rdatalist_t rdatalist;
 
 	/* Convert domain name from text to struct dns_name_t. */
+	settings_set_t *zone_settings = NULL;
 	dns_name_t name;
 	dns_name_t origin;
 	dns_name_t prevname;
@@ -3494,8 +3560,12 @@ update_restart:
 	}
 
 	/* Do not bump serial during initial database dump. */
-	if (inst->serial_autoincrement && PSEARCH_ANY(pevent->chgtype)) {
-		CHECK(soa_serial_increment(mctx, inst, &origin));
+	if (PSEARCH_ANY(pevent->chgtype)) {
+		CHECK(zr_get_zone_settings(inst->zone_register, &origin, &zone_settings));
+		CHECK(setting_get_bool("serial_autoincrement", zone_settings,
+				       &serial_autoincrement));
+		if (serial_autoincrement)
+			CHECK(soa_serial_increment(mctx, inst, &origin));
 	}
 
 cleanup:
@@ -3770,6 +3840,9 @@ ldap_psearch_watcher(isc_threadarg_t arg)
 	isc_result_t result;
 	sigset_t sigset;
 	isc_boolean_t flush_required;
+	isc_boolean_t psearch;
+	isc_uint32_t reconnect_interval;
+	const char *base = NULL;
 
 	log_debug(1, "Entering ldap_psearch_watcher");
 
@@ -3797,10 +3870,12 @@ ldap_psearch_watcher(isc_threadarg_t arg)
 	/* Try to connect. */
 	while (conn->handle == NULL) {
 		CHECK_EXIT;
+		CHECK(setting_get_uint("reconnect_interval", inst->global_settings,
+				       &reconnect_interval));
 
 		log_error("ldap_psearch_watcher handle is NULL. "
-		          "Next try in %ds", inst->reconnect_interval);
-		if (!sane_sleep(inst, inst->reconnect_interval))
+		          "Next try in %ds", reconnect_interval);
+		if (!sane_sleep(inst, reconnect_interval))
 			goto cleanup;
 		handle_connection_error(inst, conn, ISC_TRUE);
 	}
@@ -3811,10 +3886,12 @@ restart:
 	/* Perform initial lookup */
 	ldap_query_free(ISC_TRUE, &ldap_qresult);
 	flush_required = ISC_TRUE;
-	if (inst->psearch) {
+	CHECK(setting_get_str("base", inst->global_settings, &base));
+	CHECK(setting_get_bool("psearch", inst->global_settings, &psearch));
+	if (psearch) {
 		log_debug(1, "Sending initial psearch lookup");
 		ret = ldap_search_ext(conn->handle,
-				      str_buf(inst->base),
+				      base,
 				      LDAP_SCOPE_SUBTREE,
 					  /*
 					   * (objectClass==idnsZone AND idnsZoneActive==TRUE) 
@@ -3841,10 +3918,14 @@ restart:
 			CHECK_EXIT;
 			while (handle_connection_error(inst, conn, ISC_TRUE)
 			       != ISC_R_SUCCESS) {
-				log_error("ldap_psearch_watcher failed to handle "
-					  "LDAP connection error. Reconnection "
-					  "in %ds", inst->reconnect_interval);
-				if (!sane_sleep(inst, inst->reconnect_interval))
+				CHECK(setting_get_uint("reconnect_interval",
+						       inst->global_settings,
+						       &reconnect_interval));
+				log_error("ldap_psearch_watcher failed to "
+					  "handle LDAP connection error. "
+					  "Reconnection in %ds",
+					  reconnect_interval);
+				if (!sane_sleep(inst, reconnect_interval))
 					goto cleanup;
 			}
 			goto restart;
@@ -3865,7 +3946,10 @@ restart:
 			}
 
 			if (restart_needed) {
-				if (!sane_sleep(inst, inst->reconnect_interval))
+				CHECK(setting_get_uint("reconnect_interval",
+						       inst->global_settings,
+						       &reconnect_interval));
+				if (!sane_sleep(inst, reconnect_interval))
 					goto cleanup;
 
 				goto restart;
@@ -3933,3 +4017,8 @@ cleanup:
 	return (isc_threadresult_t)0;
 }
 
+settings_set_t *
+ldap_instance_getsettings_local(ldap_instance_t *ldap_inst)
+{
+	return ldap_inst->local_settings;
+}

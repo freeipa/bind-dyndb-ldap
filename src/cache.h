@@ -23,6 +23,7 @@
 #define _LD_CACHE_H_
 
 #include "types.h"
+#include "settings.h"
 
 typedef struct ldap_cache ldap_cache_t;
 
@@ -30,8 +31,7 @@ typedef struct ldap_cache ldap_cache_t;
  * Create a new cache.
  */
 isc_result_t
-new_ldap_cache(isc_mem_t *mctx, const isc_interval_t *cache_ttl,
-	       const isc_boolean_t *psearch, ldap_cache_t **cachep);
+new_ldap_cache(isc_mem_t *mctx, settings_set_t *set, ldap_cache_t **cachep);
 
 /*
  * Free all resources used up by the cache.

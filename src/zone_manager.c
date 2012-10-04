@@ -31,6 +31,7 @@
 #include <dns/zone.h>
 
 #include <string.h>
+#include <unistd.h>
 
 #include "ldap_convert.h"
 #include "ldap_helper.h"
@@ -112,18 +113,13 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 {
 	isc_result_t result;
 	db_instance_t *db_inst = NULL;
-	unsigned int zone_refresh;
+	isc_uint32_t zone_refresh;
 	isc_boolean_t psearch;
 	isc_timermgr_t *timer_mgr;
 	isc_interval_t interval;
 	isc_timertype_t timer_type = isc_timertype_inactive;
 	isc_task_t *task;
-	setting_t manager_settings[] = {
-		{ "zone_refresh", default_uint(0) },
-		{ "psearch", default_boolean(0) },
-		{ "verbose_checks", default_boolean(0) },
-		end_of_settings
-	};
+	settings_set_t *local_settings = NULL;
 
 	REQUIRE(name != NULL);
 	REQUIRE(dyndb_args != NULL);
@@ -136,12 +132,6 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 		log_error("LDAP instance '%s' already exists", name);
 		CLEANUP_WITH(ISC_R_EXISTS);
 	}
-
-	/* Parse settings. */
-	manager_settings[0].target = &zone_refresh;
-	manager_settings[1].target = &psearch;
-	manager_settings[2].target = &verbose_checks; /* global variable */
-	CHECK(set_settings(manager_settings, argv));
 
 	CHECKED_MEM_GET_PTR(mctx, db_inst);
 	ZERO_PTR(db_inst);
@@ -157,12 +147,13 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 	 *
 	 * Timer must exist before refresh_zones_from_ldap() is called. */
 	timer_mgr = dns_dyndb_get_timermgr(dyndb_args);
-	isc_interval_set(&interval, zone_refresh, 0);
 
-	if (zone_refresh && psearch) {
-		log_error("Zone refresh and persistent search are enabled at same time! "
-				"Only persistent search will be used.");
-	}
+	local_settings = ldap_instance_getsettings_local(db_inst->ldap_inst);
+	CHECK(setting_get_uint("zone_refresh", local_settings, &zone_refresh));
+	CHECK(setting_get_bool("psearch", local_settings, &psearch));
+	CHECK(setting_get_bool("verbose_checks", local_settings, &verbose_checks));
+
+	isc_interval_set(&interval, zone_refresh, 0);
 
 	if (zone_refresh && !psearch) {
 		timer_type = isc_timertype_ticker;

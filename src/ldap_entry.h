@@ -107,7 +107,7 @@ ldap_entry_nextrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
 		      dns_rdatatype_t *rdtype);
 
 isc_result_t
-ldap_entry_getfakesoa(ldap_entry_t *entry, const ld_string_t *fake_mname,
+ldap_entry_getfakesoa(ldap_entry_t *entry, const char *fake_mname,
 		      ld_string_t *target);
 
 /*
