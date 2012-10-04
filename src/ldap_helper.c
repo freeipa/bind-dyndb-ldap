@@ -2493,11 +2493,16 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	isc_boolean_t zone_sync_ptr = ldap_inst->sync_ptr;
 	ld_string_t *owner_dn_ptr = NULL;
 	char *attrs[] = {"idnsAllowSyncPTR", "idnsAllowDynUpdate", NULL};
+	ld_string_t *str_ptr = NULL;
+	ldapdb_rdatalist_t rdlist_search;
+	dns_rdatalist_t *rdlist_ptr = NULL;
+	char **vals = NULL;
 
 	/*
 	 * Find parent zone entry and check if Dynamic Update is allowed.
 	 * @todo Try the cache first and improve split: SOA records are problematic.
 	 */
+	ISC_LIST_INIT(rdlist_search);
 	CHECK(str_new(mctx, &owner_dn));
 	CHECK(dnsname_to_dn(ldap_inst->zone_register, owner, owner_dn));
 	char *zone_dn = strstr(str_buf(owner_dn),", ");
@@ -2603,8 +2608,6 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		CHECK(dns_byaddr_createptrname2(&isc_ip, 0, dns_fixedname_name(&name)));
 	   
 		/* Find PTR entry in LDAP. */
-		ldapdb_rdatalist_t rdlist_search;
-		dns_rdatalist_t *rdlist_ptr = NULL;
 		result = ldapdb_rdatalist_get(mctx, ldap_inst, dns_fixedname_name(&name), 
 									  NULL, &rdlist_search); 
 	
@@ -2679,7 +2682,6 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		 * 
 		 * @example str_ptr = "host.example.com." 
 		 */
-		ld_string_t *str_ptr = NULL;
 		CHECK(str_new(mctx, &str_ptr));
 		CHECK(dn_to_text(str_buf(owner_dn), str_ptr, NULL));
 		 
@@ -2696,7 +2698,6 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		 *
 		 */ 
 		if (mod_op == LDAP_MOD_DELETE) {
-			char **vals = NULL;
 			CHECK(ldap_rdata_to_char_array(mctx, HEAD(rdlist_ptr->rdata), &vals));
 			if (vals != NULL && vals[0] != NULL && strcmp(vals[0], str_buf(str_ptr)) != 0) {
 				log_debug(3,"Cannot delete PTR record, unexpected value found "
@@ -2743,9 +2744,12 @@ cleanup:
 	ldap_pool_putconnection(ldap_inst->pool, &ldap_conn);
 	str_destroy(&owner_dn_ptr);
 	str_destroy(&owner_dn);
+	str_destroy(&str_ptr);
 	free_ldapmod(mctx, &change[0]);
 	free_ldapmod(mctx, &change[1]);
 	if (change_ptr != NULL) free_ldapmod(mctx, &change_ptr);
+	ldapdb_rdatalist_destroy(mctx, &rdlist_search);
+	free_char_array(mctx, &vals);
 
 	return result;
 }
