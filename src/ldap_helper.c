@@ -3059,7 +3059,6 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	ldap_qresult_t *ldap_qresult_record = NULL;
 	ldap_entry_t *entry_zone = NULL;
 	ldap_entry_t *entry_record = NULL;
-	isc_boolean_t delete = ISC_TRUE;
 	isc_mem_t *mctx;
 	dns_name_t prevname;
 	char *attrs_zone[] = {
@@ -3076,14 +3075,16 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	dns_name_init(&prevname, NULL);
 
 	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
-	CHECK(ldap_query(inst, NULL, &ldap_qresult_zone, pevent->dn,
-			 LDAP_SCOPE_BASE, attrs_zone, 0,
-			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
 
-	for (entry_zone = HEAD(ldap_qresult_zone->ldap_entries);
-			entry_zone != NULL;
-			entry_zone = NEXT(entry_zone, link)) {
-		delete = ISC_FALSE;
+	result = ldap_query(inst, NULL, &ldap_qresult_zone, pevent->dn,
+			 LDAP_SCOPE_BASE, attrs_zone, 0,
+			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))");
+	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
+		CLEANUP_WITH(result);
+
+	if (result == ISC_R_SUCCESS &&
+	    HEAD(ldap_qresult_zone->ldap_entries) != NULL) {
+		entry_zone = HEAD(ldap_qresult_zone->ldap_entries);
 		CHECK(ldap_parse_zoneentry(entry_zone, inst));
 
 		if (PSEARCH_MODDN(pevent->chgtype)) {
@@ -3109,10 +3110,9 @@ update_zone(isc_task_t *task, isc_event_t *event)
 		}
 
 		INSIST(NEXT(entry_zone, link) == NULL); /* no multiple zones with same DN */
-	}
-
-	if (delete)
+	} else {
 		CHECK(ldap_delete_zone(inst, pevent->dn, ISC_TRUE));
+	}
 
 cleanup:
 	if (result != ISC_R_SUCCESS)
