@@ -1034,6 +1034,7 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	isc_result_t result;
 	isc_boolean_t unlock = ISC_FALSE;
 	isc_boolean_t publish = ISC_FALSE;
+	isc_boolean_t published = ISC_FALSE;
 	isc_task_t *task = inst->task;
 	isc_uint32_t ldap_serial;
 	isc_uint32_t zr_serial;	/* SOA serial value from in-memory zone register */
@@ -1077,12 +1078,13 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 
 	/* Check if we are already serving given zone */
 	result = zr_get_zone_ptr(inst->zone_register, &name, &zone);
-	if (result != ISC_R_SUCCESS) { /* TODO: What about other errors? */
+	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
 		CHECK(create_zone(inst, &name, &zone));
 		CHECK(zr_add_zone(inst->zone_register, zone, dn));
 		publish = ISC_TRUE;
 		log_debug(2, "created zone %p: %s", zone, dn);
-	}
+	} else if (result != ISC_R_SUCCESS)
+		CLEANUP_WITH(result);
 
 	log_debug(2, "Setting SSU table for %p: %s", zone, dn);
 	/* Get the update policy and update the zone with it. */
@@ -1122,6 +1124,7 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	if (publish) {
 		/* Everything is set correctly, publish zone */
 		CHECK(publish_zone(inst, zone));
+		published = ISC_TRUE;
 	}
 
 	/*
@@ -1181,6 +1184,13 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	}
 
 cleanup:
+	if (publish && !published) { /* Failure in ACL parsing or so. */
+		log_error_r("zone '%s': publishing failed, rolling back due to",
+			    entry->dn);
+		result = zr_del_zone(inst->zone_register, &name);
+		if (result != ISC_R_SUCCESS)
+			log_error_r("zone '%s': rollback failed", entry->dn);
+	}
 	if (unlock)
 		isc_task_endexclusive(task);
 	if (dns_name_dynamic(&name))
