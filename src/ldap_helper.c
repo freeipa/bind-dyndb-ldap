@@ -818,10 +818,9 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock)
 	}
 
 	result = zr_get_zone_ptr(inst->zone_register, name, &zone);
-	if (result == ISC_R_NOTFOUND) {
+	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
 		log_debug(1, "zone '%s' not found in zone register", zone_name_char);
-		result = ISC_R_SUCCESS;
-		goto cleanup;
+		CLEANUP_WITH(ISC_R_SUCCESS);
 	} else if (result != ISC_R_SUCCESS)
 		goto cleanup;
 
