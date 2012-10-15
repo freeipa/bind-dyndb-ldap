@@ -1,3 +1,37 @@
+2.0
+======
+[1] SOA serial number can be incremented automatically after each change
+    in LDAP database. (Configuration option "serial_autoincrement".)
+
+[2] It was possible to DoS named service via quiery which contained
+    $ character. CVE-2012-3429 was fixed.
+
+[3] DNS Dynamic Update returns codes NOTAUTH and REFUSED properly.
+
+[4] BIND doesn't refuse to start if initial connection times out.
+
+[5] Object renaming (LDAP moddn) in persistent mode is handled properly.
+
+[6] Internal record cache is flushed properly after reconnection
+    to the LDAP server (in configurations with persistent search).
+
+[7] Simple time-based deadlock detection code was added. Error message
+    is printed after 10*(timeout) seconds.
+    Some deadlocks in various situations with low connection count were fixed.
+
+[8] Libdns interface version >= 90 is supported properly.
+
+[9] Zone transfers were fixed. Records with non-FQDNs are handled properly.
+
+[10] Logging was improved.
+
+[11] Memory leaks in dynamic update, persistent search, ldap_query
+     and configurations with multiple plugin instances were fixed.
+
+[12] Version numbering format changed to: [features].[bugfixes]
+
+[13] Many other bugfixes
+
 1.1.0rc1
 ======
 
