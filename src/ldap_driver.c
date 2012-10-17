@@ -52,6 +52,12 @@
 #include "util.h"
 #include "zone_manager.h"
 
+#ifdef HAVE_VISIBILITY
+#define VISIBLE __attribute__((__visibility__("default")))
+#else
+#define VISIBLE
+#endif
+
 #define LDAPDB_MAGIC			ISC_MAGIC('L', 'D', 'P', 'D')
 #define VALID_LDAPDB(ldapdb) \
 	((ldapdb) != NULL && (ldapdb)->common.impmagic == LDAPDB_MAGIC)
@@ -1315,7 +1321,7 @@ static dns_dbimplementation_t *ldapdb_imp;
 const char *ldapdb_impname = "dynamic-ldap";
 
 
-isc_result_t
+VISIBLE isc_result_t
 dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 		    dns_dyndb_arguments_t *dyndb_args)
 {
@@ -1360,7 +1366,7 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 	return result;
 }
 
-void
+VISIBLE void
 dynamic_driver_destroy(void)
 {
 	/* Only unregister the implementation if it was registered by us. */

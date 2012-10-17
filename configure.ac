@@ -30,6 +30,21 @@ AC_TYPE_SIZE_T
 # Checks for library functions.
 AC_CHECK_FUNCS([memset strcasecmp strncasecmp])
 
+# Check if build chain supports symbol visibility
+AC_MSG_CHECKING([for -fvisibility=hidden compiler flag])
+SAVED_CFLAGS="$CFLAGS"
+CFLAGS="$CFLAGS -fvisibility=hidden"
+AC_TRY_COMPILE([
+	extern __attribute__((__visibility__("hidden"))) int hidden;
+	extern __attribute__((__visibility__("default"))) int def;
+	extern __attribute__((__visibility__("hidden"))) int fhidden(void);
+	extern __attribute__((__visibility__("default"))) int fdef(void);
+],[],
+[AC_MSG_RESULT([yes])
+ AC_DEFINE([HAVE_VISIBILITY], 1, [Define if compiler supports -fvisibility])],
+[CFLAGS="$SAVED_CFLAGS"
+ AC_MSG_RESULT([no])])
+
 # Check version of libdns
 AC_MSG_CHECKING([libdns version])
 AC_TRY_RUN([
