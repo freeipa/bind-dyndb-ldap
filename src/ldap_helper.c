@@ -1297,7 +1297,13 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	if (result == ISC_R_SUCCESS)
 		CHECK(configure_zone_ssutable(zone, HEAD(values)->value));
 	else
-		CHECK(configure_zone_ssutable(zone, NULL));
+		/* We need to declare zone as 'dynamic'
+		 * for dns_zone_isdynamic() to prevent unwanted
+		 * zone_postload() calls and warnings about serial and so on.
+		 *
+		 * Created SSU table contains no rules =>
+		 * dns_ssutable_checkrules() will return deny. */
+		CHECK(configure_zone_ssutable(zone, ""));
 
 	/* Fetch allow-query and allow-transfer ACLs */
 	log_debug(2, "Setting allow-query for %p: %s", zone, dn);
