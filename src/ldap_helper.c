@@ -877,70 +877,117 @@ cleanup:
 	return result;
 }
 
-
-
+/**
+ * Read forwarding policy (from idnsForwardingPolicy attribute) and
+ * list of forwarders (from idnsForwarders multi-value attribute)
+ * and update forwarding settings for given zone.
+ *
+ * Enable forwarding if forwarders are specified and policy is not 'none'.
+ * Disable forwarding if forwarding policy is 'none' or list of forwarders
+ * is empty.
+ *
+ * Invalid forwarders are skipped, forwarding will be enabled if at least
+ * one valid forwarder is defined. Global forwarders will be used if all
+ * defined forwarders are invalid or list of forwarders is not present at all.
+ *
+ * @retval ISC_R_SUCCESS  Forwarding was enabled.
+ * @retval ISC_R_DISABLED Forwarding was disabled.
+ * @retval ISC_R_UNEXPECTEDTOKEN Forwarding policy is invalid
+ *                               or all specified forwarders are invalid.
+ * @retval ISC_R_NOMEMORY
+ * @retval others	  Some RBT manipulation errors including ISC_R_FAILURE.
+ */
 static isc_result_t
 configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst, 
-                          dns_name_t *name, ldap_valuelist_t *values)
+                          dns_name_t *name)
 {
 	const char *dn = entry->dn;
 	isc_result_t result;
+	ldap_valuelist_t values;
 	ldap_value_t *value;
 	isc_sockaddrlist_t addrs;
+	/**
+	 * BIND forward policies are "first" (default) or "only".
+	 * We invented option "none" which disables forwarding for zone
+	 * regardless idnsForwarders attribute and global forwarders.
+	 */
+	dns_fwdpolicy_t fwdpolicy = dns_fwdpolicy_first;
+	const char msg_use_global_fwds[] = "global forwarders will be used "
+					   "(if they are configured)";
 
-	REQUIRE(entry != NULL && inst != NULL && name != NULL && values != NULL);
+	REQUIRE(entry != NULL && inst != NULL && name != NULL);
 
 	/* Clean old fwdtable. */
 	result = dns_fwdtable_delete(inst->view->fwdtable, name);
 	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {
-		log_error("Failed to update forwarders");
+		log_error("zone '%s': failed to delete forwarders", dn);
 		return ISC_R_FAILURE;
 	}
 
-	if (EMPTY(*values)) {
-		log_debug(1, "Forwarders are empty for '%s'", dn);
-		return ISC_R_SUCCESS;
+	/*
+	 * Fetch forward policy.
+	 */
+	result = ldap_entry_getvalues(entry, "idnsForwardPolicy", &values);
+	if (result == ISC_R_SUCCESS) {
+		value = HEAD(values);
+		if (value != NULL && value->value != NULL) {
+			if (strcasecmp(value->value, "only") == 0)
+				fwdpolicy = dns_fwdpolicy_only;
+			else if (strcasecmp(value->value, "first") == 0)
+				fwdpolicy = dns_fwdpolicy_first;
+			else if (strcasecmp(value->value, "none") == 0)
+				fwdpolicy = dns_fwdpolicy_none;
+			else {
+				log_error("zone '%s': invalid value '%s' in "
+					  "idnsForwardPolicy attribute; "
+					  "valid values: first, only, none; "
+					  "%s",
+					  dn, value->value, msg_use_global_fwds);
+				return ISC_R_UNEXPECTEDTOKEN;
+			}
+		}
+	}
+	log_debug(5, "zone '%s': forward policy is '%s'", dn,
+		  (fwdpolicy == dns_fwdpolicy_first) ? "first" : value->value);
+
+	if (fwdpolicy == dns_fwdpolicy_none) {
+		ISC_LIST_INIT(values); /* ignore idnsForwarders in LDAP */
+	} else {
+		result = ldap_entry_getvalues(entry, "idnsForwarders", &values);
+		if (result == ISC_R_NOTFOUND || EMPTY(values)) {
+			log_debug(5, "zone '%s': idnsForwarders attribute is "
+				  "not present, %s", dn, msg_use_global_fwds);
+			return ISC_R_DISABLED;
+		}
 	}
 
 	ISC_LIST_INIT(addrs);
-	for (value = HEAD(*values); value != NULL; value = NEXT(value, link)) {
+	for (value = HEAD(values); value != NULL; value = NEXT(value, link)) {
 		isc_sockaddr_t *addr = NULL;
 		char forwarder_txt[ISC_SOCKADDR_FORMATSIZE];
 
-		if( acl_parse_forwarder(value->value, inst->mctx, &addr)
+		if (acl_parse_forwarder(value->value, inst->mctx, &addr)
 				!= ISC_R_SUCCESS) {
-			log_error("Could not parse forwarder '%s'", value->value);
+			log_error("zone '%s': could not parse forwarder '%s'",
+				  dn, value->value);
 			continue;
 		}
 
 		ISC_LINK_INIT(addr, link);
 		ISC_LIST_APPEND(addrs, addr, link);
 		isc_sockaddr_format(addr, forwarder_txt, ISC_SOCKADDR_FORMATSIZE);
-		log_debug(5, "Adding forwarder %s for %s", forwarder_txt, dn);
+		log_debug(5, "zone '%s': adding forwarder '%s'", dn, forwarder_txt);
 	}
 
-	/*
-	 * Fetch forward policy.
-	 */
-	dns_fwdpolicy_t fwdpolicy = dns_fwdpolicy_first; /* "first" is default option. */
-	result = ldap_entry_getvalues(entry, "idnsForwardPolicy", values);
-	if (result == ISC_R_SUCCESS) {
-		value = HEAD(*values);
-		/*
-		 * fwdpolicy: "only" or "first" (default)
-		 */
-		if (value != NULL && value->value != NULL &&
-		    strcmp(value->value, "only") == 0)
-			fwdpolicy = dns_fwdpolicy_only;
+	if (fwdpolicy != dns_fwdpolicy_none && ISC_LIST_EMPTY(addrs)) {
+		log_debug(5, "zone '%s': all idnsForwarders are invalid, %s",
+			  dn, msg_use_global_fwds);
+		return ISC_R_UNEXPECTEDTOKEN;
+	} else if (fwdpolicy == dns_fwdpolicy_none) {
+		log_debug(5, "zone '%s': forwarding explicitly disabled "
+			  "(policy 'none', ignoring global forwarders)", dn);
 	}
 
-	if (ISC_LIST_EMPTY(addrs)) {
-		log_debug(5, "No forwarders seen; disabling forwarding");
-		fwdpolicy = dns_fwdpolicy_none;
-	}
-
-	log_debug(5, "Forward policy: %d", fwdpolicy);
-		
 	/* Set forward table up. */
 	result = dns_fwdtable_add(inst->view->fwdtable, name, &addrs, fwdpolicy);
 
@@ -950,6 +997,12 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 		ISC_LIST_UNLINK(addrs, addr, link);
 		isc_mem_put(inst->mctx, addr, sizeof(*addr));
 	}
+
+	if (result != ISC_R_SUCCESS)
+		log_error_r("zone '%s': forwarding table update failed", dn);
+
+	if (fwdpolicy == dns_fwdpolicy_none && result == ISC_R_SUCCESS)
+		result = ISC_R_DISABLED;
 
 	return result;
 }
@@ -971,13 +1024,9 @@ ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	log_debug(3, "Parsing configuration object");
 
 	/* idnsForwardPolicy change is handled by configure_zone_forwarders() */
-	result = ldap_entry_getvalues(entry, "idnsForwarders", &values);
-	if (result == ISC_R_SUCCESS) {
-		log_debug(2, "Setting global forwarders");
-		result = configure_zone_forwarders(entry, inst, dns_rootname, &values);
-		if (result != ISC_R_SUCCESS) {
-			log_error("Global forwarder could not be set up.");
-		}
+	result = configure_zone_forwarders(entry, inst, dns_rootname);
+	if (result != ISC_R_SUCCESS && result != ISC_R_DISABLED) {
+		log_error("Global forwarder could not be set up.");
 	}
 
 	result = ldap_entry_getvalues(entry, "idnsAllowSyncPTR", &values);
@@ -1060,21 +1109,17 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 
 	CHECK(discard_from_cache(inst->cache, &name));
 
-	/* 
-	 * Fetch forwarders. 
+	/*
 	 * Forwarding has top priority hence when the forwarders are properly
 	 * set up all others attributes are ignored.
 	 */
-	result = ldap_entry_getvalues(entry, "idnsForwarders", &values);
-	if (result == ISC_R_SUCCESS) {
-		log_debug(2, "Setting forwarders for %s", dn);
-		CHECK(configure_zone_forwarders(entry, inst, &name, &values));
+	result = configure_zone_forwarders(entry, inst, &name);
+	if (result != ISC_R_DISABLED) {
 		/* DO NOT CHANGE ANYTHING ELSE after forwarders are set up! */
 		goto cleanup;
-	} else {
-		/* No forwarders are used. Remove zone from fwdtable. */
-		CHECK(configure_zone_forwarders(entry, inst, &name, &values));
 	}
+	/* No forwarders are used. Zone was removed from fwdtable.
+	 * Load the zone. */
 
 	/* Check if we are already serving given zone */
 	result = zr_get_zone_ptr(inst->zone_register, &name, &zone);
