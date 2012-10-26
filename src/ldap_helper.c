@@ -812,10 +812,15 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock)
 			      result == ISC_R_LOCKBUSY);
 		if (result == ISC_R_SUCCESS)
 			unlock = ISC_TRUE;
-
-		/* TODO: flush cache records belonging to deleted zone */
-		CHECK(discard_from_cache(inst->cache, name));
 	}
+
+	/* Disable forwarding. */
+	result = dns_fwdtable_delete(inst->view->fwdtable, name);
+	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
+		log_error_r("zone '%s': failed to delete forwarders", zone_name_char);
+
+	/* TODO: flush cache records belonging to deleted zone */
+	CHECK(discard_from_cache(inst->cache, name));
 
 	result = zr_get_zone_ptr(inst->zone_register, name, &zone);
 	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
