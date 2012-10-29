@@ -1,4 +1,10 @@
+2.1
+======
 [1] Forward policy "none" was introduced.
+
+[2] Internal record cache is flushed properly on new forward zone load.
+
+[3] Forwarding will be disabled after deleting associated forward zone.
 
 2.0
 ======
