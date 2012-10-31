@@ -36,6 +36,6 @@ ldap_la_SOURCES =		\
 	zone_manager.c		\
 	zone_register.c
 
-ldap_la_CFLAGS = -Wall -Wextra -std=gnu99 -O2
+ldap_la_CFLAGS = -Wall -Wextra @WERROR@ -std=gnu99 -O2
 
 ldap_la_LDFLAGS = -module -avoid-version -Wl,-z,relro,-z,now,-z,noexecstack

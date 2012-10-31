@@ -64,5 +64,18 @@ int main(void) {
 [[ ! -n "$docdir" ]] && docdir='${datadir}/doc/${PACKAGE_TARNAME}'
 AC_SUBST([docdir])
 
+AC_ARG_ENABLE([werror],
+	AC_HELP_STRING([--disable-werror],
+		[Disable compilation with -Werror flag]),
+	[WERROR="$enableval"], [WERROR=yes]
+)
+
+if test "x$WERROR" = xyes; then
+	WERROR=-Werror
+else
+	WERROR=
+fi
+AC_SUBST([WERROR])
+
 AC_CONFIG_FILES([Makefile doc/Makefile src/Makefile])
 AC_OUTPUT
