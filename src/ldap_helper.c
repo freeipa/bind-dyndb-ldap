@@ -1120,8 +1120,13 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	 */
 	result = configure_zone_forwarders(entry, inst, &name);
 	if (result != ISC_R_DISABLED) {
-		if (result == ISC_R_SUCCESS)
+		if (result == ISC_R_SUCCESS) {
+#if LIBDNS_VERSION_MAJOR < 90
+			result = dns_view_flushcache(inst->view);
+#else
 			result = dns_view_flushnode(inst->view, &name, ISC_TRUE);
+#endif
+		}
 		/* DO NOT CHANGE ANYTHING ELSE after forwarders are set up! */
 		goto cleanup;
 	}
