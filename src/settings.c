@@ -30,6 +30,7 @@
 #include "settings.h"
 #include "str.h"
 #include "util.h"
+#include "types.h"
 
 
 /*
@@ -194,4 +195,22 @@ get_value_str(const char *arg)
 		arg++;
 
 	return arg;
+}
+
+isc_result_t
+get_enum_description(const enum_txt_assoc_t *map, int value, const char **desc) {
+	const enum_txt_assoc_t *record;
+
+	REQUIRE(map != NULL);
+	REQUIRE(desc != NULL && *desc == NULL);
+
+	for (record = map;
+	     record->description != NULL && record->value != -1;
+	     record++) {
+		if (record->value == value) {
+			*desc = record->description;
+			return ISC_R_SUCCESS;
+		}
+	}
+	return ISC_R_NOTFOUND;
 }

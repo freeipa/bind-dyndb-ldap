@@ -84,6 +84,13 @@
 #define MINTSIZ (65535 - 12 - 1 - 2 - 2 - 4 - 2)
 #define TOKENSIZ (8*1024)
 
+const enum_txt_assoc_t forwarder_policy_txts[] = {
+	{ dns_fwdpolicy_none,	"none"	},
+	{ dns_fwdpolicy_first,	"first"	},
+	{ dns_fwdpolicy_only,	"only"	},
+	{ -1,			NULL	} /* end marker */
+};
+
 #define LDAP_OPT_CHECK(r, ...)						\
 	do {								\
 		if ((r) != LDAP_OPT_SUCCESS) {				\
@@ -177,6 +184,7 @@ struct ldap_instance {
 	isc_boolean_t		sync_ptr;
 	isc_boolean_t		dyn_update;
 	isc_boolean_t		serial_autoincrement;
+	dns_forwarders_t	orig_global_forwarders; /* from named.conf */
 };
 
 struct ldap_pool {
@@ -335,6 +343,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	ldap_instance_t *ldap_inst;
 	dns_view_t *view = NULL;
 	ld_string_t *auth_method_str = NULL;
+	dns_forwarders_t *orig_global_forwarders = NULL;
 	setting_t ldap_settings[] = {
 		{ "uri",	 no_default_string		},
 		{ "connections", default_uint(2)		},
@@ -373,6 +382,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	view = dns_dyndb_get_view(dyndb_args);
 	dns_view_attach(view, &ldap_inst->view);
 	ldap_inst->zmgr = dns_dyndb_get_zonemgr(dyndb_args);
+	ISC_LIST_INIT(ldap_inst->orig_global_forwarders.addrs);
 
 	CHECK(zr_create(mctx, &ldap_inst->zone_register));
 
@@ -490,6 +500,35 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	CHECK(ldap_pool_create(mctx, ldap_inst->connections, &ldap_inst->pool));
 	CHECK(ldap_pool_connect(ldap_inst->pool, ldap_inst));
 
+	/* copy global forwarders setting for configuration roll back in
+	 * configure_zone_forwarders() */
+	result = dns_fwdtable_find(ldap_inst->view->fwdtable, dns_rootname,
+				   &orig_global_forwarders);
+	if (result == ISC_R_SUCCESS) {
+		isc_sockaddr_t *addr;
+		isc_sockaddr_t *new_addr;
+		for (addr = ISC_LIST_HEAD(orig_global_forwarders->addrs);
+		     addr != NULL;
+		     addr = ISC_LIST_NEXT(addr, link)) {
+			new_addr = isc_mem_get(mctx, sizeof(isc_sockaddr_t));
+			if (new_addr == NULL)
+				CLEANUP_WITH(ISC_R_NOMEMORY);
+			*new_addr = *addr;
+			ISC_LINK_INIT(new_addr, link);
+			ISC_LIST_APPEND(ldap_inst->orig_global_forwarders.addrs,
+					new_addr, link);
+		}
+		ldap_inst->orig_global_forwarders.fwdpolicy =
+				orig_global_forwarders->fwdpolicy;
+
+	} else if (result == ISC_R_NOTFOUND) {
+		/* global forwarders are not configured */
+		ldap_inst->orig_global_forwarders.fwdpolicy = dns_fwdpolicy_none;
+		result = ISC_R_SUCCESS;
+	} else {
+		goto cleanup;
+	}
+
 	if (ldap_inst->psearch) {
 		/* Start the watcher thread */
 		result = isc_thread_create(ldap_psearch_watcher, ldap_inst,
@@ -519,6 +558,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	dns_rbt_t *rbt = NULL;
 	isc_result_t result = ISC_R_SUCCESS;
 	const char *db_name;
+	isc_sockaddr_t *addr;
 
 	REQUIRE(ldap_instp != NULL && *ldap_instp != NULL);
 
@@ -627,6 +667,12 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 		destroy_ldap_cache(&ldap_inst->cache);
 
 	zr_destroy(&ldap_inst->zone_register);
+
+	while (!ISC_LIST_EMPTY(ldap_inst->orig_global_forwarders.addrs)) {
+		addr = ISC_LIST_HEAD(ldap_inst->orig_global_forwarders.addrs);
+		ISC_LIST_UNLINK(ldap_inst->orig_global_forwarders.addrs, addr, link);
+		isc_mem_put(ldap_inst->mctx, addr, sizeof(isc_sockaddr_t));
+	}
 
 	isc_mem_putanddetach(&ldap_inst->mctx, ldap_inst, sizeof(ldap_instance_t));
 
@@ -882,6 +928,22 @@ cleanup:
 	return result;
 }
 
+static isc_result_t
+delete_forwarding_table(ldap_instance_t *inst, dns_name_t *name,
+			const char *msg_obj_type, const char *dn) {
+	isc_result_t result;
+
+	/* Clean old fwdtable. */
+	result = dns_fwdtable_delete(inst->view->fwdtable, name);
+	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {
+		log_error_r("%s '%s': failed to delete forwarders",
+			    msg_obj_type, dn);
+		return result;
+	} else {
+		return ISC_R_SUCCESS; /* ISC_R_NOTFOUND = nothing to delete */
+	}
+}
+
 /**
  * Read forwarding policy (from idnsForwardingPolicy attribute) and
  * list of forwarders (from idnsForwarders multi-value attribute)
@@ -911,22 +973,33 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 	ldap_valuelist_t values;
 	ldap_value_t *value;
 	isc_sockaddrlist_t addrs;
+	isc_boolean_t is_global_config;
+	isc_boolean_t fwdtbl_deletion_requested = ISC_TRUE;
+	const char *msg_use_global_fwds;
+	const char *msg_obj_type;
+	const char *msg_forwarders_not_def;
+	const char *msg_forward_policy = NULL;
 	/**
 	 * BIND forward policies are "first" (default) or "only".
 	 * We invented option "none" which disables forwarding for zone
 	 * regardless idnsForwarders attribute and global forwarders.
 	 */
 	dns_fwdpolicy_t fwdpolicy = dns_fwdpolicy_first;
-	const char msg_use_global_fwds[] = "global forwarders will be used "
-					   "(if they are configured)";
 
 	REQUIRE(entry != NULL && inst != NULL && name != NULL);
-
-	/* Clean old fwdtable. */
-	result = dns_fwdtable_delete(inst->view->fwdtable, name);
-	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {
-		log_error("zone '%s': failed to delete forwarders", dn);
-		return ISC_R_FAILURE;
+	ISC_LIST_INIT(addrs);
+	if (dns_name_equal(name, dns_rootname)) {
+		is_global_config = ISC_TRUE;
+		msg_obj_type = "global configuration";
+		msg_use_global_fwds = "; global forwarders will be disabled";
+		msg_forwarders_not_def = "; global forwarders from "
+					 "configuration file will be used";
+	} else {
+		is_global_config = ISC_FALSE;
+		msg_obj_type = "zone";
+		msg_use_global_fwds = "; global forwarders will be used "
+				      "(if they are configured)";
+		msg_forwarders_not_def = msg_use_global_fwds;
 	}
 
 	/*
@@ -943,72 +1016,96 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 			else if (strcasecmp(value->value, "none") == 0)
 				fwdpolicy = dns_fwdpolicy_none;
 			else {
-				log_error("zone '%s': invalid value '%s' in "
+				log_error("%s '%s': invalid value '%s' in "
 					  "idnsForwardPolicy attribute; "
-					  "valid values: first, only, none; "
+					  "valid values: first, only, none"
 					  "%s",
-					  dn, value->value, msg_use_global_fwds);
-				return ISC_R_UNEXPECTEDTOKEN;
+					  msg_obj_type, dn, value->value,
+					  msg_use_global_fwds);
+				CLEANUP_WITH(ISC_R_UNEXPECTEDTOKEN);
 			}
 		}
 	}
-	log_debug(5, "zone '%s': forward policy is '%s'", dn,
-		  (fwdpolicy == dns_fwdpolicy_first) ? "first" : value->value);
 
 	if (fwdpolicy == dns_fwdpolicy_none) {
 		ISC_LIST_INIT(values); /* ignore idnsForwarders in LDAP */
 	} else {
 		result = ldap_entry_getvalues(entry, "idnsForwarders", &values);
 		if (result == ISC_R_NOTFOUND || EMPTY(values)) {
-			log_debug(5, "zone '%s': idnsForwarders attribute is "
-				  "not present, %s", dn, msg_use_global_fwds);
-			return ISC_R_DISABLED;
+			log_debug(5, "%s '%s': idnsForwarders attribute is "
+				  "not present%s", msg_obj_type, dn,
+				  msg_forwarders_not_def);
+			if (is_global_config) {
+				ISC_LIST_INIT(values);
+				addrs = inst->orig_global_forwarders.addrs;
+				fwdpolicy = inst->orig_global_forwarders.fwdpolicy;
+			} else {
+				CLEANUP_WITH(ISC_R_DISABLED);
+			}
 		}
 	}
 
-	ISC_LIST_INIT(addrs);
+	CHECK(get_enum_description(forwarder_policy_txts, fwdpolicy,
+				   &msg_forward_policy));
+	log_debug(5, "%s '%s': forward policy is '%s'", msg_obj_type, dn,
+		  msg_forward_policy);
+
 	for (value = HEAD(values); value != NULL; value = NEXT(value, link)) {
 		isc_sockaddr_t *addr = NULL;
 		char forwarder_txt[ISC_SOCKADDR_FORMATSIZE];
 
 		if (acl_parse_forwarder(value->value, inst->mctx, &addr)
 				!= ISC_R_SUCCESS) {
-			log_error("zone '%s': could not parse forwarder '%s'",
-				  dn, value->value);
+			log_error("%s '%s': could not parse forwarder '%s'",
+					msg_obj_type, dn, value->value);
 			continue;
 		}
 
 		ISC_LINK_INIT(addr, link);
 		ISC_LIST_APPEND(addrs, addr, link);
 		isc_sockaddr_format(addr, forwarder_txt, ISC_SOCKADDR_FORMATSIZE);
-		log_debug(5, "zone '%s': adding forwarder '%s'", dn, forwarder_txt);
+		log_debug(5, "%s '%s': adding forwarder '%s'", msg_obj_type,
+			  dn, forwarder_txt);
 	}
 
 	if (fwdpolicy != dns_fwdpolicy_none && ISC_LIST_EMPTY(addrs)) {
-		log_debug(5, "zone '%s': all idnsForwarders are invalid, %s",
-			  dn, msg_use_global_fwds);
-		return ISC_R_UNEXPECTEDTOKEN;
+		log_debug(5, "%s '%s': all idnsForwarders are invalid%s",
+			  msg_obj_type, dn, msg_use_global_fwds);
+		CLEANUP_WITH(ISC_R_UNEXPECTEDTOKEN);
 	} else if (fwdpolicy == dns_fwdpolicy_none) {
-		log_debug(5, "zone '%s': forwarding explicitly disabled "
-			  "(policy 'none', ignoring global forwarders)", dn);
+		log_debug(5, "%s '%s': forwarding explicitly disabled "
+			  "(policy 'none', ignoring global forwarders)",
+			  msg_obj_type, dn);
 	}
 
 	/* Set forward table up. */
+	CHECK(delete_forwarding_table(inst, name, msg_obj_type, dn));
 	result = dns_fwdtable_add(inst->view->fwdtable, name, &addrs, fwdpolicy);
-
-	while (!ISC_LIST_EMPTY(addrs)) {
-		isc_sockaddr_t *addr = NULL;
-		addr = ISC_LIST_HEAD(addrs);
-		ISC_LIST_UNLINK(addrs, addr, link);
-		isc_mem_put(inst->mctx, addr, sizeof(*addr));
+	if (result == ISC_R_SUCCESS) {
+		fwdtbl_deletion_requested = ISC_FALSE;
+		if (fwdpolicy == dns_fwdpolicy_none)
+			result = ISC_R_DISABLED;
+	} else {
+		log_error_r("%s '%s': forwarding table update failed",
+			    msg_obj_type, dn);
 	}
 
-	if (result != ISC_R_SUCCESS)
-		log_error_r("zone '%s': forwarding table update failed", dn);
-
-	if (fwdpolicy == dns_fwdpolicy_none && result == ISC_R_SUCCESS)
-		result = ISC_R_DISABLED;
-
+cleanup:
+	if (ISC_LIST_HEAD(addrs) !=
+	    ISC_LIST_HEAD(inst->orig_global_forwarders.addrs)) {
+		while(!ISC_LIST_EMPTY(addrs)) {
+			isc_sockaddr_t *addr = NULL;
+			addr = ISC_LIST_HEAD(addrs);
+			ISC_LIST_UNLINK(addrs, addr, link);
+			isc_mem_put(inst->mctx, addr, sizeof(*addr));
+		}
+	}
+	if (fwdtbl_deletion_requested) {
+		isc_result_t orig_result = result;
+		result = delete_forwarding_table(inst, name, msg_obj_type, dn);
+		if (result == ISC_R_SUCCESS)
+			result = orig_result;
+	}
 	return result;
 }
 

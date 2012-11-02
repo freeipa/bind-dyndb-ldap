@@ -22,6 +22,7 @@
 #define _LD_SETTINGS_H_
 
 #include <isc/types.h>
+#include "types.h"
 
 typedef struct setting	setting_t;
 
@@ -76,5 +77,8 @@ struct setting {
  */
 isc_result_t
 set_settings(setting_t *settings, const char * const* argv);
+
+isc_result_t
+get_enum_description(const enum_txt_assoc_t *map, int value, const char **desc);
 
 #endif /* !_LD_SETTINGS_H_ */
