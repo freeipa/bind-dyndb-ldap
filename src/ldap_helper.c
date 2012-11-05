@@ -308,7 +308,8 @@ static isc_result_t soa_serial_increment(isc_mem_t *mctx, ldap_instance_t *inst,
 		dns_name_t *zone_name);
 
 static isc_result_t
-ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock);
+ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
+		  isc_boolean_t preserve_forwarding);
 
 /* Functions for maintaining pool of LDAP connections */
 static isc_result_t ldap_pool_create(isc_mem_t *mctx, unsigned int connections,
@@ -620,7 +621,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 
 		result = ldap_delete_zone2(ldap_inst,
 					   dns_fixedname_name(&concat),
-					   ISC_TRUE);
+					   ISC_TRUE, ISC_FALSE);
 		RUNTIME_CHECK(result == ISC_R_SUCCESS);
 	}
 
@@ -841,7 +842,8 @@ configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
 
 /* Delete zone by dns zone name */
 static isc_result_t
-ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock)
+ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
+		  isc_boolean_t preserve_forwarding)
 {
 	isc_result_t result;
 	isc_boolean_t unlock = ISC_FALSE;
@@ -860,10 +862,12 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock)
 			unlock = ISC_TRUE;
 	}
 
-	/* Disable forwarding. */
-	result = dns_fwdtable_delete(inst->view->fwdtable, name);
-	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
-		log_error_r("zone '%s': failed to delete forwarders", zone_name_char);
+	if (!preserve_forwarding) {
+		result = dns_fwdtable_delete(inst->view->fwdtable, name);
+		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
+			log_error_r("zone '%s': failed to delete forwarders",
+				    zone_name_char);
+	}
 
 	/* TODO: flush cache records belonging to deleted zone */
 	CHECK(discard_from_cache(inst->cache, name));
@@ -911,7 +915,8 @@ cleanup:
 
 /* Delete zone */
 static isc_result_t
-ldap_delete_zone(ldap_instance_t *inst, const char *dn, isc_boolean_t lock)
+ldap_delete_zone(ldap_instance_t *inst, const char *dn, isc_boolean_t lock,
+		 isc_boolean_t preserve_forwarding)
 {
 	isc_result_t result;
 	dns_name_t name;
@@ -919,7 +924,7 @@ ldap_delete_zone(ldap_instance_t *inst, const char *dn, isc_boolean_t lock)
 	
 	CHECK(dn_to_dnsname(inst->mctx, dn, &name, NULL));
 
-	result = ldap_delete_zone2(inst, &name, lock);
+	result = ldap_delete_zone2(inst, &name, lock, preserve_forwarding);
 
 cleanup:
 	if (dns_name_dynamic(&name))
@@ -1218,6 +1223,11 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	result = configure_zone_forwarders(entry, inst, &name);
 	if (result != ISC_R_DISABLED) {
 		if (result == ISC_R_SUCCESS) {
+			/* forwarding was enabled for the zone
+			 * => zone type was changed to "forward"
+			 * => delete "master" zone */
+			CHECK(ldap_delete_zone2(inst, &name, ISC_FALSE,
+						ISC_TRUE));
 #if LIBDNS_VERSION_MAJOR < 90
 			result = dns_view_flushcache(inst->view);
 #else
@@ -1510,7 +1520,8 @@ next:
 		result = dns_rbtnodechain_next(&chain, NULL, NULL);
 	
 		if (delete == ISC_TRUE)
-			ldap_delete_zone2(ldap_inst, &aname, ISC_FALSE);
+			ldap_delete_zone2(ldap_inst, &aname, ISC_FALSE,
+					  ISC_FALSE);
 	}
 
 
@@ -3253,7 +3264,8 @@ update_zone(isc_task_t *task, isc_event_t *event)
 		if (PSEARCH_MODDN(pevent->chgtype)) {
 			if (dn_to_dnsname(inst->mctx, pevent->prevdn, &prevname, NULL)
 					== ISC_R_SUCCESS) {
-				CHECK(ldap_delete_zone(inst, pevent->prevdn, ISC_TRUE));
+				CHECK(ldap_delete_zone(inst, pevent->prevdn,
+				      ISC_TRUE, ISC_FALSE));
 			} else {
 				log_debug(5, "update_action: old zone wasn't managed "
 						"by plugin, dn '%s'", pevent->prevdn);
@@ -3274,7 +3286,7 @@ update_zone(isc_task_t *task, isc_event_t *event)
 
 		INSIST(NEXT(entry_zone, link) == NULL); /* no multiple zones with same DN */
 	} else {
-		CHECK(ldap_delete_zone(inst, pevent->dn, ISC_TRUE));
+		CHECK(ldap_delete_zone(inst, pevent->dn, ISC_TRUE, ISC_FALSE));
 	}
 
 cleanup:
