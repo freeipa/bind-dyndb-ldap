@@ -975,11 +975,15 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 {
 	const char *dn = entry->dn;
 	isc_result_t result;
+	isc_result_t orig_result;
 	ldap_valuelist_t values;
 	ldap_value_t *value;
 	isc_sockaddrlist_t addrs;
 	isc_boolean_t is_global_config;
 	isc_boolean_t fwdtbl_deletion_requested = ISC_TRUE;
+	isc_boolean_t fwdtbl_update_requested = ISC_FALSE;
+	dns_forwarders_t *old_setting = NULL;
+	dns_fixedname_t foundname;
 	const char *msg_use_global_fwds;
 	const char *msg_obj_type;
 	const char *msg_forwarders_not_def;
@@ -993,6 +997,7 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 
 	REQUIRE(entry != NULL && inst != NULL && name != NULL);
 	ISC_LIST_INIT(addrs);
+	dns_fixedname_init(&foundname);
 	if (dns_name_equal(name, dns_rootname)) {
 		is_global_config = ISC_TRUE;
 		msg_obj_type = "global configuration";
@@ -1083,16 +1088,49 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 			  msg_obj_type, dn);
 	}
 
-	/* Set forward table up. */
-	CHECK(delete_forwarding_table(inst, name, msg_obj_type, dn));
-	result = dns_fwdtable_add(inst->view->fwdtable, name, &addrs, fwdpolicy);
+	/* Check for old and new forwarding settings equality. */
+	result = dns_fwdtable_find2(inst->view->fwdtable, name,
+				    dns_fixedname_name(&foundname),
+				    &old_setting);
+	if (result == ISC_R_SUCCESS &&
+	   (dns_name_equal(name, dns_fixedname_name(&foundname)) == ISC_TRUE)) {
+		isc_sockaddr_t *s1, *s2;
+
+		if (fwdpolicy != old_setting->fwdpolicy)
+			fwdtbl_update_requested = ISC_TRUE;
+
+		/* Check address lists item by item. */
+		for (s1 = ISC_LIST_HEAD(addrs), s2 = ISC_LIST_HEAD(old_setting->addrs);
+		     s1 != NULL && s2 != NULL && !fwdtbl_update_requested;
+		     s1 = ISC_LIST_NEXT(s1, link), s2 = ISC_LIST_NEXT(s2, link))
+			if (!isc_sockaddr_equal(s1, s2))
+				fwdtbl_update_requested = ISC_TRUE;
+
+		if (!fwdtbl_update_requested && ((s1 != NULL) || (s2 != NULL)))
+			fwdtbl_update_requested = ISC_TRUE;
+	} else {
+		fwdtbl_update_requested = ISC_TRUE;
+		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
+			log_error_r("%s '%s': can't obtain old forwarding "
+				    "settings", msg_obj_type, dn);
+	}
+
+	if (fwdtbl_update_requested) {
+		/* Something was changed - set forward table up. */
+		CHECK(delete_forwarding_table(inst, name, msg_obj_type, dn));
+		result = dns_fwdtable_add(inst->view->fwdtable, name, &addrs, fwdpolicy);
+		if (result != ISC_R_SUCCESS)
+			log_error_r("%s '%s': forwarding table update failed",
+				    msg_obj_type, dn);
+	} else {
+		result = ISC_R_SUCCESS;
+		log_debug(5, "%s '%s': forwarding table unmodified",
+			  msg_obj_type, dn);
+	}
 	if (result == ISC_R_SUCCESS) {
 		fwdtbl_deletion_requested = ISC_FALSE;
 		if (fwdpolicy == dns_fwdpolicy_none)
 			result = ISC_R_DISABLED;
-	} else {
-		log_error_r("%s '%s': forwarding table update failed",
-			    msg_obj_type, dn);
 	}
 
 cleanup:
@@ -1106,8 +1144,16 @@ cleanup:
 		}
 	}
 	if (fwdtbl_deletion_requested) {
-		isc_result_t orig_result = result;
+		orig_result = result;
 		result = delete_forwarding_table(inst, name, msg_obj_type, dn);
+		if (result == ISC_R_SUCCESS)
+			result = orig_result;
+	}
+	if (fwdtbl_deletion_requested || fwdtbl_update_requested) {
+		log_debug(5, "%s '%s': forwarder table was updated: %s",
+			  msg_obj_type, dn, dns_result_totext(result));
+		orig_result = result;
+		result = dns_view_flushcache(inst->view);
 		if (result == ISC_R_SUCCESS)
 			result = orig_result;
 	}
@@ -1133,7 +1179,7 @@ ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	/* idnsForwardPolicy change is handled by configure_zone_forwarders() */
 	result = configure_zone_forwarders(entry, inst, dns_rootname);
 	if (result != ISC_R_SUCCESS && result != ISC_R_DISABLED) {
-		log_error("Global forwarder could not be set up.");
+		log_error_r("global forwarder could not be set up");
 	}
 
 	result = ldap_entry_getvalues(entry, "idnsAllowSyncPTR", &values);
@@ -1228,11 +1274,6 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 			 * => delete "master" zone */
 			CHECK(ldap_delete_zone2(inst, &name, ISC_FALSE,
 						ISC_TRUE));
-#if LIBDNS_VERSION_MAJOR < 90
-			result = dns_view_flushcache(inst->view);
-#else
-			result = dns_view_flushnode(inst->view, &name, ISC_TRUE);
-#endif
 		}
 		/* DO NOT CHANGE ANYTHING ELSE after forwarders are set up! */
 		goto cleanup;
