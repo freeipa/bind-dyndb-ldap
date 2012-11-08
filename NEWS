@@ -1,3 +1,11 @@
+2.3
+======
+[1] Global forwarders from named.conf were ignored.
+
+[2] Master zone is now unloaded if idnsForwaders attribute is set at run-time.
+
+[3] Internal record cache is flushed after any change in forwarders.
+
 2.2
 ======
 [1] Compatibility with BIND 9.8 was restored.
