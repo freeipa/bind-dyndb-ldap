@@ -91,12 +91,11 @@ dn_to_dnsname(isc_mem_t *mctx, const char *dn, dns_name_t *target,
 
 	CHECK(dn_to_text(dn, str, ostr));
 	str_to_isc_buffer(str, &buffer);
-	CHECK(dns_name_fromtext(&name, &buffer, dns_rootname, 0, NULL));
+	CHECK(dns_name_fromtext(&name, &buffer, NULL, 0, NULL));
 
 	if (otarget != NULL) {
 		str_to_isc_buffer(ostr, &buffer);
-		CHECK(dns_name_fromtext(&origin, &buffer, dns_rootname, 0,
-		      NULL));
+		CHECK(dns_name_fromtext(&origin, &buffer, NULL, 0, NULL));
 	}
 
 cleanup:
@@ -124,14 +123,26 @@ cleanup:
 	return result;
 }
 
-/*
- * Convert LDAP dn to DNS name.
+/**
+ * Convert LDAP DN to absolute DNS name.
  *
- * Example:
- * dn = "idnsName=foo, idnsName=bar, idnsName=example.org, cn=dns,"
- *      "dc=example, dc=org"
+ * @param[out] target Absolute DNS name derived from the all idnsNames.
+ * @param[out] origin Absolute DNS name derived from the last idnsName
+ *                    component of DN, i.e. zone. Can be NULL.
  *
- * The resulting string will be "foo.bar.example.org."
+ * @code
+ * Examples:
+ * dn = "idnsName=foo, idnsName=bar, idnsName=example.org,"
+ *      "cn=dns, dc=example, dc=org"
+ * target = "foo.bar.example.org."
+ * origin = "example.org."
+ *
+ * dn = "idnsname=89, idnsname=4.34.10.in-addr.arpa.",
+ *      " cn=dns, dc=example, dc=org"
+ * target = "89.4.34.10.in-addr.arpa."
+ * origin = "4.34.10.in-addr.arpa."
+ * (The dot at the end is not doubled when it's already present.)
+ * @endcode
  */
 isc_result_t
 dn_to_text(const char *dn, ld_string_t *target, ld_string_t *origin)
@@ -159,7 +170,8 @@ dn_to_text(const char *dn, ld_string_t *target, ld_string_t *origin)
 
 		CHECK(explode_rdn(exploded_dn[i], &exploded_rdn, 1));
 		CHECK(str_cat_char(target, exploded_rdn[0]));
-		CHECK(str_cat_char(target, "."));
+		if (str_buf(target)[str_len(target)-1] != '.')
+			CHECK(str_cat_char(target, "."));
 	}
 
 	if (origin != NULL) {
@@ -167,16 +179,15 @@ dn_to_text(const char *dn, ld_string_t *target, ld_string_t *origin)
 
 		/*
 		 * If we have DNs with only one idnsName part,
-		 * treat them as absolute.
+		 * treat them as absolute zone name.
 		 */
-
 		if (i < 2)
 			CHECK(str_init_char(origin, "."));
 		else {
 			CHECK(str_cat_char(origin, exploded_rdn[0]));
-			CHECK(str_cat_char(origin, "."));
+			if (str_buf(origin)[str_len(origin)-1] != '.')
+				CHECK(str_cat_char(origin, "."));
 		}
-			
 	}
 
 	if (str_len(target) == 0)

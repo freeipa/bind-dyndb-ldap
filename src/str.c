@@ -465,7 +465,7 @@ str_to_isc_buffer(const ld_string_t *src, isc_buffer_t *dest)
 	REQUIRE(src != NULL);
 	REQUIRE(dest != NULL);
 
-	len = str_len_internal(src) - 1;
+	len = str_len_internal(src);
 
 	isc_buffer_init(dest, src->data, len);
 	isc_buffer_add(dest, len);
