@@ -126,6 +126,8 @@ cleanup:
 /**
  * Convert LDAP DN to absolute DNS name.
  *
+ * @param[in]  dn     LDAP DN with one or two idnsName components at the
+ *                    beginning.
  * @param[out] target Absolute DNS name derived from the all idnsNames.
  * @param[out] origin Absolute DNS name derived from the last idnsName
  *                    component of DN, i.e. zone. Can be NULL.
@@ -169,9 +171,32 @@ dn_to_text(const char *dn, ld_string_t *target, ld_string_t *origin)
 		}
 
 		CHECK(explode_rdn(exploded_dn[i], &exploded_rdn, 1));
+		if (exploded_rdn[0] == NULL || exploded_rdn[1] != NULL) {
+			log_error("idnsName component of DN has to have "
+				  "exactly one value: DN '%s'", dn);
+			CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
+		}
 		CHECK(str_cat_char(target, exploded_rdn[0]));
 		if (str_buf(target)[str_len(target)-1] != '.')
 			CHECK(str_cat_char(target, "."));
+	}
+
+	/* filter out unsupported cases */
+	if (i <= 0) {
+		log_error("no idnsName component found in DN '%s'", dn);
+		CLEANUP_WITH(ISC_R_UNEXPECTEDEND);
+	} else if (i == 1) { /* zone only - nothing to check */
+		;
+	} else if (i == 2) {
+		if (exploded_dn[0][strlen(exploded_dn[0])-1] == '.') {
+			log_error("absolute record name in DN "
+				  "is not supported: DN '%s'", dn);
+			CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
+		}
+	} else {
+		log_error("unsupported number of idnsName components in DN "
+			  "'%s': %u components found", dn, i);
+		CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
 	}
 
 	if (origin != NULL) {
@@ -179,7 +204,7 @@ dn_to_text(const char *dn, ld_string_t *target, ld_string_t *origin)
 
 		/*
 		 * If we have DNs with only one idnsName part,
-		 * treat them as absolute zone name.
+		 * treat them as absolute zone name, i.e. origin is root.
 		 */
 		if (i < 2)
 			CHECK(str_init_char(origin, "."));
