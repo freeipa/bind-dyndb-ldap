@@ -372,13 +372,10 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 
 	REQUIRE(ldap_instp != NULL && *ldap_instp == NULL);
 
-	ldap_inst = isc_mem_get(mctx, sizeof(ldap_instance_t));
-	if (ldap_inst == NULL)
-		return ISC_R_NOMEMORY;
-
+	CHECKED_MEM_GET_PTR(mctx, ldap_inst);
 	ZERO_PTR(ldap_inst);
-
 	isc_mem_attach(mctx, &ldap_inst->mctx);
+
 	ldap_inst->db_name = db_name;
 	view = dns_dyndb_get_view(dyndb_args);
 	dns_view_attach(view, &ldap_inst->view);
@@ -511,9 +508,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		for (addr = ISC_LIST_HEAD(orig_global_forwarders->addrs);
 		     addr != NULL;
 		     addr = ISC_LIST_NEXT(addr, link)) {
-			new_addr = isc_mem_get(mctx, sizeof(isc_sockaddr_t));
-			if (new_addr == NULL)
-				CLEANUP_WITH(ISC_R_NOMEMORY);
+			CHECKED_MEM_GET_PTR(mctx, new_addr);
 			*new_addr = *addr;
 			ISC_LINK_INIT(new_addr, link);
 			ISC_LIST_APPEND(ldap_inst->orig_global_forwarders.addrs,
@@ -561,9 +556,12 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	const char *db_name;
 	isc_sockaddr_t *addr;
 
-	REQUIRE(ldap_instp != NULL && *ldap_instp != NULL);
+	REQUIRE(ldap_instp != NULL);
 
 	ldap_inst = *ldap_instp;
+	if (ldap_inst == NULL)
+		return;
+
 	db_name = ldap_inst->db_name; /* points to DB instance: outside ldap_inst */
 
 	/*
@@ -690,10 +688,7 @@ new_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
 	REQUIRE(pool != NULL);
 	REQUIRE(ldap_connp != NULL && *ldap_connp == NULL);
 
-	ldap_conn = isc_mem_get(pool->mctx, sizeof(ldap_connection_t));
-	if (ldap_conn == NULL)
-		return ISC_R_NOMEMORY;
-
+	CHECKED_MEM_GET_PTR(pool->mctx, ldap_conn);
 	ZERO_PTR(ldap_conn);
 
 	result = isc_mutex_init(&ldap_conn->lock);
