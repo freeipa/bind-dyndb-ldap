@@ -21,6 +21,8 @@
 #ifndef _LD_UTIL_H_
 #define _LD_UTIL_H_
 
+#include "log.h"
+
 #define CLEANUP_WITH(result_code)				\
 	do {							\
 		result = (result_code);				\
@@ -46,6 +48,7 @@
 		(target_ptr) = isc_mem_allocate((m), (s));	\
 		if ((target_ptr) == NULL) {			\
 			result = ISC_R_NOMEMORY;		\
+			log_error_position("Memory allocation failed");	\
 			goto cleanup;				\
 		}						\
 	} while (0)
@@ -55,6 +58,7 @@
 		(target_ptr) = isc_mem_get((m), (s));		\
 		if ((target_ptr) == NULL) {			\
 			result = ISC_R_NOMEMORY;		\
+			log_error_position("Memory allocation failed");	\
 			goto cleanup;				\
 		}						\
 	} while (0)
@@ -67,6 +71,7 @@
 		(target) = isc_mem_strdup((m), (source));	\
 		if ((target) == NULL) {				\
 			result = ISC_R_NOMEMORY;		\
+			log_error_position("Memory allocation failed");	\
 			goto cleanup;				\
 		}						\
 	} while (0)
