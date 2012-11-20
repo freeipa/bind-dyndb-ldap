@@ -120,7 +120,7 @@ ldap_valuelist_destroy(isc_mem_t *mctx, ldap_valuelist_t *values)
 	while (value != NULL) {
 		next = NEXT(value, link);
 		UNLINK(*values, value, link);
-		isc_mem_put(mctx, value, sizeof(*value));
+		SAFE_MEM_PUT_PTR(mctx, value);
 		value = next;
 	}
 }
@@ -137,7 +137,7 @@ ldap_attributelist_destroy(isc_mem_t *mctx, ldap_attributelist_t *attrlist)
 		ldap_valuelist_destroy(mctx, &attr->values);
                 ldap_value_free(attr->ldap_values);
                 ldap_memfree(attr->name);
-                isc_mem_put(mctx, attr, sizeof(*attr));
+                SAFE_MEM_PUT_PTR(mctx, attr);
                 attr = next;
         }
 }
@@ -242,7 +242,7 @@ ldap_entry_destroy(isc_mem_t *mctx, ldap_entry_t **entryp)
 	ldap_attributelist_destroy(mctx, &entry->attrs);
 	if (entry->dn != NULL)
 		ldap_memfree(entry->dn);
-	isc_mem_put(mctx, entry, sizeof(*entry));
+	SAFE_MEM_PUT_PTR(mctx, entry);
 
 	*entryp = NULL;
 }

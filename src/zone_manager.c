@@ -98,7 +98,7 @@ destroy_db_instance(db_instance_t **db_instp)
 	if (db_inst->name != NULL)
 		isc_mem_free(db_inst->mctx, db_inst->name);
 
-	isc_mem_putanddetach(&db_inst->mctx, db_inst, sizeof(*db_inst));
+	MEM_PUT_AND_DETACH(db_inst);
 
 	*db_instp = NULL;
 }

@@ -167,7 +167,7 @@ delete_zone_info(void *arg1, void *arg2)
 
 	isc_mem_free(mctx, zinfo->dn);
 	dns_zone_detach(&zinfo->zone);
-	isc_mem_put(mctx, zinfo, sizeof(*zinfo));
+	SAFE_MEM_PUT_PTR(mctx, zinfo);
 }
 
 /*

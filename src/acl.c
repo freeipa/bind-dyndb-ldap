@@ -553,11 +553,7 @@ acl_parse_forwarder(const char *forwarder_str, isc_mem_t *mctx, isc_sockaddr_t *
 	}
 
 	const cfg_obj_t *forwarder = cfg_listelt_value(element);
-	*sa = isc_mem_get(mctx, sizeof(isc_sockaddr_t));
-	if (*sa == NULL) {
-		result = ISC_R_NOMEMORY;
-		goto cleanup;
-	}
+	CHECKED_MEM_GET_PTR(mctx, *sa);
 	**sa = *cfg_obj_assockaddr(forwarder);
 	if (isc_sockaddr_getport(*sa) == 0)
 		isc_sockaddr_setport(*sa, port);

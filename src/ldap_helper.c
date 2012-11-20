@@ -670,10 +670,10 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	while (!ISC_LIST_EMPTY(ldap_inst->orig_global_forwarders.addrs)) {
 		addr = ISC_LIST_HEAD(ldap_inst->orig_global_forwarders.addrs);
 		ISC_LIST_UNLINK(ldap_inst->orig_global_forwarders.addrs, addr, link);
-		isc_mem_put(ldap_inst->mctx, addr, sizeof(isc_sockaddr_t));
+		SAFE_MEM_PUT_PTR(ldap_inst->mctx, addr);
 	}
 
-	isc_mem_putanddetach(&ldap_inst->mctx, ldap_inst, sizeof(ldap_instance_t));
+	MEM_PUT_AND_DETACH(ldap_inst);
 
 	*ldap_instp = NULL;
 	log_debug(1, "LDAP instance '%s' destroyed", db_name);
@@ -693,7 +693,7 @@ new_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
 
 	result = isc_mutex_init(&ldap_conn->lock);
 	if (result != ISC_R_SUCCESS) {
-		isc_mem_put(pool->mctx, ldap_conn, sizeof(ldap_connection_t));
+		SAFE_MEM_PUT_PTR(pool->mctx, ldap_conn);
 		return result;
 	}
 
@@ -1135,7 +1135,7 @@ cleanup:
 			isc_sockaddr_t *addr = NULL;
 			addr = ISC_LIST_HEAD(addrs);
 			ISC_LIST_UNLINK(addrs, addr, link);
-			isc_mem_put(inst->mctx, addr, sizeof(*addr));
+			SAFE_MEM_PUT_PTR(inst->mctx, addr);
 		}
 	}
 	if (fwdtbl_deletion_requested) {
@@ -1660,7 +1660,7 @@ ldapdb_rdatalist_destroy(isc_mem_t *mctx, ldapdb_rdatalist_t *rdatalist)
 		rdlist = HEAD(*rdatalist);
 		free_rdatalist(mctx, rdlist);
 		UNLINK(*rdatalist, rdlist, link);
-		isc_mem_put(mctx, rdlist, sizeof(*rdlist));
+		SAFE_MEM_PUT_PTR(mctx, rdlist);
 	}
 }
 
@@ -1677,7 +1677,7 @@ free_rdatalist(isc_mem_t *mctx, dns_rdatalist_t *rdlist)
 		UNLINK(rdlist->rdata, rdata, link);
 		dns_rdata_toregion(rdata, &r);
 		isc_mem_put(mctx, r.base, r.length);
-		isc_mem_put(mctx, rdata, sizeof(*rdata));
+		SAFE_MEM_PUT_PTR(mctx, rdata);
 	}
 }
 
@@ -1937,8 +1937,7 @@ parse_rdata(isc_mem_t *mctx, ldap_qresult_t *qresult,
 
 cleanup:
 	isc_lex_close(qresult->lex);
-	if (rdata != NULL)
-		isc_mem_put(mctx, rdata, sizeof(*rdata));
+	SAFE_MEM_PUT_PTR(mctx, rdata);
 	if (rdatamem.base != NULL)
 		isc_mem_put(mctx, rdatamem.base, rdatamem.length);
 
@@ -3595,23 +3594,11 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 
 	isc_mem_attach(inst->mctx, &mctx);
 
-	dn = isc_mem_strdup(mctx, entry->dn);
-	if (dn == NULL) {
-		result = ISC_R_NOMEMORY;
-		goto cleanup;
-	}
-	dbname = isc_mem_strdup(mctx, inst->db_name);
-	if (dbname == NULL) {
-		result = ISC_R_NOMEMORY;
-		goto cleanup;
-	}
+	CHECKED_MEM_STRDUP(mctx, entry->dn, dn);
+	CHECKED_MEM_STRDUP(mctx, inst->db_name, dbname);
 
 	if (PSEARCH_MODDN(chgtype)) {
-		prevdn = isc_mem_strdup(mctx, prevdn_ldap);
-		if (prevdn == NULL) {
-			result = ISC_R_NOMEMORY;
-			goto cleanup;
-		}
+		CHECKED_MEM_STRDUP(mctx, prevdn_ldap, prevdn);
 	}
 
 	/*

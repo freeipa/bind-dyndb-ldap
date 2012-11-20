@@ -221,7 +221,7 @@ clone_rdatalist_to_rdataset(isc_mem_t *mctx, dns_rdatalist_t *rdlist,
 cleanup:
 	if (new_rdlist != NULL) {
 		free_rdatalist(mctx, rdlist);
-		isc_mem_put(mctx, new_rdlist, sizeof(*new_rdlist));
+		SAFE_MEM_PUT_PTR(mctx, new_rdlist);
 	}
 
 	return result;
