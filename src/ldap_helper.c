@@ -258,8 +258,7 @@ struct ldap_psearchevent {
 /* TODO: reorganize this stuff & clean it up. */
 static isc_result_t new_ldap_connection(ldap_pool_t *pool,
 		ldap_connection_t **ldap_connp);
-static void destroy_ldap_connection(ldap_pool_t *pool,
-		ldap_connection_t **ldap_connp);
+static void destroy_ldap_connection(ldap_connection_t **ldap_connp);
 
 static isc_result_t findrdatatype_or_create(isc_mem_t *mctx,
 		ldapdb_rdatalist_t *rdatalist, dns_rdataclass_t rdclass,
@@ -706,13 +705,13 @@ new_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
 	return ISC_R_SUCCESS;
 
 cleanup:
-	destroy_ldap_connection(pool, &ldap_conn);
+	destroy_ldap_connection(&ldap_conn);
 
 	return result;
 }
 
 static void
-destroy_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
+destroy_ldap_connection(ldap_connection_t **ldap_connp)
 {
 	ldap_connection_t *ldap_conn;
 
@@ -730,10 +729,7 @@ destroy_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
 		ldap_control_free(ldap_conn->serverctrls[0]);
 	}
 
-	isc_mem_detach(&ldap_conn->mctx);
-
-	isc_mem_put(pool->mctx, *ldap_connp, sizeof(ldap_connection_t));
-	*ldap_connp = NULL;
+	MEM_PUT_AND_DETACH(*ldap_connp);
 }
 
 /*
@@ -3034,7 +3030,7 @@ ldap_pool_destroy(ldap_pool_t **poolp)
 	for (i = 0; i < pool->connections; i++) {
 		ldap_conn = pool->conns[i];
 		if (ldap_conn != NULL)
-			destroy_ldap_connection(pool, &ldap_conn);
+			destroy_ldap_connection(&ldap_conn);
 	}
 
 	SAFE_MEM_PUT(pool->mctx, pool->conns,
@@ -3115,7 +3111,7 @@ ldap_pool_connect(ldap_pool_t *pool, ldap_instance_t *ldap_inst)
 
 cleanup:
 	for (i = 0; i < pool->connections; i++) {
-		destroy_ldap_connection(pool, &pool->conns[i]);
+		destroy_ldap_connection(&pool->conns[i]);
 	}
 	return result;
 }
