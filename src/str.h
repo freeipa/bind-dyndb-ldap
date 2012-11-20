@@ -37,7 +37,6 @@
 #endif
 
 typedef struct ld_string	ld_string_t;
-typedef struct ld_split		ld_split_t;
 
 /*
  * Public functions.
@@ -64,12 +63,6 @@ void str_toupper(ld_string_t *str);
 void str_to_isc_buffer(const ld_string_t *src, isc_buffer_t *dest);
 
 int str_casecmp_char(const ld_string_t *s1, const char *s2);
-
-isc_result_t str_new_split(isc_mem_t *mctx, ld_split_t **splitp);
-void str_destroy_split(ld_split_t **splitp);
-isc_result_t str_split(const ld_string_t *src, const char delimiter, ld_split_t *split);
-size_t str_split_count(const ld_split_t *split);
-const char * str_split_get(const ld_split_t *split, unsigned int split_number);
 
 /* These are pseudo-private functions and shouldn't be called directly. */
 isc_result_t str__new(isc_mem_t *mctx, ld_string_t **new_str _STR_MEM_FLARG);
