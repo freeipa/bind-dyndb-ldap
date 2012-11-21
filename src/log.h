@@ -54,6 +54,17 @@
 #define log_debug(level, format, ...)	\
 	log_write(GET_LOG_LEVEL(level), format, ##__VA_ARGS__)
 
+/* LDAP logging functions */
+#define log_ldap_error(ld)						\
+	do {								\
+		int err;						\
+		char *errmsg = "<UNKNOWN>";				\
+		if (ldap_get_option(ld, LDAP_OPT_RESULT_CODE, &err)	\
+		    == LDAP_OPT_SUCCESS)				\
+			errmsg = ldap_err2string(err);			\
+		log_error_position("LDAP error: %s", errmsg);		\
+	} while (0);							\
+
 void
 log_write(int level, const char *format, ...) ISC_FORMAT_PRINTF(2, 3);
 
