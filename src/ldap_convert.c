@@ -157,8 +157,6 @@ dn_to_text(const char *dn, ld_string_t *target, ld_string_t *origin)
 	REQUIRE(dn != NULL);
 	REQUIRE(target != NULL);
 
-	result = ISC_R_SUCCESS;
-
 	CHECK(explode_dn(dn, &exploded_dn, 0));
 	str_clear(target);
 	for (i = 0; exploded_dn[i] != NULL; i++) {
@@ -319,7 +317,6 @@ dns_to_ldap_dn_escape(isc_mem_t *mctx, const char const * dns_str, char ** ldap_
 		int length_ok = dns_idx - idx_symb_first;
 		memcpy(esc_name + esc_idx, dns_str + idx_symb_first, dns_idx - idx_symb_first);
 		esc_idx += length_ok;
-		idx_symb_first = -1;
 	}
 	esc_name[esc_idx] = '\0';
 	return ISC_R_SUCCESS;

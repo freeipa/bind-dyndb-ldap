@@ -1280,7 +1280,7 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 		publish = ISC_TRUE;
 		log_debug(2, "created zone %p: %s", zone, dn);
 	} else if (result != ISC_R_SUCCESS)
-		CLEANUP_WITH(result);
+		goto cleanup;
 
 	log_debug(2, "Setting SSU table for %p: %s", zone, dn);
 	/* Get the update policy and update the zone with it. */
@@ -3291,7 +3291,7 @@ update_zone(isc_task_t *task, isc_event_t *event)
 			 LDAP_SCOPE_BASE, attrs_zone, 0,
 			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))");
 	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
-		CLEANUP_WITH(result);
+		goto cleanup;
 
 	if (result == ISC_R_SUCCESS &&
 	    HEAD(ldap_qresult_zone->ldap_entries) != NULL) {
