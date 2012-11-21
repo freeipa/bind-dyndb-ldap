@@ -183,9 +183,9 @@ ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
                   ldap_entry_t **entryp)
 {
 	isc_result_t result;
-	ldap_attribute_t *attr;
+	ldap_attribute_t *attr = NULL;
 	char *attribute;
-	BerElement *ber;
+	BerElement *ber = NULL;
 	ldap_entry_t *entry = NULL;
 
 	REQUIRE(ld != NULL);
@@ -213,19 +213,25 @@ ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 
 		APPEND(entry->attrs, attr, link);
 	}
+	attr = NULL;
 
 	entry->dn = ldap_get_dn(ld, ldap_entry);
-
-	if (ber != NULL)
-		ber_free(ber, 0);
+	if (entry->dn == NULL) {
+		log_ldap_error(ld);
+		CLEANUP_WITH(ISC_R_FAILURE);
+	}
 
 	*entryp = entry;
 
-	return ISC_R_SUCCESS;
-
 cleanup:
-	if (entry != NULL)
-		ldap_attributelist_destroy(mctx, &entry->attrs);
+	if (ber != NULL)
+		ber_free(ber, 0);
+	if (result != ISC_R_SUCCESS) {
+		if (entry != NULL)
+			ldap_attributelist_destroy(mctx, &entry->attrs);
+		SAFE_MEM_PUT_PTR(mctx, entry);
+		SAFE_MEM_PUT_PTR(mctx, attr);
+	}
 
 	return result;
 }
