@@ -3099,10 +3099,9 @@ ldap_pool_connect(ldap_pool_t *pool, ldap_instance_t *ldap_inst)
 		ldap_conn = NULL;
 		CHECK(new_ldap_connection(pool, &ldap_conn));
 		result = ldap_connect(ldap_inst, ldap_conn, ISC_FALSE);
-		if (result == ISC_R_NOTCONNECTED || result == ISC_R_TIMEDOUT) {
-			/* LDAP server is down which can happen, continue */
-			result = ISC_R_SUCCESS;
-		} else if (result != ISC_R_SUCCESS) {
+		/* Continue even if LDAP server is down */
+		if (result != ISC_R_NOTCONNECTED && result != ISC_R_TIMEDOUT &&
+		    result != ISC_R_SUCCESS) {
 			goto cleanup;
 		}
 		pool->conns[i] = ldap_conn;
@@ -3111,6 +3110,7 @@ ldap_pool_connect(ldap_pool_t *pool, ldap_instance_t *ldap_inst)
 	return ISC_R_SUCCESS;
 
 cleanup:
+	log_error_r("couldn't establish connection in LDAP connection pool");
 	for (i = 0; i < pool->connections; i++) {
 		destroy_ldap_connection(&pool->conns[i]);
 	}
