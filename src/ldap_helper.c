@@ -3762,6 +3762,7 @@ ldap_psearch_watcher(isc_threadarg_t arg)
 
 restart:
 	/* Perform initial lookup */
+	ldap_query_free(ISC_TRUE, &ldap_qresult);
 	flush_required = ISC_TRUE;
 	if (inst->psearch) {
 		log_debug(1, "Sending initial psearch lookup");
@@ -3799,15 +3800,30 @@ restart:
 				if (!sane_sleep(inst, inst->reconnect_interval))
 					goto cleanup;
 			}
-			ldap_query_free(ISC_TRUE, &ldap_qresult);
 			goto restart;
 		} else if (flush_required == ISC_TRUE) {
+			isc_boolean_t restart_needed = ISC_FALSE;
 			/* First LDAP result after (re)start was received successfully:
 			 * Unload old zones and flush record cache.
 			 * We want to save cache in case of search timeout during restart.
 			 */
-			CHECK(refresh_zones_from_ldap(inst, ISC_TRUE));
-			CHECK(flush_ldap_cache(inst->cache));
+			if ((result = refresh_zones_from_ldap(inst, ISC_TRUE))
+			     != ISC_R_SUCCESS) {
+				log_error_r("zone refresh after initial psearch lookup failed");
+				restart_needed = ISC_TRUE;
+			} else if ((result = flush_ldap_cache(inst->cache))
+				    != ISC_R_SUCCESS) {
+				log_error_r("cache flush after initial psearch lookup failed");
+				restart_needed = ISC_TRUE;
+			}
+
+			if (restart_needed) {
+				if (!sane_sleep(inst, inst->reconnect_interval))
+					goto cleanup;
+
+				goto restart;
+			}
+
 			flush_required = ISC_FALSE;
 		}
 
