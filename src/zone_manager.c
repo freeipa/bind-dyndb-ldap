@@ -132,11 +132,8 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 	result = find_db_instance(name, &db_inst);
 	if (result == ISC_R_SUCCESS) {
 		db_inst = NULL;
-		result = ISC_R_FAILURE;
-		log_error("'%s' already exists", name);
-		goto cleanup;
-	} else {
-		result = ISC_R_SUCCESS;
+		log_error("LDAP instance '%s' already exists", name);
+		CLEANUP_WITH(ISC_R_EXISTS);
 	}
 
 	/* Parse settings. */
@@ -184,8 +181,7 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 	if (result != ISC_R_SUCCESS) {
 		/* In case we don't find any zones, we at least return
 		 * ISC_R_SUCCESS so BIND won't exit because of this. */
-		result = ISC_R_SUCCESS;
-		log_error("no valid zones found");
+		log_error_r("no valid zones found in LDAP");
 		/*
 		 * Do not jump to cleanup. Rather start timer for zone refresh.
 		 * This is just a workaround when the LDAP server is not available
