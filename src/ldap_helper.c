@@ -1340,7 +1340,6 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 		goto cleanup;
 
 	zone_dynamic = (result == DNS_R_DYNAMIC);
-	result = ISC_R_SUCCESS;
 
 	/* initialize serial in zone register and always increment serial
 	 * for a new zone (typically after BIND start)
