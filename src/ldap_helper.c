@@ -1604,13 +1604,15 @@ findrdatatype_or_create(isc_mem_t *mctx, ldapdb_rdatalist_t *rdatalist,
 		rdlist->type = rdtype;
 		rdlist->ttl = ttl;
 		APPEND(*rdatalist, rdlist, link);
-		result = ISC_R_SUCCESS;
 	} else {
 		/*
 		 * No support for different TTLs yet.
 		 */
-		if (rdlist->ttl != ttl)
-			result = ISC_R_FAILURE;
+		if (rdlist->ttl != ttl) {
+			log_error("different TTLs in single rdata list "
+				  "are not supported");
+			CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
+		}
 	}
 
 	*rdlistp = rdlist;
