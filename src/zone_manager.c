@@ -121,6 +121,7 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 	setting_t manager_settings[] = {
 		{ "zone_refresh", default_uint(0) },
 		{ "psearch", default_boolean(0) },
+		{ "verbose_checks", default_boolean(0) },
 		end_of_settings
 	};
 
@@ -139,6 +140,7 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 	/* Parse settings. */
 	manager_settings[0].target = &zone_refresh;
 	manager_settings[1].target = &psearch;
+	manager_settings[2].target = &verbose_checks; /* global variable */
 	CHECK(set_settings(manager_settings, argv));
 
 	CHECKED_MEM_GET_PTR(mctx, db_inst);

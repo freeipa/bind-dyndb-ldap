@@ -1694,10 +1694,9 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry,
 	const char *dn = "<NULL entry>";
 	const char *data = "<NULL data>";
 
-	result = add_soa_record(mctx, qresult, origin, entry,
-				rdatalist, fake_mname);
-	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
-		goto cleanup;
+	if ((ldap_entry_getclass(entry) & LDAP_ENTRYCLASS_ZONE) != 0)
+		CHECK(add_soa_record(mctx, qresult, origin, entry,
+				     rdatalist, fake_mname));
 
 	rdclass = ldap_entry_getrdclass(entry);
 	ttl = ldap_entry_getttl(entry);

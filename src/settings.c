@@ -32,6 +32,7 @@
 #include "util.h"
 #include "types.h"
 
+isc_boolean_t verbose_checks = ISC_FALSE; /* log each failure in CHECK() macro */
 
 /*
  * Forward declarations.

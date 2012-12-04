@@ -21,6 +21,8 @@
 #ifndef _LD_UTIL_H_
 #define _LD_UTIL_H_
 
+extern isc_boolean_t verbose_checks; /* from settings.c */
+
 #include "log.h"
 
 #define CLEANUP_WITH(result_code)				\
@@ -32,15 +34,12 @@
 #define CHECK(op)						\
 	do {							\
 		result = (op);					\
-		if (result != ISC_R_SUCCESS)			\
+		if (result != ISC_R_SUCCESS) {			\
+			if (verbose_checks == ISC_TRUE)		\
+				log_error_position("check failed: %s",		\
+						   dns_result_totext(result));	\
 			goto cleanup;				\
-	} while (0)
-
-#define CHECK_NEXT(op)						\
-	do {							\
-		result = (op);					\
-		if (result != ISC_R_SUCCESS)			\
-			goto next;				\
+		}						\
 	} while (0)
 
 #define CHECKED_MEM_ALLOCATE(m, target_ptr, s)			\
