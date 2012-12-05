@@ -53,7 +53,8 @@ typedef struct {
 	dns_zone_t	*zone;
 	char		*dn;
 	isc_uint32_t	serial; /* last value processed by plugin (!= value in DB) */
-	unsigned char digest[RDLIST_DIGESTLENGTH]; /* MD5 digest from all RRs in zone record */
+	unsigned char	digest[RDLIST_DIGESTLENGTH]; /* MD5 digest from all RRs in zone record */
+	ldap_cache_t	*cache;
 } zone_info_t;
 
 /* Callback for dns_rbt_create(). */
@@ -129,6 +130,7 @@ zr_destroy(zone_register_t **zrp)
  */
 static isc_result_t
 create_zone_info(isc_mem_t *mctx, dns_zone_t *zone, const char *dn,
+		 const isc_interval_t *cache_ttl, const isc_boolean_t *psearch,
 		 zone_info_t **zinfop)
 {
 	isc_result_t result;
@@ -139,9 +141,9 @@ create_zone_info(isc_mem_t *mctx, dns_zone_t *zone, const char *dn,
 	REQUIRE(zinfop != NULL && *zinfop == NULL);
 
 	CHECKED_MEM_GET_PTR(mctx, zinfo);
+	ZERO_PTR(zinfo);
 	CHECKED_MEM_STRDUP(mctx, dn, zinfo->dn);
-	zinfo->serial = 0;
-	zinfo->zone = NULL;
+	CHECK(new_ldap_cache(mctx, cache_ttl, psearch, &zinfo->cache));
 	dns_zone_attach(zone, &zinfo->zone);
 
 	*zinfop = zinfo;
@@ -165,6 +167,7 @@ delete_zone_info(void *arg1, void *arg2)
 	if (zinfo == NULL)
 		return;
 
+	destroy_ldap_cache(&zinfo->cache);
 	isc_mem_free(mctx, zinfo->dn);
 	dns_zone_detach(&zinfo->zone);
 	SAFE_MEM_PUT_PTR(mctx, zinfo);
@@ -175,7 +178,8 @@ delete_zone_info(void *arg1, void *arg2)
  * must be absolute and the zone cannot already be in the zone register.
  */
 isc_result_t
-zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn)
+zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn,
+	    const isc_interval_t *cache_ttl, const isc_boolean_t *psearch)
 {
 	isc_result_t result;
 	dns_name_t *name;
@@ -206,7 +210,8 @@ zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn)
 		goto cleanup;
 	}
 
-	CHECK(create_zone_info(zr->mctx, zone, dn, &new_zinfo));
+	CHECK(create_zone_info(zr->mctx, zone, dn, cache_ttl, psearch,
+			       &new_zinfo));
 	CHECK(dns_rbt_addname(zr->rbt, name, new_zinfo));
 
 cleanup:
@@ -244,6 +249,60 @@ zr_del_zone(zone_register_t *zr, dns_name_t *origin)
 
 cleanup:
 	RWUNLOCK(&zr->rwlock, isc_rwlocktype_write);
+
+	return result;
+}
+
+isc_result_t
+zr_flush_all_caches(zone_register_t *zr) {
+	dns_rbtnodechain_t chain;
+	isc_result_t result;
+
+	dns_rbtnodechain_init(&chain, zr->mctx);
+	RWLOCK(&zr->rwlock, isc_rwlocktype_write);
+
+	result = dns_rbtnodechain_first(&chain, zr->rbt, NULL, NULL);
+	while (result == DNS_R_NEWORIGIN || result == ISC_R_SUCCESS) {
+		dns_rbtnode_t *node = NULL;
+		ldap_cache_t *cache;
+
+		CHECK(dns_rbtnodechain_current(&chain, NULL, NULL, &node));
+		cache = ((zone_info_t *)(node->data))->cache;
+		CHECK(flush_ldap_cache(cache));
+		result = dns_rbtnodechain_next(&chain, NULL, NULL);
+	}
+
+cleanup:
+	RWUNLOCK(&zr->rwlock, isc_rwlocktype_write);
+	if (result == ISC_R_NOMORE || result == ISC_R_NOTFOUND)
+		result = ISC_R_SUCCESS;
+
+	return result;
+}
+
+isc_result_t
+zr_get_zone_cache(zone_register_t *zr, dns_name_t *name, ldap_cache_t **cachep) {
+	isc_result_t result;
+	void *zinfo = NULL;
+
+	REQUIRE(zr != NULL);
+	REQUIRE(name != NULL);
+	REQUIRE(cachep != NULL && *cachep == NULL);
+
+	if (!dns_name_isabsolute(name)) {
+		log_bug("trying to find zone with a relative name");
+		return ISC_R_FAILURE;
+	}
+
+	RWLOCK(&zr->rwlock, isc_rwlocktype_read);
+
+	result = dns_rbt_findname(zr->rbt, name, 0, NULL, &zinfo);
+	if (result == DNS_R_PARTIALMATCH)
+		result = ISC_R_SUCCESS;
+	if (result == ISC_R_SUCCESS)
+		*cachep = ((zone_info_t *)zinfo)->cache;
+
+	RWUNLOCK(&zr->rwlock, isc_rwlocktype_read);
 
 	return result;
 }

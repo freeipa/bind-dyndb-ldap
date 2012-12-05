@@ -67,6 +67,7 @@
 
 #include "acl.h"
 #include "krb5_helper.h"
+#include "cache.h"
 #include "ldap_convert.h"
 #include "ldap_entry.h"
 #include "ldap_helper.h"
@@ -150,9 +151,6 @@ struct ldap_instance {
 	/* Pool of LDAP connections */
 	ldap_pool_t		*pool;
 
-	/* RRs cache */
-	ldap_cache_t		*cache;
-
 	/* Our own list of zones. */
 	zone_register_t		*zone_register;
 
@@ -177,6 +175,7 @@ struct ldap_instance {
 	ld_string_t		*krb5_keytab;
 	ld_string_t		*fake_mname;
 	isc_boolean_t		psearch;
+	isc_interval_t		cache_ttl;
 	ld_string_t		*ldap_hostname;
 	isc_task_t		*task;
 	isc_thread_t		watcher;
@@ -344,6 +343,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	dns_view_t *view = NULL;
 	ld_string_t *auth_method_str = NULL;
 	dns_forwarders_t *orig_global_forwarders = NULL;
+	isc_uint32_t cache_ttl_seconds;
 	setting_t ldap_settings[] = {
 		{ "uri",	 no_default_string		},
 		{ "connections", default_uint(2)		},
@@ -362,6 +362,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		{ "krb5_keytab", default_string("")		},
 		{ "fake_mname",	 default_string("")		},
 		{ "psearch",	 default_boolean(ISC_FALSE)	},
+		{ "cache_ttl",	 default_uint(120)		},
 		{ "ldap_hostname", default_string("")		},
 		{ "sync_ptr",	 default_boolean(ISC_FALSE) },
 		{ "dyn_update",	 default_boolean(ISC_FALSE) },
@@ -417,12 +418,14 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	ldap_settings[i++].target = ldap_inst->sasl_password;
 	ldap_settings[i++].target = ldap_inst->krb5_keytab;
 	ldap_settings[i++].target = ldap_inst->fake_mname;
-	ldap_settings[i++].target = &ldap_inst->psearch; 
+	ldap_settings[i++].target = &ldap_inst->psearch;
+	ldap_settings[i++].target = &cache_ttl_seconds;
 	ldap_settings[i++].target = ldap_inst->ldap_hostname;
 	ldap_settings[i++].target = &ldap_inst->sync_ptr;
 	ldap_settings[i++].target = &ldap_inst->dyn_update;
 	ldap_settings[i++].target = &ldap_inst->serial_autoincrement;
 	CHECK(set_settings(ldap_settings, argv));
+	isc_interval_set(&ldap_inst->cache_ttl, cache_ttl_seconds, 0);
 
 	/* Set timer for deadlock detection inside semaphore_wait_timed . */
 	if (semaphore_wait_timeout.seconds < ldap_inst->timeout*SEM_WAIT_TIMEOUT_MUL)
@@ -493,7 +496,6 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		goto cleanup;
 	}
 
-	CHECK(new_ldap_cache(mctx, argv, &ldap_inst->cache, ldap_inst->psearch));
 	CHECK(ldap_pool_create(mctx, ldap_inst->connections, &ldap_inst->pool));
 	CHECK(ldap_pool_connect(ldap_inst->pool, ldap_inst));
 
@@ -660,9 +662,6 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	dns_view_detach(&ldap_inst->view);
 
 	DESTROYLOCK(&ldap_inst->kinit_lock);
-
-	if (ldap_inst->cache != NULL)
-		destroy_ldap_cache(&ldap_inst->cache);
 
 	zr_destroy(&ldap_inst->zone_register);
 
@@ -859,9 +858,6 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 			log_error_r("zone '%s': failed to delete forwarders",
 				    zone_name_char);
 	}
-
-	/* TODO: flush cache records belonging to deleted zone */
-	CHECK(discard_from_cache(inst->cache, name));
 
 	result = zr_get_zone_ptr(inst->zone_register, name, &zone);
 	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
@@ -1235,6 +1231,7 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	unsigned char *zr_digest = NULL;
 	ldapdb_rdatalist_t rdatalist;
 	isc_boolean_t zone_dynamic = ISC_FALSE;
+	ldap_cache_t *cache = NULL;
 
 	REQUIRE(entry != NULL);
 	REQUIRE(inst != NULL);
@@ -1251,7 +1248,12 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	if (result == ISC_R_SUCCESS)
 		unlock = ISC_TRUE;
 
-	CHECK(discard_from_cache(inst->cache, &name));
+	/* cache will not exist before zone load */
+	result = zr_get_zone_cache(inst->zone_register, &name, &cache);
+	if (result == ISC_R_SUCCESS)
+		CHECK(discard_from_cache(cache, &name));
+	else if (result != ISC_R_NOTFOUND)
+		goto cleanup;
 
 	/*
 	 * Forwarding has top priority hence when the forwarders are properly
@@ -1276,7 +1278,8 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	result = zr_get_zone_ptr(inst->zone_register, &name, &zone);
 	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
 		CHECK(create_zone(inst, &name, &zone));
-		CHECK(zr_add_zone(inst->zone_register, zone, dn));
+		CHECK(zr_add_zone(inst->zone_register, zone, dn,
+				  &inst->cache_ttl, &inst->psearch));
 		publish = ISC_TRUE;
 		log_debug(2, "created zone %p: %s", zone, dn);
 	} else if (result != ISC_R_SUCCESS)
@@ -1801,14 +1804,14 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 	ldap_qresult_t *ldap_qresult = NULL;
 	ldap_entry_t *entry;
 	ld_string_t *string = NULL;
-	ldap_cache_t *cache;
+	ldap_cache_t *cache = NULL;
 
 	REQUIRE(ldap_inst != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(rdatalist != NULL);
 
 	/* Check if RRs are in the cache */
-	cache = ldap_instance_getcache(ldap_inst);
+	CHECK(zr_get_zone_cache(ldap_inst->zone_register, name, &cache));
 	result = ldap_cache_getrdatalist(mctx, cache, name, rdatalist);
 	if (result == ISC_R_SUCCESS)
 		return ISC_R_SUCCESS;
@@ -2700,7 +2703,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	ld_string_t *owner_dn = NULL;
 	LDAPMod *change[3] = { NULL };
 	LDAPMod *change_ptr = NULL;
-	ldap_cache_t *cache;
+	ldap_cache_t *cache = NULL;
 	ldap_entry_t *entry;
 	ldap_valuelist_t values;
 	isc_boolean_t zone_dyn_update = ldap_inst->dyn_update;
@@ -2757,7 +2760,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		goto cleanup;
 	}
 	/* Flush modified record from the cache */
-	cache = ldap_instance_getcache(ldap_inst);
+	CHECK(zr_get_zone_cache(ldap_inst->zone_register, owner, &cache));
 	CHECK(discard_from_cache(cache, owner));
 
 	if (rdlist->type == dns_rdatatype_soa) {
@@ -2949,10 +2952,12 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 
 		/* Modify PTR record. */
 		CHECK(ldap_modify_do(ldap_inst, ldap_conn, str_buf(owner_dn_ptr), change, delete_node));
-		(void) discard_from_cache(ldap_instance_getcache(ldap_inst),
-					  dns_fixedname_name(&name)); 
+		cache = NULL;
+		CHECK(zr_get_zone_cache(ldap_inst->zone_register,
+					dns_fixedname_name(&name), &cache));
+		CHECK(discard_from_cache(cache, dns_fixedname_name(&name)));
 	}
-	
+
 cleanup:
 	ldap_query_free(ISC_FALSE, &ldap_qresult);
 	ldap_pool_putconnection(ldap_inst->pool, &ldap_conn);
@@ -2980,12 +2985,6 @@ remove_from_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,
 {
 	return modify_ldap_common(owner, ldap_inst, rdlist, LDAP_MOD_DELETE,
 				  delete_node);
-}
-
-ldap_cache_t *
-ldap_instance_getcache(ldap_instance_t *ldap_inst)
-{
-	return ldap_inst->cache;
 }
 
 static isc_result_t
@@ -3203,6 +3202,7 @@ soa_serial_increment(isc_mem_t *mctx, ldap_instance_t *inst,
 	isc_uint32_t old_serial;
 	isc_uint32_t new_serial;
 	isc_time_t curr_time;
+	ldap_cache_t *cache = NULL;
 
 	REQUIRE(inst != NULL);
 	REQUIRE(zone_name != NULL);
@@ -3236,7 +3236,8 @@ soa_serial_increment(isc_mem_t *mctx, ldap_instance_t *inst,
 
 	/* write the new serial back to DB */
 	CHECK(modify_soa_record(inst, NULL, str_buf(zone_dn), soa_rdata));
-	CHECK(discard_from_cache(ldap_instance_getcache(inst), zone_name));
+	CHECK(zr_get_zone_cache(inst->zone_register, zone_name, &cache));
+	CHECK(discard_from_cache(cache, zone_name));
 
 	/* put the new SOA to inst->cache and compare old and new serials */
 	CHECK(ldap_get_zone_serial(inst, zone_name, &new_serial));
@@ -3410,7 +3411,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 	ldap_psearchevent_t *pevent = (ldap_psearchevent_t *)event;
 	isc_result_t result;
 	ldap_instance_t *inst = NULL;
-	ldap_cache_t *cache;
+	ldap_cache_t *cache = NULL;
 	isc_mem_t *mctx;
 	mctx = pevent->mctx;
 
@@ -3437,16 +3438,23 @@ update_record(isc_task_t *task, isc_event_t *event)
 	}
 
 	/* Get cache instance & clean old record */
-	cache = ldap_instance_getcache(inst);
+	CHECK(zr_get_zone_cache(inst->zone_register, &name, &cache));
 	CHECK(discard_from_cache(cache, &name));
 
+	/* TODO: double check correctness before replacing ldap_query() with
+	 *       data from *event */
 	if (PSEARCH_MODDN(pevent->chgtype)) {
 		/* remove previous name only if it was inside DNS subtree */
-		if(dn_to_dnsname(mctx, pevent->prevdn, &prevname, &prevorigin)
+		if (dn_to_dnsname(mctx, pevent->prevdn, &prevname, &prevorigin)
 				== ISC_R_SUCCESS) {
 			log_debug(5, "psearch_update: removing name from cache, dn: '%s'",
 					  pevent->prevdn);
-			CHECK(discard_from_cache(cache, &prevname));
+			cache = NULL;
+			result = zr_get_zone_cache(inst->zone_register, &prevname, &cache);
+			if (result == ISC_R_SUCCESS)
+				CHECK(discard_from_cache(cache, &prevname));
+			else if (result != ISC_R_NOTFOUND)
+				goto cleanup;
 		} else {
 			log_debug(5, "psearch_update: old name wasn't managed "
 					"by plugin, dn '%s'", pevent->prevdn);
@@ -3811,7 +3819,7 @@ restart:
 			     != ISC_R_SUCCESS) {
 				log_error_r("zone refresh after initial psearch lookup failed");
 				restart_needed = ISC_TRUE;
-			} else if ((result = flush_ldap_cache(inst->cache))
+			} else if ((result = zr_flush_all_caches(inst->zone_register))
 				    != ISC_R_SUCCESS) {
 				log_error_r("cache flush after initial psearch lookup failed");
 				restart_needed = ISC_TRUE;

@@ -38,11 +38,11 @@
 #include "util.h"
 
 struct ldap_cache {
-	isc_mutex_t	mutex; /* TODO: RWLOCK? */
-	isc_mem_t	*mctx;
-	dns_rbt_t	*rbt;
-	isc_interval_t	cache_ttl;
-	isc_boolean_t	psearch;
+	isc_mutex_t		mutex;		/* TODO: RWLOCK? */
+	isc_mem_t		*mctx;
+	dns_rbt_t		*rbt;
+	const isc_interval_t	*cache_ttl;	/* pointer to LDAP instance */
+	const isc_boolean_t	*psearch;	/* pointer to LDAP instance */
 };
 
 typedef struct {
@@ -78,8 +78,9 @@ cache_node_create(ldap_cache_t *cache, cache_node_t **nodep)
 	isc_mem_attach(cache->mctx, &node->mctx);
 	ZERO_PTR(&node->rdatalist);
 	/* Do not set the ttl when psearch is enabled. */
-	if (!cache->psearch)
-		CHECK(isc_time_nowplusinterval(&node->valid_until, &cache->cache_ttl));
+	if (*cache->psearch == ISC_FALSE)
+		CHECK(isc_time_nowplusinterval(&node->valid_until,
+					       cache->cache_ttl));
 
 	*nodep = node;
 	return ISC_R_SUCCESS;
@@ -90,29 +91,27 @@ cleanup:
 	return result;
 }
 
+/**
+ * @param[in] cache_ttl ISC interval in LDAP instance shared by all caches
+ * @param[in] psearch   boolean in LDAP instance shared by all caches
+ */
 isc_result_t
-new_ldap_cache(isc_mem_t *mctx, const char *const *argv, ldap_cache_t **cachep, isc_boolean_t psearch)
+new_ldap_cache(isc_mem_t *mctx, const isc_interval_t *cache_ttl,
+	       const isc_boolean_t *psearch, ldap_cache_t **cachep)
 {
 	isc_result_t result;
 	ldap_cache_t *cache = NULL;
-	unsigned int cache_ttl;
-	setting_t cache_settings[] = {
-		{ "cache_ttl", default_uint(120) },
-		end_of_settings
-	};
 
+	REQUIRE(cache_ttl != NULL);
+	REQUIRE(psearch != NULL);
 	REQUIRE(cachep != NULL && *cachep == NULL);
-
-	cache_settings[0].target = &cache_ttl;
-	CHECK(set_settings(cache_settings, argv));
 
 	CHECKED_MEM_GET_PTR(mctx, cache);
 	ZERO_PTR(cache);
 	isc_mem_attach(mctx, &cache->mctx);
 
-	isc_interval_set(&cache->cache_ttl, cache_ttl, 0);
-	
-	if (cache_ttl) {
+	cache->cache_ttl = cache_ttl;
+	if (!isc_interval_iszero(cache_ttl)) {
 		CHECK(dns_rbt_create(mctx, cache_node_deleter, NULL,
 				     &cache->rbt));
 		CHECK(isc_mutex_init(&cache->mutex));
@@ -123,8 +122,7 @@ new_ldap_cache(isc_mem_t *mctx, const char *const *argv, ldap_cache_t **cachep, 
 	return ISC_R_SUCCESS;
 
 cleanup:
-	if (cache != NULL)
-		destroy_ldap_cache(&cache);
+	destroy_ldap_cache(&cache);
 
 	return result;
 }
@@ -134,9 +132,12 @@ destroy_ldap_cache(ldap_cache_t **cachep)
 {
 	ldap_cache_t *cache;
 
-	REQUIRE(cachep != NULL && *cachep != NULL);
+	REQUIRE(cachep != NULL);
 
 	cache = *cachep;
+
+	if (cache == NULL)
+		return;
 
 	if (cache->rbt) {
 		LOCK(&cache->mutex);

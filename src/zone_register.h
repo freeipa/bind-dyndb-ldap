@@ -21,6 +21,8 @@
 #ifndef _LD_ZONE_REGISTER_H_
 #define _LD_ZONE_REGISTER_H_
 
+#include "cache.h"
+
 typedef struct zone_register zone_register_t;
 
 isc_result_t
@@ -30,10 +32,17 @@ void
 zr_destroy(zone_register_t **zrp);
 
 isc_result_t
-zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn);
+zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn,
+	    const isc_interval_t *cache_ttl, const isc_boolean_t *psearch);
 
 isc_result_t
 zr_del_zone(zone_register_t *zr, dns_name_t *origin);
+
+isc_result_t
+zr_flush_all_caches(zone_register_t *zr);
+
+isc_result_t
+zr_get_zone_cache(zone_register_t *zr, dns_name_t *name, ldap_cache_t **cachep);
 
 isc_result_t
 zr_get_zone_dn(zone_register_t *zr, dns_name_t *name, const char **dn,
