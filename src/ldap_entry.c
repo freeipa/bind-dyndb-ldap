@@ -356,8 +356,9 @@ ldap_entry_getfakesoa(ldap_entry_t *entry, const ld_string_t *fake_mname,
 	ldap_valuelist_t values;
 	int i = 0;
 
+	const char *soa_serial_attr = "idnsSOAserial";
 	const char *soa_attrs[] = {
-		"idnsSOAmName", "idnsSOArName", "idnsSOAserial",
+		"idnsSOAmName", "idnsSOArName", soa_serial_attr,
 		"idnsSOArefresh", "idnsSOAretry", "idnsSOAexpire",
 		"idnsSOAminimum", NULL
 	};
@@ -372,12 +373,25 @@ ldap_entry_getfakesoa(ldap_entry_t *entry, const ld_string_t *fake_mname,
 		CHECK(str_cat_char(target, " "));
 	}
 	for (; soa_attrs[i] != NULL; i++) {
-		CHECK(ldap_entry_getvalues(entry, soa_attrs[i], &values));
+		result = ldap_entry_getvalues(entry, soa_attrs[i], &values);
+		/** Workaround for
+		 *  https://bugzilla.redhat.com/show_bug.cgi?id=894131
+		 *  DNS zones created on remote IPA 3.0 server don't have
+		 *  idnsSOAserial attribute present in LDAP. */
+		if (result == ISC_R_NOTFOUND
+		    && soa_attrs[i] == soa_serial_attr) {
+			/* idnsSOAserial is missing! Read it as 1. */
+			CHECK(str_cat_char(target, "1 "));
+			continue;
+		} else if (result != ISC_R_SUCCESS)
+			goto cleanup;
+
 		CHECK(str_cat_char(target, HEAD(values)->value));
 		CHECK(str_cat_char(target, " "));
 	}
 
 cleanup:
+	/* TODO: check for memory leaks */
 	return result;
 }
 
