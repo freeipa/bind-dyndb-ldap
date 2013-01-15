@@ -1,3 +1,22 @@
+2.4
+=====
+[1] Missing SOA serial number in zone object is treated as 1.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/103
+
+[2] Each zone has separate record cache. It should prevent problems
+    during record rename.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/91
+
+[3] False warning 'zone serial (2012060301) unchanged' should not pop-up.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/79
+
+[4] New option 'verbose_checks yes' enables more verbose logging.
+
+[5] Various error handling and logging improvements.
+    All bugs reported by Clang static analyzer were fixed.
+
+[6] Dead code cleanup.
+
 2.3
 ======
 [1] Global forwarders from named.conf were ignored.
