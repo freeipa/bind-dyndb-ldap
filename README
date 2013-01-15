@@ -266,6 +266,12 @@ dyn_update (default no)
 	This setting can be overridden for each zone individually
 	by idnsAllowDynUpdate attribute.
 
+verbose_checks (default no)
+	Set this option to "yes" if you would like to log all failures
+	in internal CHECK() macros. This option is recommended only for
+	debugging purposes. It could produce huge amount of log messages
+	on a loaded system!
+
 5.2 Sample configuration
 ------------------------
 Let's take a look at a sample configuration:
