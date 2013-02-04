@@ -267,8 +267,10 @@ zr_flush_all_caches(zone_register_t *zr) {
 		ldap_cache_t *cache;
 
 		CHECK(dns_rbtnodechain_current(&chain, NULL, NULL, &node));
-		cache = ((zone_info_t *)(node->data))->cache;
-		CHECK(flush_ldap_cache(cache));
+		if (node->data != NULL) { /* skip auxiliary RBT nodes */
+			cache = ((zone_info_t *)(node->data))->cache;
+			CHECK(flush_ldap_cache(cache));
+		}
 		result = dns_rbtnodechain_next(&chain, NULL, NULL);
 	}
 
