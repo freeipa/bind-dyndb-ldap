@@ -1,3 +1,8 @@
+2.5
+=====
+[1] Fix crash during per-zone cache flush.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/107
+
 2.4
 =====
 [1] Missing SOA serial number in zone object is treated as 1.
