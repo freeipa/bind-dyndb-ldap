@@ -1,3 +1,6 @@
+[1] Automatically reload invalid zone after each change in zone data.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/102
+
 2.5
 =====
 [1] Fix crash during per-zone cache flush.

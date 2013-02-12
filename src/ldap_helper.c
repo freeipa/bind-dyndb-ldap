@@ -3411,8 +3411,11 @@ update_record(isc_task_t *task, isc_event_t *event)
 	ldap_psearchevent_t *pevent = (ldap_psearchevent_t *)event;
 	isc_result_t result;
 	ldap_instance_t *inst = NULL;
-	ldap_cache_t *cache = NULL;
+	ldap_cache_t *cache;
 	isc_mem_t *mctx;
+	dns_zone_t *zone_ptr = NULL;
+	isc_boolean_t zone_found = ISC_FALSE;
+	isc_boolean_t zone_reloaded = ISC_FALSE;
 	mctx = pevent->mctx;
 
 	UNUSED(task);
@@ -3431,13 +3434,16 @@ update_record(isc_task_t *task, isc_event_t *event)
 	dns_name_init(&prevname, NULL);
 	dns_name_init(&prevorigin, NULL);
 	CHECK(dn_to_dnsname(mctx, pevent->dn, &name, &origin));
+	zone_found = ISC_TRUE;
 
+update_restart:
 	if (PSEARCH_DEL(pevent->chgtype) || PSEARCH_MODDN(pevent->chgtype)) {
 		log_debug(5, "psearch_update: removing name from cache, dn: '%s'",
 		          pevent->dn);
 	}
 
 	/* Get cache instance & clean old record */
+	cache = NULL;
 	CHECK(zr_get_zone_cache(inst->zone_register, &name, &cache));
 	CHECK(discard_from_cache(cache, &name));
 
@@ -3486,11 +3492,39 @@ update_record(isc_task_t *task, isc_event_t *event)
 	if (inst->serial_autoincrement && PSEARCH_ANY(pevent->chgtype)) {
 		CHECK(soa_serial_increment(mctx, inst, &origin));
 	}
+
 cleanup:
-	if (result != ISC_R_SUCCESS)
+	if (result != ISC_R_SUCCESS && zone_found && !zone_reloaded &&
+	   (result == DNS_R_NOTLOADED || result == DNS_R_BADZONE)) {
+		log_debug(1, "reloading invalid zone after a change; "
+			     "reload triggered by change in '%s'",
+			     pevent->dn);
+
+		result = zr_get_zone_ptr(inst->zone_register, &origin, &zone_ptr);
+		if (result == ISC_R_SUCCESS)
+			result = dns_zone_load(zone_ptr);
+		if (zone_ptr != NULL)
+			dns_zone_detach(&zone_ptr);
+
+		if (result == ISC_R_SUCCESS || result == DNS_R_UPTODATE ||
+		    result == DNS_R_DYNAMIC || result == DNS_R_CONTINUE) {
+			/* zone reload succeeded, fire current event again */
+			log_debug(1, "restarting update_record after zone reload "
+				     "caused by change in '%s'", pevent->dn);
+			zone_reloaded = ISC_TRUE;
+			goto update_restart;
+		} else {
+			log_error_r("unable to reload invalid zone; "
+				    "reload triggered by change in '%s'",
+				    pevent->dn);
+		}
+
+	} else if (result != ISC_R_SUCCESS) {
+		/* error other than invalid zone */
 		log_error_r("update_record (psearch) failed, dn '%s' change type 0x%x. "
 			  "Records can be outdated, run `rndc reload`",
 			  pevent->dn, pevent->chgtype);
+	}
 
 	if (dns_name_dynamic(&name))
 		dns_name_free(&name, inst->mctx);
