@@ -60,7 +60,7 @@ check_credentials(krb5_context context,
 	krberr = krb5_build_principal(context, &mcreds.server,
 				      strlen(realm), realm,
 				      "krbtgt", realm, NULL);
-	CHECK_KRB5(context, krberr, "Failed to build tgt principal");
+	CHECK_KRB5(context, krberr, "Failed to build 'krbtgt/REALM' principal");
 
 	/* krb5_cc_retrieve_cred filters on both server and client */
 	mcreds.client = service;
@@ -68,7 +68,7 @@ check_credentials(krb5_context context,
 	krberr = krb5_cc_retrieve_cred(context, ccache, 0, &mcreds, &creds);
 	if (krberr) {
 		const char * errmsg = krb5_get_error_message(context, krberr);
-		log_debug(2, "Principal not found in cred cache (%s)",
+		log_debug(2, "Credentials are not present in cache (%s)",
 			  errmsg);
 		krb5_free_error_message(context, errmsg);
 		result = ISC_R_FAILURE;
@@ -79,7 +79,7 @@ check_credentials(krb5_context context,
 	CHECK_KRB5(context, krberr, "Failed to get timeofday");
 
 	if (now > (creds.times.endtime + MIN_TIME)) {
-		log_debug(2, "Credentials expired");
+		log_debug(2, "Credentials in cache expired");
 		result = ISC_R_FAILURE;
 		goto cleanup;
 	}
@@ -123,10 +123,10 @@ get_krb5_tgt(isc_mem_t *mctx, const char *principal, const char *keyfile)
 	}
 
 	krberr = krb5_init_context(&context);
-	if (krberr) {
-		log_error("Failed to init kerberos context");
-		return ISC_R_FAILURE;
-	}
+	/* This will blow up with older versions of Heimdal Kerberos, but
+	 * this kind of errors are not debuggable without any error message.
+	 * http://mailman.mit.edu/pipermail/kerberos/2013-February/018720.html */
+	CHECK_KRB5(NULL, krberr, "Kerberos context initialization failed");
 
 	/* get credentials cache */
 	CHECK(str_new(mctx, &ccname));
@@ -134,31 +134,35 @@ get_krb5_tgt(isc_mem_t *mctx, const char *principal, const char *keyfile)
 
 	ret = setenv("KRB5CCNAME", str_buf(ccname), 1);
 	if (ret == -1) {
-		log_error("Failed to set KRB5CCNAME environment variable");
+		log_error("Failed to set KRB5CCNAME environment variable to "
+			  "'%s'", str_buf(ccname));
 		result = ISC_R_FAILURE;
 		goto cleanup;
 	}
 
 	krberr = krb5_cc_resolve(context, str_buf(ccname), &ccache);
 	CHECK_KRB5(context, krberr,
-		   "Failed to resolve ccache name %s", str_buf(ccname));
+		   "Failed to resolve credentials cache name '%s'",
+		   str_buf(ccname));
 
 	/* get krb5_principal from string */
 	krberr = krb5_parse_name(context, principal, &kprincpw);
 	CHECK_KRB5(context, krberr,
-		   "Failed to parse the principal name %s", principal);
+		   "Failed to parse the principal name '%s'", principal);
 
 	/* check if we already have valid credentials */
 	result = check_credentials(context, ccache, kprincpw);
 	if (result == ISC_R_SUCCESS) {
-		log_debug(2, "Found valid cached credentials");
+		log_debug(2, "Found valid Kerberos credentials in cache");
 		goto cleanup;
+	} else {
+		log_debug(2, "Attempting to acquire new Kerberos credentials");
 	}
 
 	/* open keytab */
 	krberr = krb5_kt_resolve(context, keyfile, &keytab);
 	CHECK_KRB5(context, krberr,
-		   "Failed to resolve keytab file %s", keyfile);
+		   "Failed to resolve keytab file '%s'", keyfile);
 
 	memset(&my_creds, 0, sizeof(my_creds));
 	memset(&options, 0, sizeof(options));
@@ -170,15 +174,19 @@ get_krb5_tgt(isc_mem_t *mctx, const char *principal, const char *keyfile)
 	/* get tgt */
 	krberr = krb5_get_init_creds_keytab(context, &my_creds, kprincpw,
 					    keytab, 0, NULL, &options);
-	CHECK_KRB5(context, krberr, "Failed to init credentials");
+	CHECK_KRB5(context, krberr, "Failed to get initial credentials (TGT) "
+				    "using principal '%s' and keytab '%s'",
+				    principal, keyfile);
 	my_creds_ptr = &my_creds;
 
 	/* store credentials in cache */
 	krberr = krb5_cc_initialize(context, ccache, kprincpw);
-	CHECK_KRB5(context, krberr, "Failed to initialize ccache");
+	CHECK_KRB5(context, krberr, "Failed to initialize credentials cache "
+				    "'%s'", str_buf(ccname));
 
 	krberr = krb5_cc_store_cred(context, ccache, &my_creds);
-	CHECK_KRB5(context, krberr, "Failed to store ccache");
+	CHECK_KRB5(context, krberr, "Failed to store credentials "
+				    "in credentials cache '%s'", str_buf(ccname));
 
 	result = ISC_R_SUCCESS;
 
