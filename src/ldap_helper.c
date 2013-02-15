@@ -2286,7 +2286,7 @@ force_reconnect:
 					      str_buf(ldap_inst->krb5_keytab));
 			UNLOCK(&ldap_inst->kinit_lock);
 			if (result != ISC_R_SUCCESS)
-				return result;
+				return ISC_R_NOTCONNECTED;
 		}
 
 		log_debug(4, "trying interactive bind using %s mechanism",
