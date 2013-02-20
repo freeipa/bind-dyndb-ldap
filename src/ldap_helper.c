@@ -750,12 +750,17 @@ create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, dns_zone_t **zonep)
 	argv[1] = ldap_inst->db_name;
 
 	result = dns_view_findzone(ldap_inst->view, name, &zone);
-	if (result == ISC_R_SUCCESS) {
-		result = ISC_R_EXISTS;
-		log_error_r("failed to create new zone");
-		goto cleanup;
-	} else if (result != ISC_R_NOTFOUND) {
-		log_error_r("dns_view_findzone() failed");
+	if (result != ISC_R_NOTFOUND) {
+		char zone_name[DNS_NAME_FORMATSIZE];
+		dns_name_format(name, zone_name, DNS_NAME_FORMATSIZE);
+
+		if (result == ISC_R_SUCCESS) {
+			result = ISC_R_EXISTS;
+			log_error_r("failed to create new zone '%s'", zone_name);
+		} else {
+			log_error_r("dns_view_findzone() failed while "
+				    "searching for zone '%s'", zone_name);
+		}
 		goto cleanup;
 	}
 
