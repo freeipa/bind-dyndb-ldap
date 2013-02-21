@@ -457,7 +457,6 @@ cleanup:
 	return result;
 }
 
-/* XXX add support for DNAME redirection */
 static isc_result_t
 find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
      dns_rdatatype_t type, unsigned int options, isc_stdtime_t now,
@@ -469,6 +468,7 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 	ldapdb_node_t *node = NULL;
 	dns_rdatalist_t *rdlist = NULL;
 	isc_boolean_t is_cname = ISC_FALSE;
+	isc_boolean_t is_dname = ISC_FALSE;
 	isc_boolean_t is_delegation = ISC_FALSE;
 	ldapdb_rdatalist_t rdatalist;
 	unsigned int labels, qlabels;
@@ -515,7 +515,20 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 			continue;
 		}
 
-		/* TODO: We should check for DNAME records right here */
+		/* RFC 6672 section 2.3.:
+		   Unlike a CNAME RR, a DNAME RR redirects DNS names
+		   subordinate to its owner name; the owner name of a DNAME
+		   is not redirected itself. */
+		if (qlabels > dns_name_countlabels(traversename)) {
+			rdlist = NULL;
+			result = ldapdb_rdatalist_findrdatatype(&rdatalist,
+								dns_rdatatype_dname,
+								&rdlist);
+			if (result == ISC_R_SUCCESS) {
+				is_dname = ISC_TRUE;
+				goto skipfind;
+			}
+		}
 
 		/*
 		 * Check if there is at least one NS RR. If yes and this is not NS
@@ -527,6 +540,7 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 		if (dns_name_countlabels(&db->origin) <
 		    dns_name_countlabels(traversename) &&
 		    (options & DNS_DBFIND_GLUEOK) == 0) {
+			rdlist = NULL;
 			result = ldapdb_rdatalist_findrdatatype(&rdatalist,
 								dns_rdatatype_ns,
 								&rdlist);
@@ -582,7 +596,7 @@ found:
 skipfind:
 	CHECK(dns_name_copy(traversename, foundname, NULL));
 
-	if (rdataset != NULL && type != dns_rdatatype_any) {
+	if (rdataset != NULL && (type != dns_rdatatype_any || is_dname)) {
 		/* dns_rdatalist_tordataset returns success only */
 		CHECK(clone_rdatalist_to_rdataset(ldapdb->common.mctx, rdlist,
 						  rdataset));
@@ -600,6 +614,8 @@ skipfind:
 		return DNS_R_DELEGATION;
 	else if (is_cname)
 		return DNS_R_CNAME;
+	else if (is_dname)
+		return DNS_R_DNAME;
 	else
 		return ISC_R_SUCCESS;
 
