@@ -420,6 +420,18 @@ acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone)
 		CHECK(get_fixed_name(stmt, "name", &fname));
 		CHECK(get_types(mctx, stmt, &types, &n));
 
+		if (match_type == DNS_SSUMATCHTYPE_WILDCARD &&
+		    !dns_name_iswildcard(dns_fixedname_name(&fname))) {
+			char name[DNS_NAME_FORMATSIZE];
+			dns_name_format(dns_fixedname_name(&fname), name,
+					DNS_NAME_FORMATSIZE);
+			dns_zone_log(zone, ISC_LOG_ERROR,
+				     "invalid update policy: "
+				     "name '%s' is expected to be a wildcard",
+				     name);
+			CLEANUP_WITH(DNS_R_BADNAME);
+		}
+
 		result = dns_ssutable_addrule(table, grant,
 					      dns_fixedname_name(&fident),
 					      match_type,
