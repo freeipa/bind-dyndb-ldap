@@ -71,6 +71,19 @@ static cfg_type_t *allow_query;
 static cfg_type_t *allow_transfer;
 static cfg_type_t *forwarders;
 
+/* Following definitions are necessary for context ("map" configuration object)
+ * required during ACL parsing. */
+static cfg_clausedef_t * empty_map_clausesets[] = {
+	NULL
+};
+
+static cfg_type_t cfg_type_empty_map = {
+	"empty_map", cfg_parse_map, cfg_print_map, cfg_doc_map, &cfg_rep_map,
+	empty_map_clausesets
+};
+
+static cfg_type_t *empty_map_p = &cfg_type_empty_map;
+
 static cfg_type_t *
 get_type_from_tuplefield(const cfg_type_t *cfg_type, const char *name)
 {
@@ -469,44 +482,56 @@ acl_from_ldap(isc_mem_t *mctx, const char *aclstr, acl_type_t type,
 	cfg_parser_t *parser = NULL;
 	cfg_obj_t *aclobj = NULL;
 	cfg_aclconfctx_t *aclctx = NULL;
+	/* ACL parser requires "configuration context". The parser looks for
+	 * undefined names in this context. We create empty context ("map" type),
+	 * i.e. only built-in named lists "any", "none" etc. are supported. */
+	cfg_obj_t *cctx = NULL;
+	cfg_parser_t *parser_empty = NULL;
 
 	REQUIRE(aclp != NULL && *aclp == NULL);
 
 	CHECK(bracket_str(mctx, aclstr, &new_aclstr));
 
 	CHECK(cfg_parser_create(mctx, dns_lctx, &parser));
+	CHECK(cfg_parser_create(mctx, dns_lctx, &parser_empty));
+	CHECK(parse(parser_empty, "{}", &empty_map_p, &cctx));
+
 	switch (type) {
 	case acl_type_query:
-		result = parse(parser, str_buf(new_aclstr), &allow_query,
-			       &aclobj);
+		CHECK(parse(parser, str_buf(new_aclstr), &allow_query,
+			    &aclobj));
 		break;
 	case acl_type_transfer:
-		result = parse(parser, str_buf(new_aclstr), &allow_transfer,
-			       &aclobj);
+		CHECK(parse(parser, str_buf(new_aclstr), &allow_transfer,
+			    &aclobj));
 		break;
 	default:
 		/* This is a bug */
 		REQUIRE("Unhandled ACL type in acl_from_ldap" == NULL);
 	}
 
-	if (result != ISC_R_SUCCESS) {
-		log_error("Failed to parse ACL (%s)", aclstr);
-		goto cleanup;
-	}
-
 	CHECK(cfg_aclconfctx_create(mctx, &aclctx));
-	CHECK(cfg_acl_fromconfig(aclobj, NULL, dns_lctx, aclctx, mctx, 0, &acl));
+	CHECK(cfg_acl_fromconfig(aclobj, cctx, dns_lctx, aclctx, mctx, 0, &acl));
 
 	*aclp = acl;
 	result = ISC_R_SUCCESS;
 
 cleanup:
+	if (result != ISC_R_SUCCESS)
+		log_error_r("%s ACL parsing failed: '%s'",
+			    type == acl_type_query ? "query" : "transfer",
+			    aclstr);
+
 	if (aclctx != NULL)
 		cfg_aclconfctx_detach(&aclctx);
 	if (aclobj != NULL)
 		cfg_obj_destroy(parser, &aclobj);
 	if (parser != NULL)
 		cfg_parser_destroy(&parser);
+	if (cctx != NULL)
+		cfg_obj_destroy(parser_empty, &cctx);
+	if (parser_empty != NULL)
+		cfg_parser_destroy(&parser_empty);
 	str_destroy(&new_aclstr);
 
 	return result;
