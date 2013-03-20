@@ -1492,18 +1492,26 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
 	 * ldap_parse_zoneentry() requests another connection. */
 	CHECK(setting_get_str("base", ldap_inst->global_settings, &base));
 	CHECK(ldap_pool_getconnection(ldap_inst->pool, &ldap_conn));
-	CHECK(ldap_query(ldap_inst, ldap_conn, &ldap_config_qresult, base,
-			 LDAP_SCOPE_SUBTREE, config_attrs, 0,
-			 "(objectClass=idnsConfigObject)"));
 	CHECK(ldap_query(ldap_inst, ldap_conn, &ldap_zones_qresult, base,
 			 LDAP_SCOPE_SUBTREE, zone_attrs, 0,
 			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
+
+	/* Do not touch configuration from psearch watcher thread, otherwise
+	 * BIND will crash. The problem is that isc_task_beginexclusive()
+	 * is called before task associated with psearch watcher thread
+	 * is fully initialized. */
+	if (!delete_only)
+		CHECK(ldap_query(ldap_inst, ldap_conn, &ldap_config_qresult,
+				base, LDAP_SCOPE_SUBTREE,
+				config_attrs, 0, "(objectClass=idnsConfigObject)"));
+
 	ldap_pool_putconnection(ldap_inst->pool, &ldap_conn);
 
-	for (entry = HEAD(ldap_config_qresult->ldap_entries);
-	     entry != NULL;
-	     entry = NEXT(entry, link)) {
-		CHECK(ldap_parse_configentry(entry, ldap_inst));
+	if (!delete_only) {
+		for (entry = HEAD(ldap_config_qresult->ldap_entries);
+		     entry != NULL;
+		     entry = NEXT(entry, link))
+			CHECK(ldap_parse_configentry(entry, ldap_inst));
 	}
 
 	/*
