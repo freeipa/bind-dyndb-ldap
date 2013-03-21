@@ -3495,7 +3495,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 	ldapdb_rdatalist_t rdatalist;
 
 	/* Convert domain name from text to struct dns_name_t. */
-	settings_set_t *zone_settings = NULL;
+	settings_set_t *zone_settings;
 	dns_name_t name;
 	dns_name_t origin;
 	dns_name_t prevname;
@@ -3561,6 +3561,7 @@ update_restart:
 
 	/* Do not bump serial during initial database dump. */
 	if (PSEARCH_ANY(pevent->chgtype)) {
+		zone_settings = NULL;
 		CHECK(zr_get_zone_settings(inst->zone_register, &origin, &zone_settings));
 		CHECK(setting_get_bool("serial_autoincrement", zone_settings,
 				       &serial_autoincrement));
