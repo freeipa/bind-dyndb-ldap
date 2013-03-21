@@ -3486,6 +3486,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 	dns_zone_t *zone_ptr = NULL;
 	isc_boolean_t zone_found = ISC_FALSE;
 	isc_boolean_t zone_reloaded = ISC_FALSE;
+	isc_uint32_t serial;
 	mctx = pevent->mctx;
 
 	UNUSED(task);
@@ -3572,8 +3573,7 @@ update_restart:
 		if (serial_autoincrement)
 			CHECK(soa_serial_increment(mctx, inst, &origin));
 		else {
-			isc_uint32_t dummy;
-			CHECK(ldap_get_zone_serial(inst, &origin, &dummy));
+			CHECK(ldap_get_zone_serial(inst, &origin, &serial));
 		}
 	}
 
@@ -3587,8 +3587,6 @@ cleanup:
 		result = zr_get_zone_ptr(inst->zone_register, &origin, &zone_ptr);
 		if (result == ISC_R_SUCCESS)
 			result = dns_zone_load(zone_ptr);
-		if (zone_ptr != NULL)
-			dns_zone_detach(&zone_ptr);
 
 		if (result == ISC_R_SUCCESS || result == DNS_R_UPTODATE ||
 		    result == DNS_R_DYNAMIC || result == DNS_R_CONTINUE) {
@@ -3596,7 +3594,16 @@ cleanup:
 			log_debug(1, "restarting update_record after zone reload "
 				     "caused by change in '%s'", pevent->dn);
 			zone_reloaded = ISC_TRUE;
-			goto update_restart;
+			result = dns_zone_getserial2(zone_ptr, &serial);
+			if (result == ISC_R_SUCCESS) {
+				dns_zone_log(zone_ptr, ISC_LOG_INFO,
+					     "reloaded serial %u", serial);
+				goto update_restart;
+			} else {
+				dns_zone_log(zone_ptr, ISC_LOG_ERROR,
+					     "could not get serial after "
+					     "reload");
+			}
 		} else {
 			log_error_r("unable to reload invalid zone; "
 				    "reload triggered by change in '%s'",
@@ -3610,6 +3617,8 @@ cleanup:
 			  pevent->dn, pevent->chgtype);
 	}
 
+	if (zone_ptr != NULL)
+		dns_zone_detach(&zone_ptr);
 	if (dns_name_dynamic(&name))
 		dns_name_free(&name, inst->mctx);
 	if (dns_name_dynamic(&prevname))
