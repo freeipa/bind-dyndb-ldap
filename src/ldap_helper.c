@@ -3564,8 +3564,16 @@ update_restart:
 		CHECK(zr_get_zone_settings(inst->zone_register, &origin, &zone_settings));
 		CHECK(setting_get_bool("serial_autoincrement", zone_settings,
 				       &serial_autoincrement));
+
+		/* Serial autoincrement does zone state check implicitly.
+		 * Ldap_get_zone_serial() is required for other cases, because
+		 * no function above returns DNS_R_NOTLOADED for invalid zone. */
 		if (serial_autoincrement)
 			CHECK(soa_serial_increment(mctx, inst, &origin));
+		else {
+			isc_uint32_t dummy;
+			CHECK(ldap_get_zone_serial(inst, &origin, &dummy));
+		}
 	}
 
 cleanup:
