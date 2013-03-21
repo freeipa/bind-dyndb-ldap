@@ -3502,8 +3502,16 @@ update_restart:
 	}
 
 	/* Do not bump serial during initial database dump. */
-	if (inst->serial_autoincrement && PSEARCH_ANY(pevent->chgtype)) {
-		CHECK(soa_serial_increment(mctx, inst, &origin));
+	if (PSEARCH_ANY(pevent->chgtype)) {
+		/* Serial autoincrement does zone state check implicitly.
+		 * Ldap_get_zone_serial() is required for other cases, because
+		 * no function above returns DNS_R_NOTLOADED for invalid zone. */
+		if (inst->serial_autoincrement)
+			CHECK(soa_serial_increment(mctx, inst, &origin));
+		else {
+			isc_uint32_t dummy;
+			CHECK(ldap_get_zone_serial(inst, &origin, &dummy));
+		}
 	}
 
 cleanup:
