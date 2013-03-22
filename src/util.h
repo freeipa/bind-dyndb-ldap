@@ -21,9 +21,16 @@
 #ifndef _LD_UTIL_H_
 #define _LD_UTIL_H_
 
-extern isc_boolean_t verbose_checks; /* from settings.c */
+#include <string.h>
+
+#include <isc/mem.h>
+#include <isc/buffer.h>
+#include <dns/types.h>
+#include <dns/name.h>
 
 #include "log.h"
+
+extern isc_boolean_t verbose_checks; /* from settings.c */
 
 #define CLEANUP_WITH(result_code)				\
 	do {							\
