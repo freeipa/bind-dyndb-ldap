@@ -84,6 +84,10 @@ void destroy_ldap_instance(ldap_instance_t **ldap_inst);
 isc_result_t
 refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only);
 
+isc_result_t
+ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
+		  isc_boolean_t preserve_forwarding);
+
 /* Functions for writing to LDAP. */
 isc_result_t write_to_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		dns_rdatalist_t *rdlist);

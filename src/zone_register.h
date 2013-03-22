@@ -23,11 +23,14 @@
 
 #include "cache.h"
 #include "settings.h"
+#include "rbt_helper.h"
+#include "ldap_helper.h"
 
 typedef struct zone_register zone_register_t;
 
 isc_result_t
-zr_create(isc_mem_t *mctx, settings_set_t *glob_settings, zone_register_t **zrp);
+zr_create(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
+	  settings_set_t *glob_settings, zone_register_t **zrp);
 
 void
 zr_destroy(zone_register_t **zrp);
@@ -53,6 +56,10 @@ zr_get_zone_ptr(zone_register_t *zr, dns_name_t *name, dns_zone_t **zonep);
 
 isc_result_t
 zr_get_zone_settings(zone_register_t *zr, dns_name_t *name, settings_set_t **set);
+
+isc_result_t
+zr_rbt_iter_init(zone_register_t *zr, rbt_iterator_t *iter,
+		 dns_name_t *nodename);
 
 dns_rbt_t *
 zr_get_rbt(zone_register_t *zr);

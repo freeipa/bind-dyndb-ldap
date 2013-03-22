@@ -326,10 +326,6 @@ static isc_result_t modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_
 static isc_result_t soa_serial_increment(isc_mem_t *mctx, ldap_instance_t *inst,
 		dns_name_t *zone_name);
 
-static isc_result_t
-ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
-		  isc_boolean_t preserve_forwarding);
-
 /* Functions for maintaining pool of LDAP connections */
 static isc_result_t ldap_pool_create(isc_mem_t *mctx, unsigned int connections,
 		ldap_pool_t **poolp);
@@ -520,7 +516,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	CHECK(setting_get_bool("psearch", ldap_inst->local_settings, &psearch));
 	CHECK(setting_get_uint("connections", ldap_inst->local_settings, &connections));
 
-	CHECK(zr_create(mctx, ldap_inst->global_settings,
+	CHECK(zr_create(mctx, ldap_inst, ldap_inst->global_settings,
 			&ldap_inst->zone_register));
 
 	CHECK(isc_mutex_init(&ldap_inst->kinit_lock));
@@ -578,9 +574,6 @@ void
 destroy_ldap_instance(ldap_instance_t **ldap_instp)
 {
 	ldap_instance_t *ldap_inst;
-	dns_rbtnodechain_t chain;
-	dns_rbt_t *rbt = NULL;
-	isc_result_t result = ISC_R_SUCCESS;
 	const char *db_name;
 	isc_sockaddr_t *addr;
 
@@ -592,68 +585,6 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 
 	db_name = ldap_inst->db_name; /* points to DB instance: outside ldap_inst */
 
-	/*
-	 * Unregister all zones already registered in BIND.
-	 *
-	 * NOTE: This should be probably done in zone_register.c
-	 */
-	if (ldap_inst->zone_register != NULL)
-		rbt = zr_get_rbt(ldap_inst->zone_register);
-	if (rbt == NULL)
-		result = ISC_R_NOTFOUND;
-
-	/* Potentially ISC_R_NOSPACE can occur. Destroy codepath has no way to
-	 * return errors, so kill BIND.
-	 * DNS_R_NAMETOOLONG should never happen, because all names were checked
-	 * while loading. */
-
-	dns_rbtnodechain_init(&chain, ldap_inst->mctx);
-	while (result != ISC_R_NOMORE && result != ISC_R_NOTFOUND) {
-		dns_fixedname_t name;
-		dns_fixedname_t origin;
-		dns_fixedname_t concat;
-		dns_fixedname_init(&name);
-		dns_fixedname_init(&origin);
-		dns_fixedname_init(&concat);
-
-		dns_rbtnodechain_reset(&chain);
-		result = dns_rbtnodechain_first(&chain, rbt, NULL, NULL);
-		RUNTIME_CHECK(result == ISC_R_SUCCESS || result == DNS_R_NEWORIGIN ||
-			      result == ISC_R_NOTFOUND);
-
-		/* Search for first zone in zone register and omit auxiliary nodes. */
-		while (result != ISC_R_NOMORE && result != ISC_R_NOTFOUND) {
-			dns_rbtnode_t *node = NULL;
-
-			result = dns_rbtnodechain_current(&chain, dns_fixedname_name(&name),
-							  dns_fixedname_name(&origin), &node);
-			RUNTIME_CHECK(result == ISC_R_SUCCESS);
-
-			if (node->data != NULL) { /* Auxiliary nodes have data == NULL. */
-				result = dns_name_concatenate(dns_fixedname_name(&name),
-							      dns_fixedname_name(&origin),
-							      dns_fixedname_name(&concat),
-							      NULL);
-				RUNTIME_CHECK(result == ISC_R_SUCCESS);
-				break;
-			}
-
-			result = dns_rbtnodechain_next(&chain, NULL, NULL);
-			RUNTIME_CHECK(result == ISC_R_SUCCESS || result == DNS_R_NEWORIGIN ||
-				      result == ISC_R_NOMORE);
-		}
-		if (result == ISC_R_NOMORE || result == ISC_R_NOTFOUND)
-			break;
-
-		result = ldap_delete_zone2(ldap_inst,
-					   dns_fixedname_name(&concat),
-					   ISC_TRUE, ISC_FALSE);
-		RUNTIME_CHECK(result == ISC_R_SUCCESS);
-	}
-
-	dns_rbtnodechain_invalidate(&chain);
-
-	/* TODO: Terminate psearch watcher sooner? */
 	if (ldap_inst->watcher != 0) {
 		ldap_inst->exiting = ISC_TRUE;
 		/*
@@ -670,12 +601,14 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 		ldap_inst->watcher = 0;
 	}
 
+	/* Unregister all zones already registered in BIND. */
+	zr_destroy(&ldap_inst->zone_register);
+	fwdr_destroy(&ldap_inst->fwd_register);
+
 	ldap_pool_destroy(&ldap_inst->pool);
 	dns_view_detach(&ldap_inst->view);
 
 	DESTROYLOCK(&ldap_inst->kinit_lock);
-
-	zr_destroy(&ldap_inst->zone_register);
 
 	while (!ISC_LIST_EMPTY(ldap_inst->orig_global_forwarders.addrs)) {
 		addr = ISC_LIST_HEAD(ldap_inst->orig_global_forwarders.addrs);
@@ -852,6 +785,22 @@ configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
 
 /* Delete zone by dns zone name */
 static isc_result_t
+delete_forwarding_table(ldap_instance_t *inst, dns_name_t *name,
+			const char *msg_obj_type, const char *dn) {
+	isc_result_t result;
+
+	result = dns_fwdtable_delete(inst->view->fwdtable, name);
+	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {
+		log_error_r("%s '%s': failed to delete forwarders",
+			    msg_obj_type, dn);
+		return result;
+	} else {
+		return ISC_R_SUCCESS; /* ISC_R_NOTFOUND = nothing to delete */
+	}
+}
+
+/* Delete zone by dns zone name */
+isc_result_t
 ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 		  isc_boolean_t preserve_forwarding)
 {
@@ -938,22 +887,6 @@ cleanup:
 		dns_name_free(&name, inst->mctx);
 
 	return result;
-}
-
-static isc_result_t
-delete_forwarding_table(ldap_instance_t *inst, dns_name_t *name,
-			const char *msg_obj_type, const char *dn) {
-	isc_result_t result;
-
-	/* Clean old fwdtable. */
-	result = dns_fwdtable_delete(inst->view->fwdtable, name);
-	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {
-		log_error_r("%s '%s': failed to delete forwarders",
-			    msg_obj_type, dn);
-		return result;
-	} else {
-		return ISC_R_SUCCESS; /* ISC_R_NOTFOUND = nothing to delete */
-	}
 }
 
 /**

@@ -35,6 +35,7 @@
 #include "zone_register.h"
 #include "rdlist.h"
 #include "settings.h"
+#include "rbt_helper.h"
 
 /*
  * The zone register is a red-black tree that maps a dns name of a zone to the
@@ -50,6 +51,7 @@ struct zone_register {
 	isc_rwlock_t	rwlock;
 	dns_rbt_t	*rbt;
 	settings_set_t	*global_settings;
+	ldap_instance_t *ldap_inst;
 };
 
 typedef struct {
@@ -88,6 +90,15 @@ static const setting_t zone_settings[] = {
 	end_of_settings
 };
 
+isc_result_t
+zr_rbt_iter_init(zone_register_t *zr, rbt_iterator_t *iter,
+		 dns_name_t *nodename) {
+	if (zr->rbt == NULL)
+		return ISC_R_NOTFOUND;
+
+	return rbt_iter_first(zr->mctx, zr->rbt, &zr->rwlock, iter, nodename);
+}
+
 dns_rbt_t *
 zr_get_rbt(zone_register_t *zr)
 {
@@ -105,11 +116,14 @@ zr_get_mctx(zone_register_t *zr) {
  * Create a new zone register.
  */
 isc_result_t
-zr_create(isc_mem_t *mctx, settings_set_t *glob_settings, zone_register_t **zrp)
+zr_create(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
+	  settings_set_t *glob_settings, zone_register_t **zrp)
 {
 	isc_result_t result;
 	zone_register_t *zr = NULL;
 
+	REQUIRE(ldap_inst != NULL);
+	REQUIRE(glob_settings != NULL);
 	REQUIRE(zrp != NULL && *zrp == NULL);
 
 	CHECKED_MEM_GET_PTR(mctx, zr);
@@ -118,6 +132,7 @@ zr_create(isc_mem_t *mctx, settings_set_t *glob_settings, zone_register_t **zrp)
 	CHECK(dns_rbt_create(mctx, delete_zone_info, mctx, &zr->rbt));
 	CHECK(isc_rwlock_init(&zr->rwlock, 0, 0));
 	zr->global_settings = glob_settings;
+	zr->ldap_inst = ldap_inst;
 
 	*zrp = zr;
 	return ISC_R_SUCCESS;
@@ -132,18 +147,41 @@ cleanup:
 	return result;
 }
 
-/*
- * Destroy a zone register.
+/**
+ * Destroy a zone register and unload all zones registered in it.
+ *
+ * @warning
+ * Potentially ISC_R_NOSPACE can occur. Destroy codepath has no way to
+ * return errors, so kill BIND. DNS_R_NAMETOOLONG should never happen,
+ * because all names were checked while loading.
  */
 void
 zr_destroy(zone_register_t **zrp)
 {
+	DECLARE_BUFFERED_NAME(name);
 	zone_register_t *zr;
+	rbt_iterator_t iter;
+	isc_result_t result;
 
 	if (zrp == NULL || *zrp == NULL)
 		return;
 
 	zr = *zrp;
+
+	/* It is not safe to iterate over RBT and delete nodes at the same
+	 * time. Restart iteration after each change. */
+	do {
+		INIT_BUFFERED_NAME(name);
+		result = zr_rbt_iter_init(zr, &iter, &name);
+		RUNTIME_CHECK(result == ISC_R_SUCCESS || result == ISC_R_NOTFOUND);
+		if (result == ISC_R_SUCCESS) {
+			rbt_iter_stop(&iter);
+			result = ldap_delete_zone2(zr->ldap_inst,
+						   &name,
+						   ISC_TRUE, ISC_FALSE);
+			RUNTIME_CHECK(result == ISC_R_SUCCESS);
+		}
+	} while (result == ISC_R_SUCCESS);
 
 	RWLOCK(&zr->rwlock, isc_rwlocktype_write);
 	dns_rbt_destroy(&zr->rbt);
