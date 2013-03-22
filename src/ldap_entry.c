@@ -395,32 +395,51 @@ cleanup:
 	return result;
 }
 
-ldap_entryclass_t
-ldap_entry_getclass(ldap_entry_t *entry)
+isc_result_t
+ldap_entry_getclass(ldap_entry_t *entry, ldap_entryclass_t *class)
 {
 	ldap_valuelist_t values;
 	ldap_value_t *val;
 	ldap_entryclass_t entryclass;
 
 	REQUIRE(entry != NULL);
+	REQUIRE(class != NULL);
 
 	entryclass = LDAP_ENTRYCLASS_NONE;
 
-	/* XXX Can this happen? */
+	/* ObjectClass will be missing if search parameters didn't request
+	 * objectClass attribute. */
 	if (ldap_entry_getvalues(entry, "objectClass", &values)
-	    != ISC_R_SUCCESS)
-		return entryclass;
+	    != ISC_R_SUCCESS) {
+		log_bug("entry without objectClass");
+		return ISC_R_UNEXPECTED;
+	}
 
 	for (val = HEAD(values); val != NULL; val = NEXT(val, link)) {
 		if (!strcasecmp(val->value, "idnsrecord"))
 			entryclass |= LDAP_ENTRYCLASS_RR;
 		else if (!strcasecmp(val->value, "idnszone"))
-			entryclass |= LDAP_ENTRYCLASS_ZONE;
+			entryclass |= LDAP_ENTRYCLASS_MASTER;
+		else if (!strcasecmp(val->value, "idnsforwardzone"))
+			entryclass |= LDAP_ENTRYCLASS_FORWARD;
 		else if (!strcasecmp(val->value, "idnsconfigobject"))
 			entryclass |= LDAP_ENTRYCLASS_CONFIG;
 	}
 
-	return entryclass;
+	if (class == LDAP_ENTRYCLASS_NONE) {
+		log_error("entry '%s' has no supported object class",
+			  entry->dn);
+		return ISC_R_NOTIMPLEMENTED;
+
+	} else if ((entryclass & LDAP_ENTRYCLASS_MASTER) &&
+		   (entryclass & LDAP_ENTRYCLASS_FORWARD)) {
+		log_error("zone '%s' has to have type either "
+			  "'master' or 'forward'", entry->dn);
+		return ISC_R_UNEXPECTED;
+	}
+
+	*class = entryclass;
+	return ISC_R_SUCCESS;
 
 #if 0
 	/* Preserve current attribute iterator */

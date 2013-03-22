@@ -5,11 +5,13 @@ HDRS =				\
 	acl.h			\
 	cache.h			\
 	compat.h		\
+	fwd_register.h		\
 	krb5_helper.h		\
 	ldap_convert.h		\
 	ldap_entry.h		\
 	ldap_helper.h		\
 	log.h			\
+	rbt_helper.h		\
 	rdlist.h		\
 	semaphore.h		\
 	settings.h		\
@@ -23,12 +25,14 @@ ldap_la_SOURCES =		\
 	$(HDRS)			\
 	acl.c			\
 	cache.c			\
+	fwd_register.c		\
 	krb5_helper.c		\
 	ldap_convert.c		\
 	ldap_driver.c		\
 	ldap_entry.c		\
 	ldap_helper.c		\
 	log.c			\
+	rbt_helper.c		\
 	rdlist.c		\
 	semaphore.c		\
 	settings.c		\

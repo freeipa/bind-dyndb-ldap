@@ -79,6 +79,8 @@
 #include "util.h"
 #include "zone_manager.h"
 #include "zone_register.h"
+#include "rbt_helper.h"
+#include "fwd_register.h"
 
 
 /* Max type length definitions, from lib/dns/master.c */
@@ -153,6 +155,7 @@ struct ldap_instance {
 
 	/* Our own list of zones. */
 	zone_register_t		*zone_register;
+	fwd_register_t		*fwd_register;
 
 	/* krb5 kinit mutex */
 	isc_mutex_t		kinit_lock;
@@ -518,6 +521,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 
 	CHECK(zr_create(mctx, ldap_inst, ldap_inst->global_settings,
 			&ldap_inst->zone_register));
+	CHECK(fwdr_create(ldap_inst->mctx, &ldap_inst->fwd_register));
 
 	CHECK(isc_mutex_init(&ldap_inst->kinit_lock));
 
@@ -783,7 +787,6 @@ configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
 	return acl_configure_zone_ssutable(update_str, zone);
 }
 
-/* Delete zone by dns zone name */
 static isc_result_t
 delete_forwarding_table(ldap_instance_t *inst, dns_name_t *name,
 			const char *msg_obj_type, const char *dn) {
@@ -805,6 +808,7 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 		  isc_boolean_t preserve_forwarding)
 {
 	isc_result_t result;
+	isc_result_t isforward = ISC_R_NOTFOUND;
 	isc_boolean_t unlock = ISC_FALSE;
 	isc_boolean_t freeze = ISC_FALSE;
 	dns_zone_t *zone = NULL;
@@ -822,16 +826,20 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 	}
 
 	if (!preserve_forwarding) {
-		result = dns_fwdtable_delete(inst->view->fwdtable, name);
-		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
-			log_error_r("zone '%s': failed to delete forwarders",
-				    zone_name_char);
+		CHECK(delete_forwarding_table(inst, name, "zone",
+					      zone_name_char));
+		isforward = fwdr_zone_ispresent(inst->fwd_register, name);
+		if (isforward == ISC_R_SUCCESS)
+			CHECK(fwdr_del_zone(inst->fwd_register, name));
 	}
 
 	result = zr_get_zone_ptr(inst->zone_register, name, &zone);
 	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
+		if (isforward == ISC_R_SUCCESS)
+			log_info("forward zone '%s': shutting down", zone_name_char);
 		log_debug(1, "zone '%s' not found in zone register", zone_name_char);
-		CLEANUP_WITH(ISC_R_SUCCESS);
+		result = dns_view_flushcache(inst->view);
+		goto cleanup;
 	} else if (result != ISC_R_SUCCESS)
 		goto cleanup;
 
@@ -850,7 +858,7 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 	if (dns_zone_getdb(zone, &dbp) == ISC_R_SUCCESS) {
 		dns_db_detach(&dbp); /* dns_zone_getdb() attaches DB implicitly */
 		dns_zone_unload(zone);
-		log_debug(1, "zone '%s' unloaded", zone_name_char);
+		dns_zone_log(zone, ISC_LOG_INFO, "shutting down");
 	} else {
 		log_debug(1, "zone '%s' not loaded - unload skipped", zone_name_char);
 	}
@@ -1163,9 +1171,49 @@ cleanup:
 	return ISC_R_SUCCESS;
 }
 
-/* Parse the zone entry */
+/* Parse the forward zone entry */
 static isc_result_t
-ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
+ldap_parse_fwd_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
+{
+	const char *dn;
+	dns_name_t name;
+	char name_txt[DNS_NAME_FORMATSIZE];
+	isc_result_t result;
+
+	REQUIRE(entry != NULL);
+	REQUIRE(inst != NULL);
+
+	dns_name_init(&name, NULL);
+
+	/* Derive the DNS name of the zone from the DN. */
+	dn = entry->dn;
+	CHECK(dn_to_dnsname(inst->mctx, dn, &name, NULL));
+
+	result = configure_zone_forwarders(entry, inst, &name);
+	if (result != ISC_R_DISABLED && result != ISC_R_SUCCESS) {
+		log_error_r("forward zone '%s': could not configure forwarding", dn);
+		goto cleanup;
+	}
+
+	result = fwdr_zone_ispresent(inst->fwd_register, &name);
+	if (result == ISC_R_NOTFOUND) {
+		CHECK(fwdr_add_zone(inst->fwd_register, &name));
+		dns_name_format(&name, name_txt, DNS_NAME_FORMATSIZE);
+		log_info("forward zone '%s': loaded", name_txt);
+	}
+	else if (result != ISC_R_SUCCESS)
+		log_error_r("forward zone '%s': could not read forwarding register", dn);
+
+cleanup:
+	if (dns_name_dynamic(&name))
+		dns_name_free(&name, inst->mctx);
+
+	return result;
+}
+
+/* Parse the master zone entry */
+static isc_result_t
+ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 {
 	const char *dn;
 	ldap_valuelist_t values;
@@ -1209,6 +1257,7 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 		goto cleanup;
 
 	/*
+	 * TODO: Remove this hack, most probably before Fedora 20.
 	 * Forwarding has top priority hence when the forwarders are properly
 	 * set up all others attributes are ignored.
 	 */
@@ -1352,14 +1401,21 @@ ldap_parse_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 		if (zone_dynamic)
 			dns_zone_notify(zone);
 	}
+	if (publish)
+		dns_zone_log(zone, ISC_LOG_INFO, "loaded serial %u", ldap_serial);
 
 cleanup:
 	if (publish && !published) { /* Failure in ACL parsing or so. */
 		log_error_r("zone '%s': publishing failed, rolling back due to",
 			    entry->dn);
+		result = delete_forwarding_table(inst, &name, "zone", entry->dn);
+		if (result != ISC_R_SUCCESS)
+			log_error_r("zone '%s': rollback failed: forwarding",
+				    entry->dn);
 		result = zr_del_zone(inst->zone_register, &name);
 		if (result != ISC_R_SUCCESS)
-			log_error_r("zone '%s': rollback failed", entry->dn);
+			log_error_r("zone '%s': rollback failed: zone register",
+				    entry->dn);
 	}
 	if (unlock)
 		isc_task_endexclusive(task);
@@ -1373,10 +1429,7 @@ cleanup:
 }
 
 /*
- * Search in LDAP for zones. If 'create' is true, create the zones. Otherwise,
- * we assume that we are past the configuration phase and no new zones can be
- * added. In that case, only modify the zone's properties, like the update
- * policy.
+ * Search in LDAP for zones.
  *
  * @param delete_only Do LDAP vs. zone register cross-check and delete zones
  *                    which aren't in LDAP, but do not load new zones.
@@ -1392,9 +1445,10 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
 	ldap_qresult_t *ldap_config_qresult = NULL;
 	ldap_qresult_t *ldap_zones_qresult = NULL;
 	int zone_count = 0;
+	ldap_entryclass_t zone_class;
 	ldap_entry_t *entry;
-	dns_rbt_t *rbt = NULL;
-	isc_boolean_t invalidate_nodechain = ISC_FALSE;
+	dns_rbt_t *master_rbt = NULL;  /** < Master zones only */
+	dns_rbt_t *forward_rbt = NULL; /** < Forward zones only */
 	isc_boolean_t psearch;
 	const char *base = NULL;
 	char *config_attrs[] = {
@@ -1405,7 +1459,7 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
 	char *zone_attrs[] = {
 		"idnsName", "idnsUpdatePolicy", "idnsAllowQuery",
 		"idnsAllowTransfer", "idnsForwardPolicy", "idnsForwarders",
-		"idnsAllowDynUpdate", "idnsAllowSyncPTR", NULL
+		"idnsAllowDynUpdate", "idnsAllowSyncPTR", "objectClass", NULL
 	};
 
 	REQUIRE(ldap_inst != NULL);
@@ -1426,7 +1480,8 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
 	CHECK(ldap_pool_getconnection(ldap_inst->pool, &ldap_conn));
 	CHECK(ldap_query(ldap_inst, ldap_conn, &ldap_zones_qresult, base,
 			 LDAP_SCOPE_SUBTREE, zone_attrs, 0,
-			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"));
+			 "(&(idnsZoneActive=TRUE)"
+			 "(|(objectClass=idnsZone)(objectClass=idnsForwardZone)))"));
 
 	/* Do not touch configuration from psearch watcher thread, otherwise
 	 * BIND will crash. The problem is that isc_task_beginexclusive()
@@ -1447,14 +1502,17 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
 	}
 
 	/*
-	 * Create RB-tree with all zones stored in LDAP for cross check
-	 * with registered zones in plugin.
+	 * Create RB-trees with all master and forward zones stored in LDAP
+	 * for cross check with zones registered in plugin.
 	 */
-	CHECK(dns_rbt_create(ldap_inst->mctx, NULL, NULL, &rbt));
-	
+	CHECK(dns_rbt_create(ldap_inst->mctx, NULL, NULL, &master_rbt));
+	CHECK(dns_rbt_create(ldap_inst->mctx, NULL, NULL, &forward_rbt));
+
 	for (entry = HEAD(ldap_zones_qresult->ldap_entries);
 	     entry != NULL;
 	     entry = NEXT(entry, link)) {
+		if (ldap_entry_getclass(entry, &zone_class) != ISC_R_SUCCESS)
+			continue;
 
 		/* Derive the dns name of the zone from the DN. */
 		dns_name_t name;
@@ -1463,93 +1521,113 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
 		if (result == ISC_R_SUCCESS) {
 			log_debug(5, "Refresh %s", entry->dn);
 			/* Add found zone to RB-tree for later check. */
-			result = dns_rbt_addname(rbt, &name, NULL);
+			if (zone_class & LDAP_ENTRYCLASS_MASTER)
+				result = dns_rbt_addname(master_rbt, &name, NULL);
+			else if (zone_class & LDAP_ENTRYCLASS_FORWARD)
+				result = dns_rbt_addname(forward_rbt, &name, NULL);
 		}
 		if (dns_name_dynamic(&name))
 			dns_name_free(&name, ldap_inst->mctx);
-		
+
 		if (result != ISC_R_SUCCESS) {
 			log_error("Could not parse zone %s", entry->dn);
 			continue;
 		}
 
-		if (!delete_only)
-			CHECK(ldap_parse_zoneentry(entry, ldap_inst));
-		zone_count++;
+		if (!delete_only) {
+			if (zone_class & LDAP_ENTRYCLASS_MASTER)
+				result = ldap_parse_master_zoneentry(entry, ldap_inst);
+			else if (zone_class & LDAP_ENTRYCLASS_FORWARD)
+				result = ldap_parse_fwd_zoneentry(entry, ldap_inst);
+		}
+		if (result == ISC_R_SUCCESS)
+			zone_count++;
+		else
+			log_error_r("error parsing zone '%s'", entry->dn);
 	}
 
-	dns_rbtnode_t *node;
-	dns_rbtnodechain_t chain;
-	isc_boolean_t delete = ISC_FALSE;	
-	
-	DECLARE_BUFFERED_NAME(fname);
-	DECLARE_BUFFERED_NAME(forig);
-	DECLARE_BUFFERED_NAME(aname);
-	
-	INIT_BUFFERED_NAME(fname);
-	INIT_BUFFERED_NAME(forig);
-	INIT_BUFFERED_NAME(aname);
-	
-	dns_rbtnodechain_init(&chain, ldap_inst->mctx);
-	invalidate_nodechain = ISC_TRUE;
-	result = dns_rbtnodechain_first(&chain, zr_get_rbt(ldap_inst->zone_register), NULL, NULL);
-	
-	while (result == DNS_R_NEWORIGIN || result == ISC_R_SUCCESS) {
-		dns_name_reset(&aname);
-		delete = ISC_FALSE;	
-		node = NULL;
+	/* Walk through master zone register and remove all zones which
+	 * disappeared from LDAP. */
+	rbt_iterator_t iter;
+	char name_txt[DNS_NAME_FORMATSIZE];
+	DECLARE_BUFFERED_NAME(registered_name);
+	DECLARE_BUFFERED_NAME(ldap_name);
 
-		result = dns_rbtnodechain_current(&chain, &fname, &forig, &node);
-		if (result != ISC_R_SUCCESS) {
-			if (result != ISC_R_NOTFOUND)
-				log_error_r(
-					"unable to walk through RB-tree during zone_refresh");
-			goto next;
-		}
-
-		result = dns_name_concatenate(&fname, &forig, &aname,
-					      aname.buffer);
-		if (result != ISC_R_SUCCESS) {
-			log_error_r("unable to concatenate DNS names "
-				    "during zone_refresh");
-			goto next;	
-		}
-
-		/* Do not remove auxiliary (= non-zone) nodes. */
-		char buf[DNS_NAME_FORMATSIZE];
-		dns_name_format(&aname, buf, DNS_NAME_FORMATSIZE);
-		if (!node->data) {
-			log_debug(11,"auxiliary zone/node '%s' will not be removed", buf);
-			goto next;
-		}
-
-		DECLARE_BUFFERED_NAME(foundname);
-		INIT_BUFFERED_NAME(foundname);
-		
+	INIT_BUFFERED_NAME(registered_name);
+	result = zr_rbt_iter_init(ldap_inst->zone_register, &iter, &registered_name);
+	while (result == ISC_R_SUCCESS) {
 		void *data = NULL;
-		if (dns_rbt_findname(rbt, &aname, DNS_RBTFIND_EMPTYDATA,
-		                     &foundname, &data) == ISC_R_SUCCESS) {
-			goto next;		
-		}
-		/* Log zone removing. */
-		log_debug(1, "Zone '%s' has been removed from database.", buf);
-		
-		delete = ISC_TRUE;
-next:	
-		result = dns_rbtnodechain_next(&chain, NULL, NULL);
-	
-		if (delete == ISC_TRUE)
-			ldap_delete_zone2(ldap_inst, &aname, ISC_FALSE,
-					  ISC_FALSE);
-	}
+		INIT_BUFFERED_NAME(ldap_name);
 
+		result = dns_rbt_findname(master_rbt, &registered_name,
+					  DNS_RBTFIND_EMPTYDATA,
+					  &ldap_name, &data);
+		if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
+			rbt_iter_stop(&iter);
+			dns_name_format(&registered_name, name_txt, DNS_NAME_FORMATSIZE);
+			log_debug(1, "master zone '%s' is being removed", name_txt);
+			result = ldap_delete_zone2(ldap_inst, &registered_name,
+						   ISC_FALSE, ISC_FALSE);
+			if (result != ISC_R_SUCCESS) {
+				log_error_r("unable to delete master zone '%s'", name_txt);
+			} else {
+				/* Deletion invalidated the chain, restart iteration. */
+				result = zr_rbt_iter_init(ldap_inst->zone_register,
+							  &iter, &registered_name);
+				continue;
+			}
+		} else if (result != ISC_R_SUCCESS) {
+			break;
+		}
+		result = rbt_iter_next(&iter, &registered_name);
+	}
+	if (result != ISC_R_NOTFOUND && result != ISC_R_NOMORE)
+		goto cleanup;
+
+	/* Walk through forward zone register and remove all zones which
+	 * disappeared from LDAP. */
+	INIT_BUFFERED_NAME(registered_name);
+	result = fwdr_rbt_iter_init(ldap_inst->fwd_register, &iter, &registered_name);
+	while (result == ISC_R_SUCCESS) {
+		void *data = NULL;
+		INIT_BUFFERED_NAME(ldap_name);
+
+		result = dns_rbt_findname(forward_rbt, &registered_name,
+					  DNS_RBTFIND_EMPTYDATA,
+					  &ldap_name, &data);
+		if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
+			rbt_iter_stop(&iter);
+			dns_name_format(&registered_name, name_txt, DNS_NAME_FORMATSIZE);
+			log_debug(1, "forward zone '%s' is being removed", name_txt);
+			result = delete_forwarding_table(ldap_inst, &registered_name,
+							 "forward zone", name_txt);
+			if (result != ISC_R_SUCCESS) {
+				log_error_r("could not remove forwarding for zone '%s': "
+					    "forward register mismatch", name_txt);
+			}
+			result = fwdr_del_zone(ldap_inst->fwd_register, &registered_name);
+			if (result == ISC_R_SUCCESS) {
+				/* Deletion invalidated the chain, restart iteration. */
+				result = fwdr_rbt_iter_init(ldap_inst->fwd_register,
+							    &iter, &registered_name);
+				continue;
+			} else {
+				log_error_r("unable to delete forward zone '%s' "
+					    "from forwarding register", name_txt);
+			}
+		} else if (result != ISC_R_SUCCESS) {
+			break;
+		}
+		result = rbt_iter_next(&iter, &registered_name);
+	}
+	if (result == ISC_R_NOTFOUND || result == ISC_R_NOMORE)
+		goto cleanup;
 
 cleanup:
-	if (rbt != NULL)
-		dns_rbt_destroy(&rbt); 
-
-	if (invalidate_nodechain)
-		dns_rbtnodechain_invalidate(&chain);
+	if (master_rbt != NULL)
+		dns_rbt_destroy(&master_rbt);
+	if (forward_rbt != NULL)
+		dns_rbt_destroy(&forward_rbt);
 
 	ldap_query_free(ISC_FALSE, &ldap_config_qresult);
 	ldap_query_free(ISC_FALSE, &ldap_zones_qresult);
@@ -1668,6 +1746,7 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry,
 {
 	isc_result_t result;
 	dns_rdataclass_t rdclass;
+	ldap_entryclass_t objclass;
 	dns_ttl_t ttl;
 	dns_rdatatype_t rdtype;
 	dns_rdata_t *rdata = NULL;
@@ -1676,7 +1755,8 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry,
 	const char *dn = "<NULL entry>";
 	const char *data = "<NULL data>";
 
-	if ((ldap_entry_getclass(entry) & LDAP_ENTRYCLASS_ZONE) != 0)
+	CHECK(ldap_entry_getclass(entry, &objclass));
+	if ((objclass & LDAP_ENTRYCLASS_MASTER) != 0)
 		CHECK(add_soa_record(mctx, qresult, origin, entry,
 				     rdatalist, fake_mname));
 
@@ -3255,7 +3335,7 @@ cleanup:
 }
 
 /*
- * update_action routine is processed asynchronously so it cannot assume
+ * update_zone routine is processed asynchronously so it cannot assume
  * anything about state of ldap_inst from where it was sent. The ldap_inst
  * could have been already destroyed due server reload. The safest
  * way how to handle zone update is to refetch ldap_inst,
@@ -3270,14 +3350,16 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	ldap_instance_t *inst = NULL;
 	ldap_qresult_t *ldap_qresult_zone = NULL;
 	ldap_qresult_t *ldap_qresult_record = NULL;
+	ldap_entryclass_t objclass;
 	ldap_entry_t *entry_zone = NULL;
 	ldap_entry_t *entry_record = NULL;
 	isc_mem_t *mctx;
 	dns_name_t prevname;
+	dns_name_t currname;
 	char *attrs_zone[] = {
 		"idnsName", "idnsUpdatePolicy", "idnsAllowQuery",
 		"idnsAllowTransfer", "idnsForwardPolicy", "idnsForwarders",
-		"idnsAllowDynUpdate", "idnsAllowSyncPTR", NULL
+		"idnsAllowDynUpdate", "idnsAllowSyncPTR", "objectClass", NULL
 	};
 	char *attrs_record[] = {
 			"objectClass", "dn", NULL
@@ -3286,20 +3368,29 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	UNUSED(task);
 
 	mctx = pevent->mctx;
+	dns_name_init(&currname, NULL);
 	dns_name_init(&prevname, NULL);
 
 	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
 
 	result = ldap_query(inst, NULL, &ldap_qresult_zone, pevent->dn,
 			 LDAP_SCOPE_BASE, attrs_zone, 0,
-			 "(&(objectClass=idnsZone)(idnsZoneActive=TRUE))");
+			 "(&(|(objectClass=idnsZone)"
+			 "(objectClass=idnsForwardZone))"
+			 "(idnsZoneActive=TRUE))");
 	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
 		goto cleanup;
+
+	CHECK(dn_to_dnsname(inst->mctx, pevent->dn, &currname, NULL));
 
 	if (result == ISC_R_SUCCESS &&
 	    HEAD(ldap_qresult_zone->ldap_entries) != NULL) {
 		entry_zone = HEAD(ldap_qresult_zone->ldap_entries);
-		CHECK(ldap_parse_zoneentry(entry_zone, inst));
+		CHECK(ldap_entry_getclass(entry_zone, &objclass));
+		if (objclass & LDAP_ENTRYCLASS_MASTER)
+			CHECK(ldap_parse_master_zoneentry(entry_zone, inst));
+		else if (objclass & LDAP_ENTRYCLASS_FORWARD)
+			CHECK(ldap_parse_fwd_zoneentry(entry_zone, inst));
 
 		if (PSEARCH_MODDN(pevent->chgtype)) {
 			if (dn_to_dnsname(inst->mctx, pevent->prevdn, &prevname, NULL)
@@ -3307,20 +3398,22 @@ update_zone(isc_task_t *task, isc_event_t *event)
 				CHECK(ldap_delete_zone(inst, pevent->prevdn,
 				      ISC_TRUE, ISC_FALSE));
 			} else {
-				log_debug(5, "update_action: old zone wasn't managed "
-						"by plugin, dn '%s'", pevent->prevdn);
+				log_debug(5, "update_zone: old zone wasn't managed "
+					     "by plugin, dn '%s'", pevent->prevdn);
 			}
 
 			/* fill the cache with records from renamed zone */
-			CHECK(ldap_query(inst, NULL, &ldap_qresult_record, pevent->dn,
-					LDAP_SCOPE_ONELEVEL, attrs_record, 0,
-					"(objectClass=idnsRecord)"));
+			if (objclass & LDAP_ENTRYCLASS_MASTER) {
+				CHECK(ldap_query(inst, NULL, &ldap_qresult_record, pevent->dn,
+						LDAP_SCOPE_ONELEVEL, attrs_record, 0,
+						"(objectClass=idnsRecord)"));
 
-			for (entry_record = HEAD(ldap_qresult_record->ldap_entries);
-					entry_record != NULL;
-					entry_record = NEXT(entry_record, link)) {
+				for (entry_record = HEAD(ldap_qresult_record->ldap_entries);
+						entry_record != NULL;
+						entry_record = NEXT(entry_record, link)) {
 
-				psearch_update(inst, entry_record, NULL);
+					psearch_update(inst, entry_record, NULL);
+				}
 			}
 		}
 
@@ -3337,6 +3430,8 @@ cleanup:
 
 	ldap_query_free(ISC_FALSE, &ldap_qresult_zone);
 	ldap_query_free(ISC_FALSE, &ldap_qresult_record);
+	if (dns_name_dynamic(&currname))
+		dns_name_free(&currname, inst->mctx);
 	if (dns_name_dynamic(&prevname))
 		dns_name_free(&prevname, inst->mctx);
 	isc_mem_free(mctx, pevent->dbname);
@@ -3640,12 +3735,7 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 	isc_mem_t *mctx = NULL;
 	isc_taskaction_t action = NULL;
 
-	class = ldap_entry_getclass(entry);
-	if (class == LDAP_ENTRYCLASS_NONE) {
-		log_error("psearch_update: ignoring entry with unknown class, dn '%s'",
-			  entry->dn);
-		return; /* ignore it, it's OK */
-	}
+	CHECK(ldap_entry_getclass(entry, &class));
 
 	if (ctrls != NULL)
 		CHECK(ldap_parse_entrychangectrl(ctrls, &chgtype, &prevdn_ldap));
@@ -3674,7 +3764,9 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 
 	if ((class & LDAP_ENTRYCLASS_CONFIG) != 0)
 		action = update_config;
-	else if ((class & LDAP_ENTRYCLASS_ZONE) != 0)
+	else if ((class & LDAP_ENTRYCLASS_MASTER) != 0)
+		action = update_zone;
+	else if ((class & LDAP_ENTRYCLASS_FORWARD) != 0)
 		action = update_zone;
 	else if ((class & LDAP_ENTRYCLASS_RR) != 0)
 		action = update_record;
@@ -3844,14 +3936,18 @@ restart:
 		ret = ldap_search_ext(conn->handle,
 				      base,
 				      LDAP_SCOPE_SUBTREE,
-					  /*
-					   * (objectClass==idnsZone AND idnsZoneActive==TRUE) 
-					   * OR (objectClass == idnsRecord)
-					   * OR (objectClass == idnsConfigObject)
-					   */
-				      "(|(&(objectClass=idnsZone)(idnsZoneActive=TRUE))"
-					  "(objectClass=idnsRecord)"
-					  "(objectClass=idnsConfigObject))",
+				      /*    class = record
+				       * OR class = config
+				       * OR class = zone
+				       * OR class = forward
+				       *
+				       * Inactive zones are handled
+				       * in update_zone. */
+				      "(|"
+				      "(objectClass=idnsRecord)"
+				      "(objectClass=idnsConfigObject)"
+				      "(objectClass=idnsZone)"
+				      "(objectClass=idnsForwardZone))",
 				      NULL, 0, conn->serverctrls, NULL, NULL,
 				      LDAP_NO_LIMIT, &conn->msgid);
 		if (ret != LDAP_SUCCESS) {

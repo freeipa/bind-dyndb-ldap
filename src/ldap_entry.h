@@ -64,8 +64,9 @@ struct ldap_attribute {
 
 #define LDAP_ENTRYCLASS_NONE	0x0
 #define LDAP_ENTRYCLASS_RR	0x1
-#define LDAP_ENTRYCLASS_ZONE	0x2
+#define LDAP_ENTRYCLASS_MASTER	0x2
 #define LDAP_ENTRYCLASS_CONFIG	0x4
+#define LDAP_ENTRYCLASS_FORWARD	0x8
 
 typedef unsigned char		ldap_entryclass_t;
 
@@ -116,8 +117,8 @@ ldap_entry_getfakesoa(ldap_entry_t *entry, const char *fake_mname,
  * Get entry class (bitwise OR of the LDAP_ENTRYCLASS_*). Note that
  * you must ldap_search for objectClass attribute!
  */
-ldap_entryclass_t
-ldap_entry_getclass(ldap_entry_t *entry);
+isc_result_t
+ldap_entry_getclass(ldap_entry_t *entry, ldap_entryclass_t *class);
 
 /*
  * ldap_attr_nextvalue
