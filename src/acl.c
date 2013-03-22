@@ -221,6 +221,7 @@ get_match_type(const cfg_obj_t *obj)
 
 	MATCH("name", DNS_SSUMATCHTYPE_NAME);
 	MATCH("subdomain", DNS_SSUMATCHTYPE_SUBDOMAIN);
+	MATCH("zonesub", DNS_SSUMATCHTYPE_SUBDOMAIN);
 	MATCH("wildcard", DNS_SSUMATCHTYPE_WILDCARD);
 	MATCH("self", DNS_SSUMATCHTYPE_SELF);
 #if defined(DNS_SSUMATCHTYPE_SELFSUB) && defined(DNS_SSUMATCHTYPE_SELFWILD)
@@ -259,8 +260,16 @@ get_fixed_name(const cfg_obj_t *obj, const char *name, dns_fixedname_t *fname)
 
 	REQUIRE(fname != NULL);
 
+	if (!cfg_obj_istuple(obj)) {
+		log_bug("configuration object is not a tuple");
+		return ISC_R_UNEXPECTED;
+	}
 	obj = cfg_tuple_get(obj, name);
+
+	if (!cfg_obj_isstring(obj))
+		return ISC_R_NOTFOUND;
 	str = cfg_obj_asstring(obj);
+
 	len = strlen(str);
 	isc_buffer_init(&buf, str, len);
 
@@ -430,7 +439,19 @@ acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone)
 		match_type = get_match_type(stmt);
 
 		CHECK(get_fixed_name(stmt, "identity", &fident));
-		CHECK(get_fixed_name(stmt, "name", &fname));
+
+		/* Use zone name for 'zonesub' match type */
+		result = get_fixed_name(stmt, "name", &fname);
+		if (result == ISC_R_NOTFOUND &&
+		    match_type == DNS_SSUMATCHTYPE_SUBDOMAIN) {
+			dns_fixedname_init(&fname);
+			CHECK(dns_name_copy(dns_zone_getorigin(zone),
+					    dns_fixedname_name(&fname),
+					    &fname.buffer));
+		}
+		else if (result != ISC_R_SUCCESS)
+			goto cleanup;
+
 		CHECK(get_types(mctx, stmt, &types, &n));
 
 		if (match_type == DNS_SSUMATCHTYPE_WILDCARD &&
