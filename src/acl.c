@@ -191,32 +191,48 @@ parse(cfg_parser_t *parser, const char *string, cfg_type_t **type,
 #define MATCH(string_rep, return_val)					\
 	do {								\
 		if (!strcasecmp(str, string_rep)) {			\
-			return return_val;				\
+			*value = return_val;				\
+			return ISC_R_SUCCESS;				\
 		}							\
 	} while (0)
 
-static isc_boolean_t
-get_mode(const cfg_obj_t *obj)
+static isc_result_t
+get_mode(const cfg_obj_t *obj, isc_boolean_t *value)
 {
 	const char *str;
 
+	if (!cfg_obj_istuple(obj)) {
+		log_bug("tuple is expected");
+		return ISC_R_UNEXPECTED;
+	}
 	obj = cfg_tuple_get(obj, "mode");
+	if (!cfg_obj_isstring(obj)) {
+		log_bug("mode is not defined");
+		return ISC_R_UNEXPECTED;
+	}
 	str = cfg_obj_asstring(obj);
 
 	MATCH("grant", ISC_TRUE);
 	MATCH("deny", ISC_FALSE);
 
-	INSIST(0);
-	/* Not reached. */
-	return ISC_FALSE;
+	log_bug("unsupported ACL mode '%s'", str);
+	return ISC_R_NOTIMPLEMENTED;
 }
 
-static unsigned int
-get_match_type(const cfg_obj_t *obj)
+static isc_result_t
+get_match_type(const cfg_obj_t *obj, unsigned int *value)
 {
 	const char *str;
 
+	if (!cfg_obj_istuple(obj)) {
+		log_bug("tuple is expected");
+		return ISC_R_UNEXPECTED;
+	}
 	obj = cfg_tuple_get(obj, "matchtype");
+	if (!cfg_obj_isstring(obj)) {
+		log_bug("matchtype is not defined");
+		return ISC_R_UNEXPECTED;
+	}
 	str = cfg_obj_asstring(obj);
 
 	MATCH("name", DNS_SSUMATCHTYPE_NAME);
@@ -245,9 +261,8 @@ get_match_type(const cfg_obj_t *obj)
 	MATCH("6to4-self", DNS_SSUMATCHTYPE_6TO4SELF);
 #endif
 
-	INSIST(0);
-	/* Not reached. */
-	return DNS_SSUMATCHTYPE_NAME;
+	log_bug("unsupported match type '%s'", str);
+	return ISC_R_NOTIMPLEMENTED;
 }
 
 static isc_result_t
@@ -435,8 +450,8 @@ acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone)
 		types = NULL;
 
 		stmt = cfg_listelt_value(el);
-		grant = get_mode(stmt);
-		match_type = get_match_type(stmt);
+		CHECK(get_mode(stmt, &grant));
+		CHECK(get_match_type(stmt, &match_type));
 
 		CHECK(get_fixed_name(stmt, "identity", &fident));
 
