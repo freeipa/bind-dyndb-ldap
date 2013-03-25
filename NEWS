@@ -1,5 +1,27 @@
-[1] Automatically reload invalid zone after each change in zone data.
+2.6
+=====
+[1] Invalid zones are automatically reloaded after each change in zone data.
     https://fedorahosted.org/bind-dyndb-ldap/ticket/102
+
+[2] Plugin periodically reconnects when KDC is unavailable.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/100
+
+[3] Invalid wildcard name in update-policy no longer crashes BIND.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/108
+
+[4] Crash caused by idnsAllowSyncPTR attribute in global configuration object
+    in LDAP was fixed.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/110
+
+[5] Crash caused by invalid query/transfer policy was fixed.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/109
+
+[6] Crash caused by 'zonesub' match-type in update ACL was fixed.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/111
+
+[7] Support for update-policy match type 'external' was added.
+
+[8] Various improvements related to logging.
 
 2.5
 =====
