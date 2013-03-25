@@ -260,6 +260,9 @@ get_match_type(const cfg_obj_t *obj, unsigned int *value)
 	MATCH("tcp-self", DNS_SSUMATCHTYPE_TCPSELF);
 	MATCH("6to4-self", DNS_SSUMATCHTYPE_6TO4SELF);
 #endif
+#if defined(DNS_SSUMATCHTYPE_EXTERNAL)
+	MATCH("external", DNS_SSUMATCHTYPE_EXTERNAL);
+#endif
 
 	log_bug("unsupported match type '%s'", str);
 	return ISC_R_NOTIMPLEMENTED;
