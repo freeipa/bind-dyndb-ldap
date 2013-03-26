@@ -33,6 +33,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "config.h"
 #include "ldap_convert.h"
 #include "ldap_helper.h"
 #include "log.h"
@@ -62,6 +63,9 @@ initialize_manager(void)
 {
 	INIT_LIST(instance_list);
 	isc_mutex_init(&instance_list_lock);
+	log_info("bind-dyndb-ldap version " VERSION
+		 " compiled at " __TIME__ " " __DATE__
+		 ", compiler " __VERSION__);
 }
 
 void
