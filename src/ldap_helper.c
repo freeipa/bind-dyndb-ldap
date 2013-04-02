@@ -1548,7 +1548,7 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
 
 	/* Walk through master zone register and remove all zones which
 	 * disappeared from LDAP. */
-	rbt_iterator_t iter;
+	rbt_iterator_t *iter = NULL;
 	char name_txt[DNS_NAME_FORMATSIZE];
 	DECLARE_BUFFERED_NAME(registered_name);
 	DECLARE_BUFFERED_NAME(ldap_name);
@@ -1587,6 +1587,7 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
 	/* Walk through forward zone register and remove all zones which
 	 * disappeared from LDAP. */
 	INIT_BUFFERED_NAME(registered_name);
+	iter = NULL;
 	result = fwdr_rbt_iter_init(ldap_inst->fwd_register, &iter, &registered_name);
 	while (result == ISC_R_SUCCESS) {
 		void *data = NULL;
@@ -1624,6 +1625,7 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
 		goto cleanup;
 
 cleanup:
+	rbt_iter_stop(&iter);
 	if (master_rbt != NULL)
 		dns_rbt_destroy(&master_rbt);
 	if (forward_rbt != NULL)

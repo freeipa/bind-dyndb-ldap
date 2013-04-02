@@ -91,7 +91,7 @@ static const setting_t zone_settings[] = {
 };
 
 isc_result_t
-zr_rbt_iter_init(zone_register_t *zr, rbt_iterator_t *iter,
+zr_rbt_iter_init(zone_register_t *zr, rbt_iterator_t **iter,
 		 dns_name_t *nodename) {
 	if (zr->rbt == NULL)
 		return ISC_R_NOTFOUND;
@@ -160,7 +160,7 @@ zr_destroy(zone_register_t **zrp)
 {
 	DECLARE_BUFFERED_NAME(name);
 	zone_register_t *zr;
-	rbt_iterator_t iter;
+	rbt_iterator_t *iter = NULL;
 	isc_result_t result;
 
 	if (zrp == NULL || *zrp == NULL)

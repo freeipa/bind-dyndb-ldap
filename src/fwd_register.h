@@ -29,7 +29,7 @@ isc_result_t
 fwdr_zone_ispresent(fwd_register_t *fwdr, dns_name_t *name);
 
 isc_result_t
-fwdr_rbt_iter_init(fwd_register_t *fwdr, rbt_iterator_t *iter,
+fwdr_rbt_iter_init(fwd_register_t *fwdr, rbt_iterator_t **iter,
 		   dns_name_t *nodename);
 
 #endif /* !_LD_FWD_REGISTER_H_ */

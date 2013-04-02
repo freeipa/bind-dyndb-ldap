@@ -58,7 +58,7 @@ isc_result_t
 zr_get_zone_settings(zone_register_t *zr, dns_name_t *name, settings_set_t **set);
 
 isc_result_t
-zr_rbt_iter_init(zone_register_t *zr, rbt_iterator_t *iter,
+zr_rbt_iter_init(zone_register_t *zr, rbt_iterator_t **iter,
 		 dns_name_t *nodename);
 
 dns_rbt_t *
