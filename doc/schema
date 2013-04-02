@@ -315,3 +315,11 @@ objectclass ( 2.16.840.1.113730.3.8.6.2
 	MAY ( idnsForwardPolicy $ idnsForwarders $ idnsAllowSyncPTR $
 	    idnsZoneRefresh $ idnsPersistentSearch
 	) )
+
+objectClasses: ( 2.16.840.1.113730.3.8.6.3
+	NAME 'idnsForwardZone'
+	DESC 'Forward Zone class'
+	SUP top
+	STRUCTURAL
+	MUST ( idnsName $ idnsZoneActive )
+	MAY ( idnsForwarders $ idnsForwardPolicy ) )
