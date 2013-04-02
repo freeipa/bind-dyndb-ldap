@@ -1,3 +1,32 @@
+# This schema contains OIDs from Uninett and FreeIPA.
+#
+# Unninet: http://drift.uninett.no/nett/ip-nett/dnsattributes.schema
+#          Base OID for DNS records is 1.3.6.1.4.1.2428.20.1,
+#          see http://drift.uninett.no/nett/ip-nett/oids.html
+#
+# FreeIPA: http://freeipa.org/
+#          Base OID for DNS records is 2.16.840.1.113730.3.8.5
+#          Base OID for DNS objectClasses is 2.16.840.1.113730.3.8.6
+#
+# If you want to add some record types that are defined by IANA,
+# please define it similar to what is done for the existing ones. The
+# name should be {TYPE}Record, and OID should be
+# 1.3.6.1.4.1.2428.20.1.value. For instance the RR type LOC has value
+# 29, so attribute name should be LocRecord (casing shouldn't matter),
+# and the OID is 1.3.6.1.4.1.2428.20.1.29. If you follow this, you
+# know that it will be compatible with what others use, and one is
+# guaranteed that the OIDs are unique.
+# The IANA DNS record type values are available from
+# <URL: http://www.iana.org/assignments/dns-parameters >.
+#
+# If you define new attributes, please report them to drift@uninett.no
+# to get them added of this schema.
+#
+# The basic record types like A, CNAME etc are defined in the cosine
+# schema and not in this schema.  This means that your LDAP server
+# must use both the cosine schema and this one to get all the DNS
+# attributes defined.
+
 attributetype ( 1.3.6.1.4.1.2428.20.0.0
 	NAME 'dNSTTL'
 	DESC 'An integer denoting time to live'
