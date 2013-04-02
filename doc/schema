@@ -117,10 +117,11 @@ attributetype ( 1.3.6.1.4.1.2428.20.1.38
 
 attributetype ( 1.3.6.1.4.1.2428.20.1.39
 	NAME 'dNameRecord'
-	DESC 'Non-Terminal DNS Name Redirection, RFC 2672'
+	DESC 'Non-Terminal DNS Name Redirection, RFC 6672'
 	EQUALITY caseIgnoreIA5Match
 	SUBSTR caseIgnoreIA5SubstringsMatch
-	SYNTAX 1.3.6.1.4.1.1466.115.121.1.26 )
+	SYNTAX 1.3.6.1.4.1.1466.115.121.1.26
+	SINGLE-VALUE )
 
 attributetype ( 1.3.6.1.4.1.2428.20.1.43
 	NAME 'dSRecord'
