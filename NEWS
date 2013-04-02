@@ -1,3 +1,22 @@
+3.0
+=====
+[1] DNAME records are supported. DNAME attribute was changed to single-valued.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/63
+
+[2] Master and forward zones now have separate object classes:
+    idnsZone and idnsForwardZone. idnsForward* attributes in idnsZone object
+    class will have old semantics for some time.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/99
+
+[3] Settings system was heavily refactored. From now, unknown options in
+    configuration file cause error. DNS dynamic updates should create
+    slightly lower load on LDAP server because of settings 'cache'.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/53
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/81
+
+[4] Deadlock triggered by PTR record synchronization was fixed.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/113
+
 2.6
 =====
 [1] Invalid zones are automatically reloaded after each change in zone data.
