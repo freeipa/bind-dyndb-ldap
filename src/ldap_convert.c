@@ -24,7 +24,6 @@
 #include <isc/string.h>
 
 #include <dns/name.h>
-#include <dns/rdatatype.h>
 #include <dns/result.h>
 #include <dns/types.h>
 
@@ -40,28 +39,6 @@
 #include "log.h"
 #include "util.h"
 #include "zone_register.h"
-
-/*
- * Consistency must be preserved in these tables.
- * ldap_dns_records[i] must always corespond to dns_records[i]
- */
-const char *ldap_dns_records[] = {
-	"ARecord",     "AAAARecord",  "A6Record",    "NSRecord",
-	"CNAMERecord", "PTRRecord",   "SRVRecord",   "TXTRecord",   "MXRecord",
-	"MDRecord",    "HINFORecord", "MINFORecord", "AFSDBRecord", "SIGRecord",
-	"KEYRecord",   "LOCRecord",   "NXTRecord",   "NAPTRRecord", "KXRecord",
-	"CERTRecord",  "DNAMERecord", "DSRecord",    "SSHFPRecord",
-	"RRSIGRecord", "NSECRecord",  NULL
-};
-
-const char *dns_records[] = {
-	"A",     "AAAA",  "A6",    "NS",
-	"CNAME", "PTR",   "SRV",   "TXT",   "MX",
-	"MD",    "HINFO", "MINFO", "AFSDB", "SIG",
-	"KEY",   "LOC",   "NXT",   "NAPTR", "KX",
-	"CERT",  "DNAME", "DS",    "SSHFP",
-	"RRSIG", "NSEC",  NULL
-};
 
 static isc_result_t explode_dn(const char *dn, char ***explodedp, int notypes);
 static isc_result_t explode_rdn(const char *rdn, char ***explodedp,
@@ -436,45 +413,52 @@ cleanup:
 	return result;
 }
 
+/**
+ * Convert attribute name to dns_rdatatype.
+ *
+ * @param[in]  ldap_attribute String with attribute name terminated by \0.
+ * @param[out] rdtype
+ */
 isc_result_t
 ldap_attribute_to_rdatatype(const char *ldap_attribute, dns_rdatatype_t *rdtype)
 {
 	isc_result_t result;
-	unsigned i;
+	unsigned len;
 	isc_consttextregion_t region;
 
-	for (i = 0; ldap_dns_records[i] != NULL; i++) {
-		if (!strcasecmp(ldap_attribute, ldap_dns_records[i]))
-			break;
-	}
-	if (dns_records[i] == NULL)
-		return ISC_R_NOTFOUND;
+	len = strlen(ldap_attribute);
+	if (len <= LDAP_RDATATYPE_SUFFIX_LEN)
+		return ISC_R_UNEXPECTEDEND;
 
-	region.base = dns_records[i];
-	region.length = strlen(region.base);
+	/* Does attribute name end with RECORD_SUFFIX? */
+	if (strcasecmp(ldap_attribute + len - LDAP_RDATATYPE_SUFFIX_LEN,
+		       LDAP_RDATATYPE_SUFFIX))
+		return ISC_R_UNEXPECTED;
+
+	region.base = ldap_attribute;
+	region.length = len - LDAP_RDATATYPE_SUFFIX_LEN;
 	result = dns_rdatatype_fromtext(rdtype, (isc_textregion_t *)&region);
 	if (result != ISC_R_SUCCESS)
-		log_error("dns_rdatatype_fromtext() failed");
+		log_error_r("dns_rdatatype_fromtext() failed for attribute '%s'",
+			    ldap_attribute);
 
 	return result;
 }
 
 isc_result_t
-rdatatype_to_ldap_attribute(dns_rdatatype_t rdtype, const char **target)
+rdatatype_to_ldap_attribute(dns_rdatatype_t rdtype, char *target,
+			    unsigned int size)
 {
-	unsigned i;
+	isc_result_t result;
 	char rdtype_str[DNS_RDATATYPE_FORMATSIZE];
 
 	dns_rdatatype_format(rdtype, rdtype_str, DNS_RDATATYPE_FORMATSIZE);
-	for (i = 0; dns_records[i] != NULL; i++) {
-		if (!strcmp(rdtype_str, dns_records[i]))
-			break;
-	}
-	if (ldap_dns_records[i] == NULL)
-		return ISC_R_NOTFOUND;
-
-	*target = ldap_dns_records[i];
+	CHECK(isc_string_copy(target, size, rdtype_str));
+	CHECK(isc_string_append(target, size, LDAP_RDATATYPE_SUFFIX));
 
 	return ISC_R_SUCCESS;
+
+cleanup:
+	return result;
 }
 

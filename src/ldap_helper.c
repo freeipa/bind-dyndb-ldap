@@ -320,7 +320,7 @@ static isc_result_t ldap_rdttl_to_ldapmod(isc_mem_t *mctx,
 		dns_rdatalist_t *rdlist, LDAPMod **changep);
 static isc_result_t ldap_rdatalist_to_ldapmod(isc_mem_t *mctx,
 		dns_rdatalist_t *rdlist, LDAPMod **changep, int mod_op);
-static void free_ldapmod(isc_mem_t *mctx, LDAPMod **changep);
+
 static isc_result_t ldap_rdata_to_char_array(isc_mem_t *mctx,
 		dns_rdata_t *rdata_head, char ***valsp);
 static void free_char_array(isc_mem_t *mctx, char ***valsp);
@@ -2656,45 +2656,8 @@ cleanup:
 	return result;
 }
 
-static isc_result_t
-ldap_rdatalist_to_ldapmod(isc_mem_t *mctx, dns_rdatalist_t *rdlist,
-			  LDAPMod **changep, int mod_op)
-{
-	isc_result_t result;
-	LDAPMod *change = NULL;
-	char **vals = NULL;
-	const char *attr_name_c;
-	char *attr_name;
-
-
-	REQUIRE(changep != NULL && *changep == NULL);
-
-	CHECKED_MEM_GET_PTR(mctx, change);
-	ZERO_PTR(change);
-
-	result = rdatatype_to_ldap_attribute(rdlist->type, &attr_name_c);
-	if (result != ISC_R_SUCCESS) {
-		result = ISC_R_FAILURE;
-		goto cleanup;
-	}
-	DE_CONST(attr_name_c, attr_name);
-	CHECK(ldap_rdata_to_char_array(mctx, HEAD(rdlist->rdata), &vals));
-
-	change->mod_op = mod_op;
-	change->mod_type = attr_name;
-	change->mod_values = vals;
-
-	*changep = change;
-	return ISC_R_SUCCESS;
-
-cleanup:
-	free_ldapmod(mctx, &change);
-
-	return result;
-}
-
 static void
-free_ldapmod(isc_mem_t *mctx, LDAPMod **changep)
+ldap_mod_free(isc_mem_t *mctx, LDAPMod **changep)
 {
 	LDAPMod *change;
 
@@ -2705,9 +2668,58 @@ free_ldapmod(isc_mem_t *mctx, LDAPMod **changep)
 		return;
 
 	free_char_array(mctx, &change->mod_values);
+	if (change->mod_type != NULL)
+		SAFE_MEM_PUT(mctx, change->mod_type, LDAP_ATTR_FORMATSIZE);
 	SAFE_MEM_PUT_PTR(mctx, change);
 
 	*changep = NULL;
+}
+
+static isc_result_t
+ldap_mod_create(isc_mem_t *mctx, LDAPMod **changep)
+{
+	LDAPMod *change = NULL;
+	isc_result_t result;
+
+	REQUIRE(changep != NULL && *changep == NULL);
+
+	CHECKED_MEM_GET_PTR(mctx, change);
+	ZERO_PTR(change);
+	CHECKED_MEM_GET(mctx, change->mod_type, LDAP_ATTR_FORMATSIZE);
+
+	*changep = change;
+	return ISC_R_SUCCESS;
+
+cleanup:
+	if (change != NULL)
+		SAFE_MEM_PUT_PTR(mctx, change);
+
+	return result;
+}
+
+static isc_result_t
+ldap_rdatalist_to_ldapmod(isc_mem_t *mctx, dns_rdatalist_t *rdlist,
+			  LDAPMod **changep, int mod_op)
+{
+	isc_result_t result;
+	LDAPMod *change = NULL;
+	char **vals = NULL;
+
+	CHECK(ldap_mod_create(mctx, &change));
+	CHECK(rdatatype_to_ldap_attribute(rdlist->type, change->mod_type,
+					  LDAP_ATTR_FORMATSIZE));
+	CHECK(ldap_rdata_to_char_array(mctx, HEAD(rdlist->rdata), &vals));
+
+	change->mod_op = mod_op;
+	change->mod_values = vals;
+
+	*changep = change;
+	return ISC_R_SUCCESS;
+
+cleanup:
+	ldap_mod_free(mctx, &change);
+
+	return result;
 }
 
 static isc_result_t
@@ -2791,11 +2803,9 @@ ldap_rdttl_to_ldapmod(isc_mem_t *mctx, dns_rdatalist_t *rdlist,
 	CHECK(str_new(mctx, &ttlval));
 	CHECK(str_sprintf(ttlval, "%d", rdlist->ttl));
 
-	CHECKED_MEM_GET_PTR(mctx, change);
-	ZERO_PTR(change);
-
+	CHECK(ldap_mod_create(mctx, &change));
 	change->mod_op = LDAP_MOD_REPLACE;
-	change->mod_type = "dnsTTL";
+	CHECK(isc_string_copy(change->mod_type, LDAP_ATTR_FORMATSIZE, "dnsTTL"));
 
 	CHECKED_MEM_ALLOCATE(mctx, vals, 2 * sizeof(char *));
 	memset(vals, 0, 2 * sizeof(char *));
@@ -2808,7 +2818,7 @@ ldap_rdttl_to_ldapmod(isc_mem_t *mctx, dns_rdatalist_t *rdlist,
 
 cleanup:
 	if (ttlval) str_destroy(&ttlval);
-	if (change && result != ISC_R_SUCCESS) free_ldapmod(mctx, &change);
+	if (change && result != ISC_R_SUCCESS) ldap_mod_free(mctx, &change);
 
 	return result;
 }
@@ -3173,17 +3183,12 @@ ldap_sync_ptr(ldap_instance_t *ldap_inst, dns_name_t *a_name,
 		CLEANUP_WITH(DNS_R_SERVFAIL);
 
 	/* Fill the LDAPMod change structure up. */
-	CHECKED_MEM_GET_PTR(mctx, change[0]);
-	ZERO_PTR(change[0]);
+	CHECK(ldap_mod_create(mctx, &change[0]));
 
 	/* Do the same action what has been done with A/AAAA record. */
 	change[0]->mod_op = mod_op;
-	char *attr_name;
-	const char *attr_name_c;
-	CHECK(rdatatype_to_ldap_attribute(dns_rdatatype_ptr, &attr_name_c));
-
-	DE_CONST(attr_name_c, attr_name);
-	change[0]->mod_type = attr_name;
+	CHECK(rdatatype_to_ldap_attribute(dns_rdatatype_ptr, change[0]->mod_type,
+					  LDAP_ATTR_FORMATSIZE));
 
 	CHECKED_MEM_ALLOCATE(mctx, vals, 2 * sizeof(char *));
 	memset(vals, 0, 2 * sizeof(char *));
@@ -3203,7 +3208,7 @@ cleanup:
 	if (dns_name_dynamic(&zone_name))
 		dns_name_free(&zone_name, mctx);
 	str_destroy(&ptr_dn);
-	if (change[0] != NULL) free_ldapmod(mctx, &change[0]);
+	ldap_mod_free(mctx, &change[0]);
 
 	return result;
 }
@@ -3294,9 +3299,8 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 
 cleanup:
 	str_destroy(&owner_dn);
-
-	free_ldapmod(mctx, &change[0]);
-	free_ldapmod(mctx, &change[1]);
+	ldap_mod_free(mctx, &change[0]);
+	ldap_mod_free(mctx, &change[1]);
 	free_char_array(mctx, &vals);
 	dns_name_free(&zone_name, mctx);
 

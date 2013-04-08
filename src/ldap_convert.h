@@ -22,9 +22,14 @@
 #define _LD_LDAP_CONVERT_H_
 
 #include <dns/types.h>
+#include <dns/rdatatype.h>
 
 #include "str.h"
 #include "zone_register.h"
+
+#define LDAP_ATTR_FORMATSIZE 32 /* "expected" maximum attribute name length */
+#define LDAP_RDATATYPE_SUFFIX     "Record"
+#define LDAP_RDATATYPE_SUFFIX_LEN (sizeof(LDAP_RDATATYPE_SUFFIX) - 1)
 
 /*
  * Convert LDAP DN 'dn', to dns_name_t 'target'. 'target' needs to be
@@ -41,8 +46,9 @@ isc_result_t dnsname_to_dn(zone_register_t *zr, dns_name_t *name,
 isc_result_t ldap_attribute_to_rdatatype(const char *ldap_record,
 				      dns_rdatatype_t *rdtype);
 
-isc_result_t rdatatype_to_ldap_attribute(dns_rdatatype_t rdtype,
-					 const char **target);
+isc_result_t
+rdatatype_to_ldap_attribute(dns_rdatatype_t rdtype, char *target,
+			    unsigned int size);
 
 isc_result_t dn_to_text(const char *dn, ld_string_t *target,
 			ld_string_t *origin);
