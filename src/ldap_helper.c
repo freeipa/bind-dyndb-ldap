@@ -3385,7 +3385,7 @@ update_zone(isc_task_t *task, isc_event_t *event)
 
 	CHECK(dn_to_dnsname(inst->mctx, pevent->dn, &currname, NULL));
 
-	if (result == ISC_R_SUCCESS &&
+	if (ldap_qresult_zone != NULL &&
 	    HEAD(ldap_qresult_zone->ldap_entries) != NULL) {
 		entry_zone = HEAD(ldap_qresult_zone->ldap_entries);
 		CHECK(ldap_entry_getclass(entry_zone, &objclass));
