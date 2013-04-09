@@ -55,15 +55,29 @@
 	log_write(GET_LOG_LEVEL(level), format, ##__VA_ARGS__)
 
 /* LDAP logging functions */
-#define log_ldap_error(ld)						\
-	do {								\
-		int err;						\
-		char *errmsg = "<UNKNOWN>";				\
-		if (ldap_get_option(ld, LDAP_OPT_RESULT_CODE, &err)	\
-		    == LDAP_OPT_SUCCESS)				\
-			errmsg = ldap_err2string(err);			\
-		log_error_position("LDAP error: %s", errmsg);		\
-	} while (0);							\
+#define LOG_LDAP_ERR_PREFIX "LDAP error: "
+#define log_ldap_error(ld, desc, ...)						\
+	do {									\
+		int err;							\
+		char *errmsg = NULL;						\
+		char *diagmsg = NULL;						\
+		if (ldap_get_option(ld, LDAP_OPT_RESULT_CODE, &err)		\
+		    == LDAP_OPT_SUCCESS) {					\
+			errmsg = ldap_err2string(err);				\
+			if (ldap_get_option(ld, LDAP_OPT_DIAGNOSTIC_MESSAGE, &diagmsg)	\
+			    == LDAP_OPT_SUCCESS && diagmsg != NULL) {		\
+				log_error(LOG_LDAP_ERR_PREFIX "%s: %s: " desc,	\
+					  errmsg, diagmsg, ##__VA_ARGS__);	\
+				ldap_memfree(diagmsg);				\
+			} else							\
+				log_error(LOG_LDAP_ERR_PREFIX "%s: " desc,	\
+					  errmsg, ##__VA_ARGS__);		\
+		} else {							\
+			log_error(LOG_LDAP_ERR_PREFIX				\
+				  "<unable to obtain LDAP error code>: "	\
+				  desc, ##__VA_ARGS__);				\
+		}								\
+	} while (0);
 
 void
 log_write(int level, const char *format, ...) ISC_FORMAT_PRINTF(2, 3);

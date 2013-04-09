@@ -217,7 +217,7 @@ ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 
 	entry->dn = ldap_get_dn(ld, ldap_entry);
 	if (entry->dn == NULL) {
-		log_ldap_error(ld);
+		log_ldap_error(ld, "unable to get entry DN");
 		CLEANUP_WITH(ISC_R_FAILURE);
 	}
 

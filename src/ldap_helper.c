@@ -2474,8 +2474,7 @@ force_reconnect:
 	}
 
 	if (ret != LDAP_SUCCESS) {
-		log_error("bind to LDAP server failed: %s",
-			  ldap_err2string(ret));
+		log_ldap_error(ldap_conn->handle, "bind to LDAP server failed");
 
 		/*
 		 * Clean the connection handle.
@@ -2537,12 +2536,13 @@ handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn
 		break;
 	case LDAP_INVALID_DN_SYNTAX:
 	case LDAP_INVALID_SYNTAX:
-		log_bug("Invalid syntax in handle_connection_error indicates a bug");
+		log_ldap_error(ldap_conn->handle, "invalid syntax in "
+			       "handle_connection_error indicates a bug");
 		result = ISC_R_UNEXPECTEDTOKEN;
 		break;
 	default:
 		/* Try to reconnect on other errors. */
-		log_error("LDAP error: %s", ldap_err2string(err_code));
+		log_ldap_error(ldap_conn->handle, "connection error");
 reconnect:
 		if (ldap_conn->tries == 0)
 			log_error("connection to the LDAP server was lost");
@@ -2641,8 +2641,7 @@ ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn, LDAPMod **mods,
 		operation_str = "adding";
 	}
 
-	log_debug(2, "error(%s) %s entry %s", ldap_err2string(err_code),
-		  operation_str, dn);
+	log_ldap_error(ldap_conn->handle, "while %s entry '%s'", operation_str, dn);
 
 	/* do not error out if we are trying to delete an
 	 * unexisting attribute */
