@@ -2536,6 +2536,7 @@ handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn
 		break;
 	case LDAP_INVALID_DN_SYNTAX:
 	case LDAP_INVALID_SYNTAX:
+	case LDAP_FILTER_ERROR:
 		log_ldap_error(ldap_conn->handle, "invalid syntax in "
 			       "handle_connection_error indicates a bug");
 		result = ISC_R_UNEXPECTEDTOKEN;
