@@ -1,3 +1,9 @@
+3.1
+=====
+[1] Crash caused by zone deletion introduced by 
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/99
+    was fixed.
+
 3.0
 =====
 [1] DNAME records are supported. DNAME attribute was changed to single-valued.
