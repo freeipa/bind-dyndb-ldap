@@ -766,6 +766,9 @@ cleanup:
 static isc_result_t
 configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
 {
+	isc_result_t result;
+	isc_result_t result2;
+
 	REQUIRE(zone != NULL);
 
 	/*
@@ -784,7 +787,23 @@ configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
 #endif
 
 	/* Set simple update table. */
-	return acl_configure_zone_ssutable(update_str, zone);
+	result = acl_configure_zone_ssutable(update_str, zone);
+	if (result != ISC_R_SUCCESS) {
+		dns_zone_logc(zone, DNS_LOGCATEGORY_SECURITY, ISC_LOG_ERROR,
+			      "disabling all updates because of error in "
+			      "update policy configuration: %s",
+			      isc_result_totext(result));
+		result2 = acl_configure_zone_ssutable("", zone);
+		if (result2 != ISC_R_SUCCESS) {
+			dns_zone_logc(zone, DNS_LOGCATEGORY_SECURITY, ISC_LOG_CRITICAL,
+				      "cannot disable all updates: %s",
+				      isc_result_totext(result2));
+			FATAL_ERROR(__FILE__, __LINE__,
+				    "insecure state detected");
+		}
+	}
+
+	return result;
 }
 
 static isc_result_t
