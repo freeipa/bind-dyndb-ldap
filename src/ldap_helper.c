@@ -2990,14 +2990,14 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		if (result != ISC_R_SUCCESS) {
 			if (result == ISC_R_NOTFOUND)
 				log_debug(3, "active zone '%s' not found", zone_dn);
-			goto cleanup;
+			CLEANUP_WITH(DNS_R_SERVFAIL);
 		}
 
 		CHECK(setting_get_bool("dyn_update", zone_settings, &zone_dyn_update));
 		if (!zone_dyn_update) {
 			log_error("dynamic update is not allowed in zone "
 				  "'%s'", zone_dn);
-			CLEANUP_WITH(ISC_R_NOPERM);
+			CLEANUP_WITH(DNS_R_SERVFAIL);
 		}
 
 		/* 
