@@ -1242,6 +1242,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	isc_boolean_t unlock = ISC_FALSE;
 	isc_boolean_t publish = ISC_FALSE;
 	isc_boolean_t published = ISC_FALSE;
+	isc_boolean_t ssu_changed;
 	isc_task_t *task = inst->task;
 	isc_uint32_t ldap_serial;
 	isc_uint32_t zr_serial;	/* SOA serial value from in-memory zone register */
@@ -1311,25 +1312,35 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 				       "idnsAllowDynUpdate", entry, inst->task);
 	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
 		goto cleanup;
+	ssu_changed = (result == ISC_R_SUCCESS);
 
 	result = setting_update_from_ldap_entry("sync_ptr", zone_settings,
 				       "idnsAllowSyncPTR", entry, inst->task);
 	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
 		goto cleanup;
 
-	log_debug(2, "Setting SSU table for %p: %s", zone, dn);
-	/* Get the update policy and update the zone with it. */
-	result = ldap_entry_getvalues(entry, "idnsUpdatePolicy", &values);
-	if (result == ISC_R_SUCCESS)
-		CHECK(configure_zone_ssutable(zone, HEAD(values)->value));
-	else
-		/* We need to declare zone as 'dynamic'
-		 * for dns_zone_isdynamic() to prevent unwanted
-		 * zone_postload() calls and warnings about serial and so on.
-		 *
-		 * Created SSU table contains no rules =>
-		 * dns_ssutable_checkrules() will return deny. */
-		CHECK(configure_zone_ssutable(zone, ""));
+	result = setting_update_from_ldap_entry("update_policy", zone_settings,
+				       "idnsUpdatePolicy", entry, inst->task);
+	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
+		goto cleanup;
+
+	if (result == ISC_R_SUCCESS || ssu_changed) {
+		isc_boolean_t ssu_enabled;
+		const char *ssu_policy = NULL;
+
+		log_debug(2, "Setting SSU table for %p: %s", zone, dn);
+		CHECK(setting_get_bool("dyn_update", zone_settings, &ssu_enabled));
+		if (ssu_enabled) {
+			/* Get the update policy and update the zone with it. */
+			CHECK(setting_get_str("update_policy", zone_settings,
+					      &ssu_policy));
+			CHECK(configure_zone_ssutable(zone, ssu_policy));
+		} else {
+			/* Empty policy will prevent the update from reaching
+			 * LDAP driver and error will be logged. */
+			CHECK(configure_zone_ssutable(zone, ""));
+		}
+	}
 
 	/* Fetch allow-query and allow-transfer ACLs */
 	log_debug(2, "Setting allow-query for %p: %s", zone, dn);
@@ -2869,13 +2880,6 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		CLEANUP_WITH(DNS_R_NOTAUTH);
 	}
 
-	CHECK(setting_get_bool("dyn_update", zone_settings, &zone_dyn_update));
-	if (!zone_dyn_update) {
-		log_debug(3, "dynamic update is not allowed in zone '%s'",
-			  zone_dn);
-		CLEANUP_WITH(DNS_R_REFUSED);
-	}
-
 	if (rdlist->type == dns_rdatatype_soa && mod_op == LDAP_MOD_DELETE)
 		CLEANUP_WITH(ISC_R_SUCCESS);
 
@@ -2991,8 +2995,8 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 
 		CHECK(setting_get_bool("dyn_update", zone_settings, &zone_dyn_update));
 		if (!zone_dyn_update) {
-			log_debug(3, "dynamic update is not allowed in zone "
-				     "'%s'", zone_dn);
+			log_error("dynamic update is not allowed in zone "
+				  "'%s'", zone_dn);
 			CLEANUP_WITH(ISC_R_NOPERM);
 		}
 

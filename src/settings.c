@@ -67,6 +67,13 @@ static const setting_t settings_default[] = {
 	{ "ldap_hostname",		default_string("")		},
 	{ "sync_ptr",			default_boolean(ISC_FALSE)	},
 	{ "dyn_update",			default_boolean(ISC_FALSE)	},
+	/* Empty string as default update_policy declares zone as 'dynamic'
+	 * for dns_zone_isdynamic() to prevent unwanted
+	 * zone_postload() calls and warnings about serial and so on.
+	 *
+	 * SSU table defined by empty string contains no rules =>
+	 * dns_ssutable_checkrules() will return deny. */
+	{ "update_policy",		default_string("")		},
 	{ "serial_autoincrement",	default_boolean(ISC_FALSE)	},
 	{ "verbose_checks",		default_boolean(ISC_FALSE)	},
 	end_of_settings
