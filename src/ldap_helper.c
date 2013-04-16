@@ -2830,6 +2830,341 @@ cleanup:
 #undef SET_LDAP_MOD
 }
 
+
+#define SYNCPTR_PREF    "PTR record synchronization "
+#define SYNCPTR_FMTPRE  SYNCPTR_PREF "(%s) for A/AAAA '%s' "
+#define SYNCPTR_FMTPOST ldap_modop_str(mod_op), a_name_str
+
+static const char *
+ldap_modop_str(unsigned int mod_op) {
+	static const char *add = "addition";
+	static const char *del = "deletion";
+
+	switch (mod_op) {
+	case LDAP_MOD_ADD:
+		return add;
+
+	case LDAP_MOD_DELETE:
+		return del;
+
+	default:
+		INSIST("unsupported LDAP mod_op" == NULL);
+		return NULL;
+	}
+}
+
+static void
+append_trailing_dot(char *str, unsigned int size) {
+	unsigned int length = strlen(str);
+	if (str[length] != '.') {
+		REQUIRE(length + 1 < size);
+		str[length] = '.';
+		str[length+1] = '\0';
+	}
+}
+
+static isc_result_t
+ldap_find_ptr(ldap_instance_t *ldap_inst, const char *ip_str,
+	      dns_name_t *ptr_name, ld_string_t *ptr_dn,
+	      dns_name_t *zone_name) {
+	isc_result_t result;
+	isc_mem_t *mctx = ldap_inst->mctx;
+
+	in_addr_t ip;
+
+	/* Get string with IP address from change request
+	 * and convert it to in_addr structure. */
+	ip = inet_addr(ip_str);
+	if (ip == INADDR_NONE) {
+		log_bug(SYNCPTR_PREF "could not convert IP address "
+			"from string '%s'", ip_str);
+		CLEANUP_WITH(ISC_R_UNEXPECTED);
+	}
+
+	/* Use internal net address representation. */
+	isc_netaddr_t isc_ip;
+	/* Only copy data to isc_ip stucture. */
+	isc_netaddr_fromin(&isc_ip,(struct in_addr *) &ip);
+
+	/*
+	 * Convert IP address to PTR record.
+	 *
+	 * @example
+	 * 192.168.0.1 -> 1.0.168.192.in-addr.arpa
+	 *
+	 * @todo Check if it works for IPv6 correctly.
+	 */
+	CHECK(dns_byaddr_createptrname2(&isc_ip, 0, ptr_name));
+
+	/* Get LDAP entry indentifier. */
+	CHECK(dnsname_to_dn(ldap_inst->zone_register, ptr_name, ptr_dn));
+
+	/*
+	 * @example
+	 * owner_dn_ptr = "idnsName=100.0.168, idnsname=192.in-addr.arpa,cn=dns,$SUFFIX"
+	 * owner_zone_dn_ptr = "idnsname=192.in-addr.arpa,cn=dns,$SUFFIX"
+	 */
+	char *owner_zone_dn_ptr = strstr(str_buf(ptr_dn),", ") + 1;
+
+	/* Get attribute "idnsAllowDynUpdate" for reverse zone or use default. */
+	CHECK(dn_to_dnsname(mctx, owner_zone_dn_ptr, zone_name, NULL));
+
+cleanup:
+	return result;
+}
+
+/**
+ * Check if PTR record's value in LDAP == name of the modified A/AAAA record.
+ * Update will be refused if the PTR name contains multiple PTR records or
+ * if the value in LDAP != expected name.
+ *
+ * @param[in] a_name     Name of modified A/AAAA record.
+ * @param[in] a_name_str Name of modified A/AAAA record as NUL terminated string.
+ * @param[in] ptr_name   Name of PTR record generated from IP address in A/AAAA.
+ * @param[in] mod_op     LDAP_MOD_DELETE if A/AAAA record is being deleted
+ *                       or LDAP_MOD_ADD if A/AAAA record is being added.
+ *
+ * @retval ISC_R_IGNORE  A and PTR records match, no change is required.
+ * @retval ISC_R_SUCCESS Prerequisites fulfilled, update is allowed.
+ * @retval other         Errors
+ *
+ * @code
+ * ** A record deletion **
+ * ; nsupdate command:
+ * update delete www.example.com. IN A	192.0.2.1
+ *
+ * ; PTR update will be allowed if the zone contains following data:
+ * www.example.com.		A	192.0.2.1
+ * 1.2.0.192.in-addr.arpa. 	PTR	www.example.com.
+
+ * ; PTR update will not be allowed if the zone contains following data:
+ * www.example.com.		A	192.0.2.1
+ * 1.2.0.192.in-addr.arpa. 	PTR	mail.example.com.
+ * @endcode
+ *
+ * @code
+ * ** A record addition **
+ * ; nsupdate command:
+ * update add www.example.com. 3600 IN A 192.0.2.1
+ *
+ * ; PTR update will be allowed if the zone does not contain A and PTR record.
+ *
+ * ; PTR update will not be allowed if the zone contains following data:
+ * 1.2.0.192.in-addr.arpa. 	PTR	mail.example.com.
+ * @endcode
+ */
+static isc_result_t
+ldap_sync_ptr_validate(ldap_instance_t *ldap_inst, dns_name_t *a_name,
+		       const char *a_name_str, dns_name_t *ptr_name,
+		       int mod_op) {
+	isc_result_t result;
+	isc_mem_t *mctx = ldap_inst->mctx;
+
+	char ptr_name_str[DNS_NAME_FORMATSIZE+1];
+	isc_boolean_t ptr_found;
+	dns_rdata_ptr_t ptr_rdata;
+	char ptr_rdata_str[DNS_NAME_FORMATSIZE+1];
+	isc_boolean_t ptr_a_equal = ISC_FALSE; /* GCC requires initialization */
+
+	ldapdb_rdatalist_t ldap_rdlist;
+	dns_rdatalist_t *ptr_rdlist = NULL;
+
+	ISC_LIST_INIT(ldap_rdlist);
+
+	REQUIRE(mod_op == LDAP_MOD_DELETE || mod_op == LDAP_MOD_ADD);
+	REQUIRE(a_name_str != NULL);
+
+	/* Find PTR entry in LDAP. */
+	ptr_found = ISC_FALSE;
+	result = ldapdb_rdatalist_get(mctx, ldap_inst, ptr_name,
+				      NULL, &ldap_rdlist);
+	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {
+		log_error_r(SYNCPTR_FMTPRE "failed in ldapdb_rdatalist_get()",
+			    SYNCPTR_FMTPOST);
+		goto cleanup;
+	}
+
+	/* Find the value of PTR entry. */
+	if (result == ISC_R_SUCCESS) {
+		result = ldapdb_rdatalist_findrdatatype(&ldap_rdlist,
+							dns_rdatatype_ptr,
+							&ptr_rdlist);
+		if (result == ISC_R_SUCCESS && HEAD(ptr_rdlist->rdata) != NULL) {
+			if (HEAD(ptr_rdlist->rdata) != TAIL(ptr_rdlist->rdata)) {
+				dns_name_format(ptr_name, ptr_name_str,
+						DNS_NAME_FORMATSIZE);
+				append_trailing_dot(ptr_name_str,
+						    sizeof(ptr_name_str));
+				log_error(SYNCPTR_FMTPRE
+					  "failed: multiple PTR records under "
+					  "name '%s' are not supported",
+					  SYNCPTR_FMTPOST, ptr_name_str);
+				CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
+			}
+			dns_rdata_tostruct(HEAD(ptr_rdlist->rdata), &ptr_rdata,
+					   NULL);
+
+			ptr_found = ISC_TRUE;
+
+			/* Compare PTR value with name of the A/AAAA record. */
+			if (dns_name_isabsolute(a_name) &&
+			    dns_name_isabsolute(&ptr_rdata.ptr) &&
+			    dns_name_equal(&ptr_rdata.ptr, a_name)) {
+				ptr_a_equal = ISC_TRUE;
+			} else {
+				ptr_a_equal = ISC_FALSE;
+				dns_name_format(ptr_name, ptr_name_str,
+						DNS_NAME_FORMATSIZE);
+				append_trailing_dot(ptr_name_str,
+						    sizeof(ptr_name_str));
+				dns_name_format(&ptr_rdata.ptr, ptr_rdata_str,
+						DNS_NAME_FORMATSIZE);
+				append_trailing_dot(ptr_rdata_str,
+						    sizeof(ptr_rdata_str));
+			}
+		}
+	}
+
+	if (mod_op == LDAP_MOD_DELETE) {
+		if (ptr_found == ISC_FALSE) {
+			log_debug(3, SYNCPTR_FMTPRE "skipped: no PTR records "
+				  "found", SYNCPTR_FMTPOST);
+			CLEANUP_WITH(ISC_R_IGNORE);
+
+		} else if (ptr_a_equal == ISC_FALSE) {
+			log_error(SYNCPTR_FMTPRE "failed: "
+				  "existing PTR record '%s' contains unexpected "
+				  "value '%s' (value '%s' expected)",
+				  SYNCPTR_FMTPOST, ptr_name_str, ptr_rdata_str,
+				  a_name_str);
+			CLEANUP_WITH(ISC_R_UNEXPECTEDTOKEN);
+		}
+
+	} else if (mod_op == LDAP_MOD_ADD && ptr_found == ISC_TRUE) {
+		if (ptr_a_equal == ISC_TRUE) {
+			log_debug(3, SYNCPTR_FMTPRE "skipped: PTR record with"
+				  "desired value is already present",
+				  SYNCPTR_FMTPOST);
+			CLEANUP_WITH(ISC_R_IGNORE);
+
+		} else {
+			log_error(SYNCPTR_FMTPRE "failed: "
+				  "existing PTR record '%s' contains unexpected "
+				  "value '%s' (value '%s' or no value expected)",
+				  SYNCPTR_FMTPOST, ptr_name_str, ptr_rdata_str,
+				  a_name_str);
+			CLEANUP_WITH(DNS_R_SINGLETON);
+		}
+	}
+
+	result = ISC_R_SUCCESS;
+
+cleanup:
+	ldapdb_rdatalist_destroy(mctx, &ldap_rdlist);
+
+	return result;
+}
+
+static isc_result_t
+ldap_sync_ptr(ldap_instance_t *ldap_inst, dns_name_t *a_name,
+		const char *ip_str, int mod_op, isc_boolean_t delete_node) {
+	isc_result_t result;
+	isc_mem_t *mctx = ldap_inst->mctx;
+
+	char **vals = NULL;
+
+	char a_name_str[DNS_NAME_FORMATSIZE+1];
+
+	ld_string_t *ptr_dn = NULL;
+	struct dns_fixedname ptr_name;
+	LDAPMod *change[2] = { NULL };
+
+	dns_name_t zone_name;
+	ldap_cache_t *zone_cache = NULL;
+	settings_set_t *zone_settings = NULL;
+	isc_boolean_t zone_dyn_update;
+
+	dns_name_init(&zone_name, NULL);
+	dns_fixedname_init(&ptr_name);
+	CHECK(str_new(mctx, &ptr_dn));
+
+	/**
+	 * Get string representation of PTR record value.
+	 * @code
+	 * a_name_str = "host.example.com."
+	 * @endcode
+	 */
+	dns_name_format(a_name, a_name_str, DNS_NAME_FORMATSIZE);
+	append_trailing_dot(a_name_str, sizeof(a_name_str));
+
+	result = ldap_find_ptr(ldap_inst, ip_str, dns_fixedname_name(&ptr_name),
+			       ptr_dn, &zone_name);
+	if (result != ISC_R_SUCCESS) {
+		log_error_r(SYNCPTR_FMTPRE "refused: "
+			    "unable to find active reverse zone "
+			    "for IP address '%s'", SYNCPTR_FMTPOST, ip_str);
+		CLEANUP_WITH(ISC_R_NOTFOUND);
+	}
+
+	CHECK(zr_get_zone_settings(ldap_inst->zone_register, &zone_name,
+				   &zone_settings));
+	CHECK(setting_get_bool("dyn_update", zone_settings, &zone_dyn_update));
+	if (!zone_dyn_update) {
+		char zone_name_str[DNS_NAME_FORMATSIZE];
+		dns_name_format(&zone_name, zone_name_str, DNS_NAME_FORMATSIZE);
+		log_error(SYNCPTR_FMTPRE "refused: "
+			  "IP address '%s' belongs to reverse zone '%s' "
+			  "and dynamic updates are not allowed for that zone",
+			  SYNCPTR_FMTPOST, ip_str, zone_name_str);
+		CLEANUP_WITH(ISC_R_NOPERM);
+	}
+
+	result = ldap_sync_ptr_validate(ldap_inst, a_name, a_name_str,
+					dns_fixedname_name(&ptr_name), mod_op);
+	if (result == ISC_R_IGNORE)
+		CLEANUP_WITH(ISC_R_SUCCESS);
+	else if (result != ISC_R_SUCCESS)
+		CLEANUP_WITH(DNS_R_SERVFAIL);
+
+	/* Fill the LDAPMod change structure up. */
+	CHECKED_MEM_GET_PTR(mctx, change[0]);
+	ZERO_PTR(change[0]);
+
+	/* Do the same action what has been done with A/AAAA record. */
+	change[0]->mod_op = mod_op;
+	char *attr_name;
+	const char *attr_name_c;
+	CHECK(rdatatype_to_ldap_attribute(dns_rdatatype_ptr, &attr_name_c));
+
+	DE_CONST(attr_name_c, attr_name);
+	change[0]->mod_type = attr_name;
+
+	CHECKED_MEM_ALLOCATE(mctx, vals, 2 * sizeof(char *));
+	memset(vals, 0, 2 * sizeof(char *));
+	change[0]->mod_values = vals;
+
+	CHECKED_MEM_ALLOCATE(mctx, vals[0], strlen(a_name_str) + 1);
+	memcpy(vals[0], a_name_str, strlen(a_name_str) + 1);
+
+	/* Modify PTR record. */
+	CHECK(ldap_modify_do(ldap_inst, str_buf(ptr_dn),
+			     change, delete_node));
+	CHECK(zr_get_zone_cache(ldap_inst->zone_register,
+				dns_fixedname_name(&ptr_name), &zone_cache));
+	CHECK(discard_from_cache(zone_cache, dns_fixedname_name(&ptr_name)));
+
+cleanup:
+	if (dns_name_dynamic(&zone_name))
+		dns_name_free(&zone_name, mctx);
+	str_destroy(&ptr_dn);
+	if (change[0] != NULL) free_ldapmod(mctx, &change[0]);
+
+	return result;
+}
+#undef SYNCPTR_PREF
+#undef SYNCPTR_FMTPRE
+#undef SYNCPTR_FMTPOST
+
 static isc_result_t
 modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		   dns_rdatalist_t *rdlist, int mod_op, isc_boolean_t delete_node)
@@ -2838,17 +3173,10 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	isc_mem_t *mctx = ldap_inst->mctx;
 	ld_string_t *owner_dn = NULL;
 	LDAPMod *change[3] = { NULL };
-	LDAPMod *change_ptr = NULL;
 	ldap_cache_t *cache = NULL;
-	isc_boolean_t zone_dyn_update;
 	isc_boolean_t zone_sync_ptr;
-	ld_string_t *owner_dn_ptr = NULL;
-	ld_string_t *str_ptr = NULL;
-	ldapdb_rdatalist_t rdlist_search;
-	dns_rdatalist_t *rdlist_ptr = NULL;
 	char **vals = NULL;
 	dns_name_t zone_name;
-	struct dns_fixedname ptr_name;
 	char *zone_dn = NULL;
 	settings_set_t *zone_settings = NULL;
 
@@ -2856,9 +3184,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	 * Find parent zone entry and check if Dynamic Update is allowed.
 	 * @todo Try the cache first and improve split: SOA records are problematic.
 	 */
-	ISC_LIST_INIT(rdlist_search);
 	dns_name_init(&zone_name, NULL);
-	dns_fixedname_init(&ptr_name);
 	CHECK(str_new(mctx, &owner_dn));
 
 	CHECK(dnsname_to_dn(ldap_inst->zone_register, owner, owner_dn));
@@ -2876,7 +3202,8 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 				      &zone_settings);
 	if (result != ISC_R_SUCCESS) {
 		if (result == ISC_R_NOTFOUND)
-			log_debug(3, "active zone '%s' not found", zone_dn);
+			log_debug(3, "update refused: "
+				  "active zone '%s' not found", zone_dn);
 		CLEANUP_WITH(DNS_R_NOTAUTH);
 	}
 
@@ -2898,7 +3225,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		/* for now always replace the ttl on add */
 		CHECK(ldap_rdttl_to_ldapmod(mctx, rdlist, &change[1]));
 	}
-	
+
 	CHECK(ldap_modify_do(ldap_inst, str_buf(owner_dn), change, delete_node));
 
 	/* Keep the PTR of corresponding A/AAAA record synchronized. */
@@ -2910,169 +3237,20 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 
 		CHECK(setting_get_bool("sync_ptr", zone_settings, &zone_sync_ptr));
 		if (!zone_sync_ptr) {
-			log_debug(3, "sync PTR is not allowed in zone '%s'", zone_dn);
+			log_debug(3, "sync PTR is disabled for zone '%s'", zone_dn);
 			CLEANUP_WITH(ISC_R_SUCCESS);
 		}
-		log_debug(3, "sync PTR is allowed for zone '%s'", zone_dn);
+		log_debug(3, "sync PTR is enabled for zone '%s'", zone_dn);
 
-		/* Get string with IP address from change request
-		 * and convert it to in_addr structure. */
-		in_addr_t ip;
-		if ((ip = inet_addr(change[0]->mod_values[0])) == 0) {
-			log_bug("Could not convert IP address from string '%s'.",
-			        change[0]->mod_values[0]);
-			result = ISC_R_FAILURE;
-			goto cleanup;
-		}
-		
-		/* Use internal net address representation. */
-		isc_netaddr_t isc_ip;
-		/* Only copy data to isc_ip stucture. */
-		isc_netaddr_fromin(&isc_ip,(struct in_addr *) &ip);
-		
-		/*
-		 * Convert IP address to PTR record.
-		 *
-		 * @example
-		 * 192.168.0.1 -> 1.0.168.192.in-addr.arpa
-		 *
-		 * @todo Check if it works for IPv6 correctly.
-		 */
-		CHECK(dns_byaddr_createptrname2(&isc_ip, 0, dns_fixedname_name(&ptr_name)));
-	   
-		/* Find PTR entry in LDAP. */
-		result = ldapdb_rdatalist_get(mctx, ldap_inst, dns_fixedname_name(&ptr_name),
-									  NULL, &rdlist_search); 
-	
-		/* Check the value of PTR entry. */	
-		if (mod_op == LDAP_MOD_DELETE && result == ISC_R_SUCCESS) {
-			result = ldapdb_rdatalist_findrdatatype(&rdlist_search, 
-			                                        dns_rdatatype_ptr, &rdlist_ptr);
-		}
-
-		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {
-			log_error_r("can not synchronize PTR record, ldapdb_rdatalist_get");
-			CLEANUP_WITH(ISC_R_FAILURE); /* Synchronization required: report error. */
-		}
-
-		/* 
-		 * Do not overwrite old record and delete only existing record. 
-		 */
-		if ((result == ISC_R_SUCCESS && mod_op == LDAP_MOD_ADD) ||
-			(result == ISC_R_NOTFOUND && mod_op == LDAP_MOD_DELETE)) {
-			log_debug(2,"Can not synchronize PTR record for A/AAAA one (%s) - record %s.",
-			        str_buf(owner_dn), 
-			        ((mod_op == LDAP_MOD_ADD)?"already exists":"not found"));
-			result = ISC_R_SUCCESS; /* @todo: More checks for ADD operation. */
-			goto cleanup;
-		}
-
-		/* Get LDAP entry indentifier. */ 
-		CHECK(str_new(mctx, &owner_dn_ptr));
-		CHECK(dnsname_to_dn(ldap_inst->zone_register, dns_fixedname_name(&ptr_name),
-				    owner_dn_ptr));
-	
-		/*
-		 * @example 
-		 * owner_dn_ptr = "idnsName=100.0.168, idnsname=192.in-addr.arpa,cn=dns,$SUFFIX"
-		 * owner_zone_dn_ptr = "idnsname=192.in-addr.arpa,cn=dns,$SUFFIX"
-		 */
-		char *owner_zone_dn_ptr = strstr(str_buf(owner_dn_ptr),", ") + 1;
-		
-		/* Get attribute "idnsAllowDynUpdate" for reverse zone or use default. */
-		dns_name_free(&zone_name, mctx);
-		dns_name_init(&zone_name, NULL);
-		CHECK(dn_to_dnsname(mctx, owner_zone_dn_ptr, &zone_name, NULL));
-
-		zone_settings = NULL;
-		result = zr_get_zone_settings(ldap_inst->zone_register, &zone_name,
-					      &zone_settings);
-		if (result != ISC_R_SUCCESS) {
-			if (result == ISC_R_NOTFOUND)
-				log_debug(3, "active zone '%s' not found", zone_dn);
-			CLEANUP_WITH(DNS_R_SERVFAIL);
-		}
-
-		CHECK(setting_get_bool("dyn_update", zone_settings, &zone_dyn_update));
-		if (!zone_dyn_update) {
-			log_error("dynamic update is not allowed in zone "
-				  "'%s'", zone_dn);
-			CLEANUP_WITH(DNS_R_SERVFAIL);
-		}
-
-		/* 
-		 * Get string representation of PTR record value.
-		 * 
-		 * @example str_ptr = "host.example.com." 
-		 */
-		CHECK(str_new(mctx, &str_ptr));
-		CHECK(dn_to_text(str_buf(owner_dn), str_ptr, NULL));
-		 
-		/*
-		 * Delete only when PTR record's value == A/AAAA record's key.
-		 *
-		 * @example
-		 *
-		 * www.example.com. 			A 		192.168.0.100
-		 * ; PTR record can be synchronized.
-		 * 100.0.168.192.in-addr.arpa. 	PTR		www.example.com.
-		 * ; PTR record can NOT be synchronized.
-		 * 100.0.168.192.in-addr.arpa.	PTR		not.valid.com.
-		 *
-		 */ 
-		if (mod_op == LDAP_MOD_DELETE) {
-			CHECK(ldap_rdata_to_char_array(mctx, HEAD(rdlist_ptr->rdata), &vals));
-			if (vals != NULL && vals[0] != NULL && strcmp(vals[0], str_buf(str_ptr)) != 0) {
-				log_debug(3,"Cannot delete PTR record, unexpected value found "
-					"(expected \"%s\")\n", str_buf(str_ptr));
-				result = ISC_R_FAILURE;
-				goto cleanup;
-			}
-		}
-		
-		/* Fill the LDAPMod change structure up. */
-		char **vals = NULL;
-		CHECKED_MEM_GET_PTR(mctx, change_ptr);
-		ZERO_PTR(change_ptr);
-
-		/* Do the same action what has been done with A/AAAA record. */	
-		change_ptr->mod_op = mod_op;
-		char *attr_name;
-		const char *attr_name_c;
-		CHECK(rdatatype_to_ldap_attribute(dns_rdatatype_ptr, &attr_name_c));
-		
-		DE_CONST(attr_name_c, attr_name);
-		change_ptr->mod_type = attr_name;  
-
-		CHECKED_MEM_ALLOCATE(mctx, vals, 2 * sizeof(char *));
-		memset(vals, 0, 2 * sizeof(char *));
-		change_ptr->mod_values = vals;
-
-		CHECKED_MEM_ALLOCATE(mctx, vals[0], str_len(str_ptr) + 1);
-		memcpy(vals[0], str_buf(str_ptr), str_len(str_ptr) + 1);
-	   
-		/* Switch pointers and free the old memory. */ 
-		free_ldapmod(mctx, &change[0]);
-		change[0] = change_ptr;
-		change_ptr = NULL;
-
-		/* Modify PTR record. */
-		CHECK(ldap_modify_do(ldap_inst, str_buf(owner_dn_ptr),
-				     change, delete_node));
-		cache = NULL;
-		CHECK(zr_get_zone_cache(ldap_inst->zone_register,
-					dns_fixedname_name(&ptr_name), &cache));
-		CHECK(discard_from_cache(cache, dns_fixedname_name(&ptr_name)));
+		result = ldap_sync_ptr(ldap_inst, owner, change[0]->mod_values[0],
+					 mod_op, delete_node);
 	}
 
 cleanup:
-	str_destroy(&owner_dn_ptr);
 	str_destroy(&owner_dn);
-	str_destroy(&str_ptr);
+
 	free_ldapmod(mctx, &change[0]);
 	free_ldapmod(mctx, &change[1]);
-	if (change_ptr != NULL) free_ldapmod(mctx, &change_ptr);
-	ldapdb_rdatalist_destroy(mctx, &rdlist_search);
 	free_char_array(mctx, &vals);
 	dns_name_free(&zone_name, mctx);
 
