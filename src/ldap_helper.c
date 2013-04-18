@@ -2923,6 +2923,8 @@ cleanup:
  * @param[in] ptr_name   Name of PTR record generated from IP address in A/AAAA.
  * @param[in] mod_op     LDAP_MOD_DELETE if A/AAAA record is being deleted
  *                       or LDAP_MOD_ADD if A/AAAA record is being added.
+ * @param[out] delete_node Will be set to ISC_TRUE if the database node
+ *                         is empty after PTR record deletion.
  *
  * @retval ISC_R_IGNORE  A and PTR records match, no change is required.
  * @retval ISC_R_SUCCESS Prerequisites fulfilled, update is allowed.
@@ -2935,11 +2937,11 @@ cleanup:
  *
  * ; PTR update will be allowed if the zone contains following data:
  * www.example.com.		A	192.0.2.1
- * 1.2.0.192.in-addr.arpa. 	PTR	www.example.com.
-
+ * 1.2.0.192.in-addr.arpa.	PTR	www.example.com.
+ *
  * ; PTR update will not be allowed if the zone contains following data:
  * www.example.com.		A	192.0.2.1
- * 1.2.0.192.in-addr.arpa. 	PTR	mail.example.com.
+ * 1.2.0.192.in-addr.arpa.	PTR	mail.example.com.
  * @endcode
  *
  * @code
@@ -2956,7 +2958,7 @@ cleanup:
 static isc_result_t
 ldap_sync_ptr_validate(ldap_instance_t *ldap_inst, dns_name_t *a_name,
 		       const char *a_name_str, dns_name_t *ptr_name,
-		       int mod_op) {
+		       int mod_op, isc_boolean_t *delete_node) {
 	isc_result_t result;
 	isc_mem_t *mctx = ldap_inst->mctx;
 
@@ -2978,6 +2980,8 @@ ldap_sync_ptr_validate(ldap_instance_t *ldap_inst, dns_name_t *a_name,
 	ptr_found = ISC_FALSE;
 	result = ldapdb_rdatalist_get(mctx, ldap_inst, ptr_name,
 				      NULL, &ldap_rdlist);
+
+	*delete_node = ISC_FALSE;
 	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {
 		log_error_r(SYNCPTR_FMTPRE "failed in ldapdb_rdatalist_get()",
 			    SYNCPTR_FMTPOST);
@@ -3038,6 +3042,13 @@ ldap_sync_ptr_validate(ldap_instance_t *ldap_inst, dns_name_t *a_name,
 				  SYNCPTR_FMTPOST, ptr_name_str, ptr_rdata_str,
 				  a_name_str);
 			CLEANUP_WITH(ISC_R_UNEXPECTEDTOKEN);
+
+		} else if (HEAD(ldap_rdlist) == TAIL(ldap_rdlist)) {
+			/* Exactly one PTR record was found and rdlist contains
+			 * exactly one RRset, so the deleted PTR record
+			 * is the only RR in the node. */
+			REQUIRE(HEAD(ldap_rdlist)->type == dns_rdatatype_ptr);
+			*delete_node = ISC_TRUE;
 		}
 
 	} else if (mod_op == LDAP_MOD_ADD && ptr_found == ISC_TRUE) {
@@ -3067,7 +3078,7 @@ cleanup:
 
 static isc_result_t
 ldap_sync_ptr(ldap_instance_t *ldap_inst, dns_name_t *a_name,
-		const char *ip_str, int mod_op, isc_boolean_t delete_node) {
+		const char *ip_str, int mod_op) {
 	isc_result_t result;
 	isc_mem_t *mctx = ldap_inst->mctx;
 
@@ -3083,6 +3094,8 @@ ldap_sync_ptr(ldap_instance_t *ldap_inst, dns_name_t *a_name,
 	ldap_cache_t *zone_cache = NULL;
 	settings_set_t *zone_settings = NULL;
 	isc_boolean_t zone_dyn_update;
+
+	isc_boolean_t delete_node;
 
 	dns_name_init(&zone_name, NULL);
 	dns_fixedname_init(&ptr_name);
@@ -3120,7 +3133,8 @@ ldap_sync_ptr(ldap_instance_t *ldap_inst, dns_name_t *a_name,
 	}
 
 	result = ldap_sync_ptr_validate(ldap_inst, a_name, a_name_str,
-					dns_fixedname_name(&ptr_name), mod_op);
+					dns_fixedname_name(&ptr_name), mod_op,
+					&delete_node);
 	if (result == ISC_R_IGNORE)
 		CLEANUP_WITH(ISC_R_SUCCESS);
 	else if (result != ISC_R_SUCCESS)
@@ -3243,7 +3257,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		log_debug(3, "sync PTR is enabled for zone '%s'", zone_dn);
 
 		result = ldap_sync_ptr(ldap_inst, owner, change[0]->mod_values[0],
-					 mod_op, delete_node);
+				       mod_op);
 	}
 
 cleanup:
