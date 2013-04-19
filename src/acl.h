@@ -22,6 +22,7 @@
 #define _LD_ACL_H_
 
 #include "ldap_entry.h"
+#include "types.h"
 
 #include <dns/acl.h>
 
@@ -29,6 +30,8 @@ typedef enum acl_type {
 	acl_type_query,
 	acl_type_transfer
 } acl_type_t;
+
+extern const enum_txt_assoc_t acl_type_txts[];
 
 isc_result_t
 acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone);

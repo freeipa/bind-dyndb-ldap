@@ -64,6 +64,7 @@
 #include "str.h"
 #include "util.h"
 #include "log.h"
+#include "types.h"
 
 static isc_once_t once = ISC_ONCE_INIT;
 static cfg_type_t *update_policy;
@@ -83,6 +84,12 @@ static cfg_type_t cfg_type_empty_map = {
 };
 
 static cfg_type_t *empty_map_p = &cfg_type_empty_map;
+
+const enum_txt_assoc_t acl_type_txts[] = {
+	{ acl_type_query,	"query"		},
+	{ acl_type_transfer,	"transfer"	},
+	{ -1,			NULL		} /* end marker */
+};
 
 static cfg_type_t *
 get_type_from_tuplefield(const cfg_type_t *cfg_type, const char *name)

@@ -762,6 +762,44 @@ cleanup:
 	return result;
 }
 
+static isc_result_t
+configure_zone_acl(isc_mem_t *mctx, dns_zone_t *zone,
+		void (acl_setter)(dns_zone_t *zone, dns_acl_t *acl),
+		const char *aclstr, acl_type_t type) {
+	isc_result_t result;
+	isc_result_t result2;
+	dns_acl_t *acl = NULL;
+	const char *type_txt = NULL;
+
+	result = acl_from_ldap(mctx, aclstr, type, &acl);
+	if (result != ISC_R_SUCCESS) {
+		result2 = get_enum_description(acl_type_txts, type, &type_txt);
+		if (result2 != ISC_R_SUCCESS) {
+			log_bug("invalid acl type %u", type);
+			type_txt = "<unknown>";
+		}
+
+		dns_zone_logc(zone, DNS_LOGCATEGORY_SECURITY, ISC_LOG_ERROR,
+			      "%s policy is invalid: %s; configuring most "
+			      "restrictive %s policy as possible",
+			      type_txt, isc_result_totext(result), type_txt);
+		result2 = acl_from_ldap(mctx, "", type, &acl);
+		if (result2 != ISC_R_SUCCESS) {
+			dns_zone_logc(zone, DNS_LOGCATEGORY_SECURITY, ISC_LOG_CRITICAL,
+				      "cannot configure restrictive %s policy: %s",
+				      type_txt, isc_result_totext(result2));
+			FATAL_ERROR(__FILE__, __LINE__,
+				    "insecure state detected");
+		}
+	}
+	acl_setter(zone, acl);
+
+	if (acl != NULL)
+		dns_acl_detach(&acl);
+
+	return result;
+}
+
 /* In BIND9 terminology "ssu" means "Simple Secure Update" */
 static isc_result_t
 configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
@@ -1346,11 +1384,8 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	log_debug(2, "Setting allow-query for %p: %s", zone, dn);
 	result = ldap_entry_getvalues(entry, "idnsAllowQuery", &values);
 	if (result == ISC_R_SUCCESS) {
-		dns_acl_t *queryacl = NULL;
-		CHECK(acl_from_ldap(inst->mctx, HEAD(values)->value,
-		      acl_type_query, &queryacl));
-		dns_zone_setqueryacl(zone, queryacl);
-		dns_acl_detach(&queryacl);
+		CHECK(configure_zone_acl(inst->mctx, zone, &dns_zone_setqueryacl,
+					 HEAD(values)->value, acl_type_query));
 	} else {
 		log_debug(2, "allow-query not set");
 		dns_zone_clearqueryacl(zone);
@@ -1359,11 +1394,8 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	log_debug(2, "Setting allow-transfer for %p: %s", zone, dn);
 	result = ldap_entry_getvalues(entry, "idnsAllowTransfer", &values);
 	if (result == ISC_R_SUCCESS) {
-		dns_acl_t *transferacl = NULL;
-		CHECK(acl_from_ldap(inst->mctx, HEAD(values)->value,
-		      acl_type_transfer, &transferacl));
-		dns_zone_setxfracl(zone, transferacl);
-		dns_acl_detach(&transferacl);
+		CHECK(configure_zone_acl(inst->mctx, zone, &dns_zone_setxfracl,
+					 HEAD(values)->value, acl_type_transfer));
 	} else {
 		log_debug(2, "allow-transfer not set");
 		dns_zone_clearxfracl(zone);
