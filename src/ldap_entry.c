@@ -504,6 +504,11 @@ ldap_entry_getttl(const ldap_entry_t *entry)
 	result = dns_ttl_fromtext(&ttl_text, &ttl);
 	if (result != ISC_R_SUCCESS)
 		return DEFAULT_TTL;
+	else if (ttl > 0x7fffffffUL) {
+		log_error("entry '%s': entry TTL %u > MAXTTL, setting TTL to 0",
+			  entry->dn, ttl);
+		ttl = 0;
+	}
 
 	return ttl;
 }
