@@ -179,7 +179,7 @@ parse(cfg_parser_t *parser, const char *string, cfg_type_t **type,
 	RUNTIME_CHECK(isc_once_do(&once, init_cfgtypes) == ISC_R_SUCCESS);
 
 	string_len = strlen(string);
-	isc_buffer_init(&buffer, string, string_len);
+	isc_buffer_init(&buffer, (char *)string, string_len);
 	isc_buffer_add(&buffer, string_len);
 
 	result = cfg_parse_buffer(parser, &buffer, *type, &ret);
@@ -296,7 +296,7 @@ get_fixed_name(const cfg_obj_t *obj, const char *name, dns_fixedname_t *fname)
 	str = cfg_obj_asstring(obj);
 
 	len = strlen(str);
-	isc_buffer_init(&buf, str, len);
+	isc_buffer_init(&buf, (char *)str, len);
 
 	/*
 	 * Workaround for https://bugzilla.redhat.com/show_bug.cgi?id=728925

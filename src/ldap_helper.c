@@ -2037,7 +2037,7 @@ parse_rdata(isc_mem_t *mctx, ldap_qresult_t *qresult,
 	text.base = rdata_text;
 	text.length = strlen(text.base);
 
-	isc_buffer_init(&lex_buffer, text.base, text.length);
+	isc_buffer_init(&lex_buffer, (char *)text.base, text.length);
 	isc_buffer_add(&lex_buffer, text.length);
 	isc_buffer_setactive(&lex_buffer, text.length);
 
