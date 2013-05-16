@@ -2906,27 +2906,39 @@ append_trailing_dot(char *str, unsigned int size) {
 }
 
 static isc_result_t
-ldap_find_ptr(ldap_instance_t *ldap_inst, const char *ip_str,
+ldap_find_ptr(ldap_instance_t *ldap_inst, const int af, const char *ip_str,
 	      dns_name_t *ptr_name, ld_string_t *ptr_dn,
 	      dns_name_t *zone_name) {
 	isc_result_t result;
 	isc_mem_t *mctx = ldap_inst->mctx;
 
-	in_addr_t ip;
+	union {
+		struct in_addr v4;
+		struct in6_addr v6;
+	} ip;
+	isc_netaddr_t isc_ip; /* internal net address representation */
 
 	/* Get string with IP address from change request
 	 * and convert it to in_addr structure. */
-	ip = inet_addr(ip_str);
-	if (ip == INADDR_NONE) {
+	if (inet_pton(af, ip_str, &ip) != 1) {
 		log_bug(SYNCPTR_PREF "could not convert IP address "
 			"from string '%s'", ip_str);
 		CLEANUP_WITH(ISC_R_UNEXPECTED);
 	}
 
-	/* Use internal net address representation. */
-	isc_netaddr_t isc_ip;
 	/* Only copy data to isc_ip stucture. */
-	isc_netaddr_fromin(&isc_ip,(struct in_addr *) &ip);
+	switch (af) {
+	case AF_INET:
+		isc_netaddr_fromin(&isc_ip, &ip.v4);
+		break;
+	case AF_INET6:
+		isc_netaddr_fromin6(&isc_ip, &ip.v6);
+		break;
+	default:
+		log_bug("unsupported address family 0x%x", af);
+		CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
+		break;
+	}
 
 	/*
 	 * Convert IP address to PTR record.
@@ -3120,7 +3132,7 @@ cleanup:
 
 static isc_result_t
 ldap_sync_ptr(ldap_instance_t *ldap_inst, dns_name_t *a_name,
-		const char *ip_str, int mod_op) {
+		const int af, const char *ip_str, const int mod_op) {
 	isc_result_t result;
 	isc_mem_t *mctx = ldap_inst->mctx;
 
@@ -3152,8 +3164,8 @@ ldap_sync_ptr(ldap_instance_t *ldap_inst, dns_name_t *a_name,
 	dns_name_format(a_name, a_name_str, DNS_NAME_FORMATSIZE);
 	append_trailing_dot(a_name_str, sizeof(a_name_str));
 
-	result = ldap_find_ptr(ldap_inst, ip_str, dns_fixedname_name(&ptr_name),
-			       ptr_dn, &zone_name);
+	result = ldap_find_ptr(ldap_inst, af, ip_str,
+			       dns_fixedname_name(&ptr_name), ptr_dn, &zone_name);
 	if (result != ISC_R_SUCCESS) {
 		log_error_r(SYNCPTR_FMTPRE "refused: "
 			    "unable to find active reverse zone "
@@ -3230,6 +3242,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	dns_name_t zone_name;
 	char *zone_dn = NULL;
 	settings_set_t *zone_settings = NULL;
+	int af; /* address family */
 
 	/*
 	 * Find parent zone entry and check if Dynamic Update is allowed.
@@ -3293,8 +3306,9 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		}
 		log_debug(3, "sync PTR is enabled for zone '%s'", zone_dn);
 
-		result = ldap_sync_ptr(ldap_inst, owner, change[0]->mod_values[0],
-				       mod_op);
+		af = (rdlist->type == dns_rdatatype_a) ? AF_INET : AF_INET6;
+		result = ldap_sync_ptr(ldap_inst, owner, af,
+				       change[0]->mod_values[0], mod_op);
 	}
 
 cleanup:
