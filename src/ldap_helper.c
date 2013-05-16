@@ -683,6 +683,44 @@ destroy_ldap_connection(ldap_connection_t **ldap_connp)
 	MEM_PUT_AND_DETACH(*ldap_connp);
 }
 
+/**
+ * Delete a zone from plain BIND. LDAP zones require further steps for complete
+ * removal, like deletion from zone register etc.
+ *
+ * @pre A zone pointer has to be attached to *zonep.
+ *
+ * @returns Values returned by dns_zt_unmount().
+ */
+static isc_result_t
+delete_bind_zone(dns_zt_t *zt, dns_zone_t **zonep) {
+	dns_zone_t *zone;
+	dns_db_t *dbp = NULL;
+	dns_zonemgr_t *zmgr;
+	isc_result_t result;
+
+	REQUIRE (zonep != NULL && *zonep != NULL);
+
+	zone = *zonep;
+
+	/* Do not unload partially loaded zones, they have uninitialized
+	 * structures. */
+	if (dns_zone_getdb(zone, &dbp) == ISC_R_SUCCESS) {
+		dns_db_detach(&dbp); /* dns_zone_getdb() attaches DB implicitly */
+		dns_zone_unload(zone);
+		dns_zone_log(zone, ISC_LOG_INFO, "shutting down");
+	} else {
+		dns_zone_log(zone, ISC_LOG_DEBUG(1), "not loaded - unload skipped");
+	}
+
+	result = dns_zt_unmount(zt, zone);
+	zmgr = dns_zone_getmgr(zone);
+	if (zmgr != NULL)
+		dns_zonemgr_releasezone(zmgr, zone);
+	dns_zone_detach(zonep);
+
+	return result;
+}
+
 /*
  * Create a new zone with origin 'name'. The zone will be added to the
  * ldap_inst->view.
@@ -910,20 +948,8 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 		freeze = ISC_TRUE;
 	}
 
-	/* Do not unload partially loaded zones, they have incomplete structures. */
-	dns_db_t *dbp = NULL;
-	if (dns_zone_getdb(zone, &dbp) == ISC_R_SUCCESS) {
-		dns_db_detach(&dbp); /* dns_zone_getdb() attaches DB implicitly */
-		dns_zone_unload(zone);
-		dns_zone_log(zone, ISC_LOG_INFO, "shutting down");
-	} else {
-		log_debug(1, "zone '%s' not loaded - unload skipped", zone_name_char);
-	}
-
-	CHECK(dns_zt_unmount(inst->view->zonetable, zone));
+	CHECK(delete_bind_zone(inst->view->zonetable, &zone));
 	CHECK(zr_del_zone(inst->zone_register, name));
-	dns_zonemgr_releasezone(inst->zmgr, zone);
-	dns_zone_detach(&zone);
 
 cleanup:
 	if (freeze)
