@@ -683,6 +683,27 @@ destroy_ldap_connection(ldap_connection_t **ldap_connp)
 	MEM_PUT_AND_DETACH(*ldap_connp);
 }
 
+/* Test if the existing zone is 'empty zone' per RFC 6303. */
+static isc_boolean_t
+zone_isempty(isc_mem_t *mctx, dns_zone_t *zone) {
+	char **argv = NULL;
+	isc_boolean_t result = ISC_FALSE;
+
+	if (dns_zone_getdbtype(zone, &argv, mctx) != ISC_R_SUCCESS)
+		CLEANUP_WITH(ISC_FALSE);
+
+	if (argv[0] != NULL && strcmp("_builtin", argv[0]) == 0 &&
+	    argv[1] != NULL && strcmp("empty", argv[1]) == 0) {
+		result = ISC_TRUE;
+	} else {
+		result = ISC_FALSE;
+	}
+	isc_mem_free(mctx, argv);
+
+cleanup:
+	return result;
+}
+
 /**
  * Delete a zone from plain BIND. LDAP zones require further steps for complete
  * removal, like deletion from zone register etc.
@@ -744,14 +765,30 @@ create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, dns_zone_t **zonep)
 		char zone_name[DNS_NAME_FORMATSIZE];
 		dns_name_format(name, zone_name, DNS_NAME_FORMATSIZE);
 
-		if (result == ISC_R_SUCCESS) {
-			result = ISC_R_EXISTS;
-			log_error_r("failed to create new zone '%s'", zone_name);
-		} else {
+		if (result != ISC_R_SUCCESS) {
 			log_error_r("dns_view_findzone() failed while "
 				    "searching for zone '%s'", zone_name);
+		} else { /* zone already exists */
+			if (zone_isempty(ldap_inst->mctx, zone) == ISC_TRUE) {
+				result = delete_bind_zone(ldap_inst->view->zonetable,
+							  &zone);
+				if (result != ISC_R_SUCCESS)
+					log_error_r("failed to create new zone "
+						    "'%s': unable to unload "
+						    "automatic empty zone",
+						    zone_name);
+				else
+					log_info("automatic empty zone %s "
+						 "unloaded", zone_name);
+
+			} else {
+				result = ISC_R_EXISTS;
+				log_error_r("failed to create new zone '%s'",
+					    zone_name);
+			}
 		}
-		goto cleanup;
+		if (result != ISC_R_SUCCESS)
+			goto cleanup;
 	}
 
 	CHECK(dns_zone_create(&zone, ldap_inst->mctx));
