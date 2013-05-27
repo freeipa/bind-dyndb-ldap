@@ -1052,6 +1052,7 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 	isc_boolean_t fwdtbl_update_requested = ISC_FALSE;
 	dns_forwarders_t *old_setting = NULL;
 	dns_fixedname_t foundname;
+	dns_zone_t *zone = NULL;
 	const char *msg_use_global_fwds;
 	const char *msg_obj_type;
 	const char *msg_forwarders_not_def;
@@ -1184,6 +1185,24 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 	}
 
 	if (fwdtbl_update_requested) {
+		/* Shutdown automatic empty zone if it is present. */
+		result = dns_zt_find(inst->view->zonetable, name, 0, NULL,
+				     &zone);
+		if (result == ISC_R_SUCCESS || result == DNS_R_PARTIALMATCH) {
+			if (zone_isempty(inst->mctx, zone)) {
+				dns_zone_log(zone, ISC_LOG_INFO, "automatic "
+					     "empty zone will be shut down "
+					     "to enable forwarding");
+				result = delete_bind_zone(inst->view->zonetable,
+							  &zone);
+			} else {
+				dns_zone_detach(&zone);
+				result = ISC_R_SUCCESS;
+			}
+		}
+		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
+			goto cleanup;
+
 		/* Something was changed - set forward table up. */
 		CHECK(delete_forwarding_table(inst, name, msg_obj_type, dn));
 		result = dns_fwdtable_add(inst->view->fwdtable, name, &addrs, fwdpolicy);
