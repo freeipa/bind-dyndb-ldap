@@ -386,6 +386,10 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 		/* watcher needs one and update_*() requests second connection */
 		CLEANUP_WITH(ISC_R_RANGE);
 	}
+	if (!psearch)
+		log_info("configuration without persistent search is deprecated "
+			 "and the support for zone_refresh will be removed "
+			 "in the future");
 
 	CHECK(setting_get_bool("serial_autoincrement", set, &serial_autoincrement));
 	if (serial_autoincrement && !psearch) {
