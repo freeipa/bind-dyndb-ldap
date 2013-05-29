@@ -440,6 +440,7 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 						  "gethostname() failed");
 					CLEANUP_WITH(ISC_R_FAILURE);
 				} else {
+					CHECK(str_new(inst->mctx, &buff));
 					CHECK(str_sprintf(buff,
 							  "DNS/%s", hostname));
 					log_debug(2, "SASL mech GSSAPI defined "
@@ -466,6 +467,7 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 		result = ISC_R_FAILURE;
 
 cleanup:
+	str_destroy(&buff);
 	if (result != ISC_R_SUCCESS)
 		log_error_r("LDAP config validation failed for database '%s'",
 			    inst->db_name);
