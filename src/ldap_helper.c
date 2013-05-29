@@ -362,7 +362,11 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 	isc_uint32_t uint;
 	const char *sasl_mech = NULL;
 	const char *sasl_user = NULL;
+	const char *sasl_realm = NULL;
+	const char *sasl_password = NULL;
 	const char *krb5_principal = NULL;
+	const char *bind_dn = NULL;
+	const char *password = NULL;
 	ld_string_t *buff = NULL;
 
 	char print_buff[PRINT_BUFF_SIZE];
@@ -427,6 +431,33 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 	CHECK(setting_get_str("sasl_mech", set, &sasl_mech));
 	CHECK(setting_get_str("krb5_principal", set, &krb5_principal));
 	CHECK(setting_get_str("sasl_user", set, &sasl_user));
+	CHECK(setting_get_str("sasl_realm", set, &sasl_realm));
+	CHECK(setting_get_str("sasl_password", set, &sasl_password));
+	CHECK(setting_get_str("bind_dn", set, &bind_dn));
+	CHECK(setting_get_str("password", set, &password));
+
+	if (auth_method_enum != AUTH_SIMPLE &&
+	   (strlen(bind_dn) != 0 || strlen(password) != 0)) {
+		log_error("options 'bind_dn' and 'password' are allowed only "
+			  "for auth_method 'simple'");
+		CLEANUP_WITH(ISC_R_FAILURE);
+	}
+
+	if (auth_method_enum == AUTH_SIMPLE &&
+	    (strlen(bind_dn) == 0 || strlen(password) == 0)) {
+		log_error("auth_method 'simple' requires 'bind_dn' and 'password'");
+		log_info("for anonymous bind please use auth_method 'none'");
+		CLEANUP_WITH(ISC_R_FAILURE);
+	}
+
+	if (auth_method_enum != AUTH_SASL &&
+	   (strlen(sasl_realm) != 0 || strlen(sasl_user) != 0 ||
+	    strlen(sasl_password) != 0 || strlen(krb5_principal) != 0)) {
+		log_error("options 'sasl_realm', 'sasl_user', 'sasl_password' "
+			  "and 'krb5_principal' are effective only with "
+			  "auth_method 'sasl'");
+		CLEANUP_WITH(ISC_R_FAILURE);
+	}
 
 	if ((auth_method_enum == AUTH_SASL) &&
 	    (strcasecmp(sasl_mech, "GSSAPI") == 0)) {
@@ -2487,15 +2518,6 @@ ldap_reconnect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 			return ISC_R_SOFTQUOTA;
 	}
 
-	/* If either bind_dn or the password is not set, we will use
-	 * password-less bind. */
-	CHECK(setting_get_str("bind_dn", ldap_inst->global_settings, &bind_dn));
-	CHECK(setting_get_str("password", ldap_inst->global_settings, &password));
-	if (strlen(bind_dn) == 0 || strlen(password) == 0) {
-		bind_dn = NULL;
-		password = NULL;
-	}
-
 	/* Set the next possible reconnect time. */
 	{
 		isc_interval_t delay;
@@ -2525,6 +2547,8 @@ force_reconnect:
 		ret = ldap_simple_bind_s(ldap_conn->handle, NULL, NULL);
 		break;
 	case AUTH_SIMPLE:
+		CHECK(setting_get_str("bind_dn", ldap_inst->global_settings, &bind_dn));
+		CHECK(setting_get_str("password", ldap_inst->global_settings, &password));
 		ret = ldap_simple_bind_s(ldap_conn->handle, bind_dn, password);
 		break;
 	case AUTH_SASL:
