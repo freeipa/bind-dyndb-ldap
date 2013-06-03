@@ -1,5 +1,6 @@
 #include <dns/rbt.h>
 
+#include "util.h"
 #include "rbt_helper.h"
 
 #define LDAPDB_RBTITER_MAGIC ISC_MAGIC('L', 'D', 'P', 'I')
@@ -29,7 +30,7 @@ struct rbt_iterator {
  * @retval others          Errors from dns_name_concatenate() and others.
  *
  */
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 rbt_iter_getnodename(rbt_iterator_t *iter, dns_name_t *nodename) {
 	isc_result_t result;
 	dns_rbtnode_t *node = NULL;

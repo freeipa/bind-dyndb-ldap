@@ -52,7 +52,7 @@ typedef struct {
 	isc_time_t		valid_until;
 } cache_node_t;
 
-static void
+static void ATTR_NONNULLS
 cache_node_deleter(void *data, void *deleter_arg)
 {
 	cache_node_t *node = data;
@@ -65,7 +65,7 @@ cache_node_deleter(void *data, void *deleter_arg)
 }
 
 /* TODO: Remove the rdatalist parameter */
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 cache_node_create(ldap_cache_t *cache, cache_node_t **nodep)
 {
 	isc_result_t result;

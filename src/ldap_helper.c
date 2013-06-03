@@ -281,71 +281,71 @@ static setting_t settings_global_default[] = {
 
 /* TODO: reorganize this stuff & clean it up. */
 static isc_result_t new_ldap_connection(ldap_pool_t *pool,
-		ldap_connection_t **ldap_connp);
-static void destroy_ldap_connection(ldap_connection_t **ldap_connp);
+					ldap_connection_t **ldap_connp) ATTR_NONNULLS;
+static void destroy_ldap_connection(ldap_connection_t **ldap_connp) ATTR_NONNULLS;
 
 static isc_result_t findrdatatype_or_create(isc_mem_t *mctx,
 		ldapdb_rdatalist_t *rdatalist, dns_rdataclass_t rdclass,
-		dns_rdatatype_t rdtype, dns_ttl_t ttl, dns_rdatalist_t **rdlistp);
+		dns_rdatatype_t rdtype, dns_ttl_t ttl, dns_rdatalist_t **rdlistp) ATTR_NONNULLS;
 static isc_result_t add_soa_record(isc_mem_t *mctx, ldap_qresult_t *qresult,
 		dns_name_t *origin, ldap_entry_t *entry,
-		ldapdb_rdatalist_t *rdatalist, const char *fake_mname);
+		ldapdb_rdatalist_t *rdatalist, const char *fake_mname) ATTR_NONNULLS;
 static isc_result_t parse_rdata(isc_mem_t *mctx, ldap_qresult_t *qresult,
 		dns_rdataclass_t rdclass, dns_rdatatype_t rdtype,
 		dns_name_t *origin, const char *rdata_text,
-		dns_rdata_t **rdatap);
+		dns_rdata_t **rdatap) ATTR_NONNULLS;
 static isc_result_t ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry,
 		ldap_qresult_t *qresult, dns_name_t *origin,
 		const char *fake_mname, ld_string_t *buf,
-		ldapdb_rdatalist_t *rdatalist);
+		ldapdb_rdatalist_t *rdatalist) ATTR_NONNULLS;
 static inline isc_result_t ldap_get_zone_serial(ldap_instance_t *inst,
-		dns_name_t *zone_name, isc_uint32_t *serial);
+		dns_name_t *zone_name, isc_uint32_t *serial) ATTR_NONNULLS;
 
 static isc_result_t ldap_connect(ldap_instance_t *ldap_inst,
-		ldap_connection_t *ldap_conn, isc_boolean_t force);
+		ldap_connection_t *ldap_conn, isc_boolean_t force) ATTR_NONNULLS;
 static isc_result_t ldap_reconnect(ldap_instance_t *ldap_inst,
-		ldap_connection_t *ldap_conn, isc_boolean_t force);
+		ldap_connection_t *ldap_conn, isc_boolean_t force) ATTR_NONNULLS;
 static isc_result_t handle_connection_error(ldap_instance_t *ldap_inst,
-		ldap_connection_t *ldap_conn, isc_boolean_t force);
+		ldap_connection_t *ldap_conn, isc_boolean_t force) ATTR_NONNULLS;
 static isc_result_t ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 		   ldap_qresult_t **ldap_qresultp, const char *base, int scope, char **attrs,
-		   int attrsonly, const char *filter, ...);
-static isc_result_t ldap_query_create(isc_mem_t *mctx, ldap_qresult_t **ldap_qresultp);
-static void ldap_query_free(isc_boolean_t prepare_reuse, ldap_qresult_t **ldap_qresultp);
+		   int attrsonly, const char *filter, ...) ATTR_NONNULL(1, 3, 4, 8);
+static isc_result_t ldap_query_create(isc_mem_t *mctx, ldap_qresult_t **ldap_qresultp) ATTR_NONNULLS;
+static void ldap_query_free(isc_boolean_t prepare_reuse, ldap_qresult_t **ldap_qresultp) ATTR_NONNULLS;
 
 /* Functions for writing to LDAP. */
 static isc_result_t ldap_modify_do(ldap_instance_t *ldap_inst,
-		const char *dn, LDAPMod **mods, isc_boolean_t delete_node);
+		const char *dn, LDAPMod **mods, isc_boolean_t delete_node) ATTR_NONNULLS;
 static isc_result_t ldap_rdttl_to_ldapmod(isc_mem_t *mctx,
-		dns_rdatalist_t *rdlist, LDAPMod **changep);
+		dns_rdatalist_t *rdlist, LDAPMod **changep) ATTR_NONNULLS;
 static isc_result_t ldap_rdatalist_to_ldapmod(isc_mem_t *mctx,
-		dns_rdatalist_t *rdlist, LDAPMod **changep, int mod_op);
+		dns_rdatalist_t *rdlist, LDAPMod **changep, int mod_op) ATTR_NONNULLS;
 
 static isc_result_t ldap_rdata_to_char_array(isc_mem_t *mctx,
-		dns_rdata_t *rdata_head, char ***valsp);
-static void free_char_array(isc_mem_t *mctx, char ***valsp);
+		dns_rdata_t *rdata_head, char ***valsp) ATTR_NONNULLS;
+static void free_char_array(isc_mem_t *mctx, char ***valsp) ATTR_NONNULLS;
 static isc_result_t modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
-		dns_rdatalist_t *rdlist, int mod_op, isc_boolean_t delete_node);
+		dns_rdatalist_t *rdlist, int mod_op, isc_boolean_t delete_node) ATTR_NONNULLS;
 static isc_result_t soa_serial_increment(isc_mem_t *mctx, ldap_instance_t *inst,
-		dns_name_t *zone_name);
+		dns_name_t *zone_name) ATTR_NONNULLS;
 
 /* Functions for maintaining pool of LDAP connections */
 static isc_result_t ldap_pool_create(isc_mem_t *mctx, unsigned int connections,
-		ldap_pool_t **poolp);
+		ldap_pool_t **poolp) ATTR_NONNULLS;
 static void ldap_pool_destroy(ldap_pool_t **poolp);
 static isc_result_t ldap_pool_getconnection(ldap_pool_t *pool,
-		ldap_connection_t ** conn);
+		ldap_connection_t ** conn) ATTR_NONNULLS;
 static void ldap_pool_putconnection(ldap_pool_t *pool,
-		ldap_connection_t ** conn);
+		ldap_connection_t ** conn) ATTR_NONNULLS;
 static isc_result_t ldap_pool_connect(ldap_pool_t *pool,
-		ldap_instance_t *ldap_inst);
+		ldap_instance_t *ldap_inst) ATTR_NONNULLS;
 
 /* Functions for manipulating LDAP persistent search control */
-static isc_result_t ldap_pscontrol_create(LDAPControl **ctrlp);
+static isc_result_t ldap_pscontrol_create(LDAPControl **ctrlp) ATTR_NONNULLS;
 
-static isc_threadresult_t ldap_psearch_watcher(isc_threadarg_t arg);
+static isc_threadresult_t ldap_psearch_watcher(isc_threadarg_t arg) ATTR_NONNULLS;
 static void psearch_update(ldap_instance_t *inst, ldap_entry_t *entry,
-		LDAPControl **ctrls);
+		LDAPControl **ctrls) ATTR_NONNULL(1, 2);
 
 
 /* Persistent updates watcher */
@@ -666,7 +666,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	log_debug(1, "LDAP instance '%s' destroyed", db_name);
 }
 
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 new_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
 {
 	isc_result_t result;
@@ -721,7 +721,7 @@ destroy_ldap_connection(ldap_connection_t **ldap_connp)
 }
 
 /* Test if the existing zone is 'empty zone' per RFC 6303. */
-static isc_boolean_t
+static isc_boolean_t ATTR_NONNULLS
 zone_isempty(isc_mem_t *mctx, dns_zone_t *zone) {
 	char **argv = NULL;
 	isc_boolean_t result = ISC_FALSE;
@@ -749,7 +749,7 @@ cleanup:
  *
  * @returns Values returned by dns_zt_unmount().
  */
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 delete_bind_zone(dns_zt_t *zt, dns_zone_t **zonep) {
 	dns_zone_t *zone;
 	dns_db_t *dbp = NULL;
@@ -783,7 +783,7 @@ delete_bind_zone(dns_zt_t *zt, dns_zone_t **zonep) {
  * Create a new zone with origin 'name'. The zone will be added to the
  * ldap_inst->view.
  */
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, dns_zone_t **zonep)
 {
 	isc_result_t result;
@@ -844,7 +844,7 @@ cleanup:
 	return result;
 }
 
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 publish_zone(ldap_instance_t *inst, dns_zone_t *zone)
 {
 	isc_result_t result;
@@ -874,7 +874,7 @@ cleanup:
 	return result;
 }
 
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 configure_zone_acl(isc_mem_t *mctx, dns_zone_t *zone,
 		void (acl_setter)(dns_zone_t *zone, dns_acl_t *acl),
 		const char *aclstr, acl_type_t type) {
@@ -913,7 +913,7 @@ configure_zone_acl(isc_mem_t *mctx, dns_zone_t *zone,
 }
 
 /* In BIND9 terminology "ssu" means "Simple Secure Update" */
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
 {
 	isc_result_t result;
@@ -956,7 +956,7 @@ configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
 	return result;
 }
 
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 delete_forwarding_table(ldap_instance_t *inst, dns_name_t *name,
 			const char *msg_obj_type, const char *dn) {
 	isc_result_t result;
@@ -1035,7 +1035,7 @@ cleanup:
 }
 
 /* Delete zone */
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 ldap_delete_zone(ldap_instance_t *inst, const char *dn, isc_boolean_t lock,
 		 isc_boolean_t preserve_forwarding)
 {
@@ -1074,7 +1074,7 @@ cleanup:
  * @retval ISC_R_NOMEMORY
  * @retval others	  Some RBT manipulation errors including ISC_R_FAILURE.
  */
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst, 
                           dns_name_t *name)
 {
@@ -1285,7 +1285,7 @@ cleanup:
 }
 
 /* Parse the config object entry */
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst)
 {
 	isc_result_t result;
@@ -1348,7 +1348,7 @@ cleanup:
 }
 
 /* Parse the forward zone entry */
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 ldap_parse_fwd_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 {
 	const char *dn;
@@ -1388,7 +1388,7 @@ cleanup:
 }
 
 /* Parse the master zone entry */
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 {
 	const char *dn;
@@ -2359,7 +2359,7 @@ ldap_query_free(isc_boolean_t prepare_reuse, ldap_qresult_t **ldap_qresultp)
 }
 
 /* FIXME: Tested with SASL/GSSAPI/KRB5 only */
-static int
+static int ATTR_NONNULL(3)
 ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
 {
 	sasl_interact_t *in;
@@ -2768,7 +2768,7 @@ cleanup:
 	return result;
 }
 
-static void
+static void ATTR_NONNULLS
 ldap_mod_free(isc_mem_t *mctx, LDAPMod **changep)
 {
 	LDAPMod *change;
@@ -2787,7 +2787,7 @@ ldap_mod_free(isc_mem_t *mctx, LDAPMod **changep)
 	*changep = NULL;
 }
 
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 ldap_mod_create(isc_mem_t *mctx, LDAPMod **changep)
 {
 	LDAPMod *change = NULL;
@@ -2940,7 +2940,7 @@ cleanup:
  * The SOA record is a special case because we need to update serial,
  * refresh, retry, expire and minimum attributes for each SOA record.
  */
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 modify_soa_record(ldap_instance_t *ldap_inst, const char *zone_dn,
 		  dns_rdata_t *rdata)
 {

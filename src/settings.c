@@ -155,7 +155,7 @@ setting_find(const char *name, const settings_set_t *set,
  *                          of setting in settings tree. (I.e. programming
  *                          error.)
  */
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 setting_get(const char *const name, const setting_type_t type,
 	    const settings_set_t *const set, void *target)
 {
@@ -224,7 +224,7 @@ setting_get_bool(const char *const name, const settings_set_t *const set,
  * @retval ISC_R_UNEXPECTEDTOKEN
  * @retval others         Other errors from isc_parse_uint32().
  */
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 set_value(isc_mem_t *mctx, setting_t *setting, const char *value,
 	  isc_task_t *task)
 {

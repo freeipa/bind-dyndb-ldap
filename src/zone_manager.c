@@ -54,8 +54,8 @@ static isc_mutex_t instance_list_lock;
 static LIST(db_instance_t) instance_list;
 
 static void initialize_manager(void);
-static void destroy_db_instance(db_instance_t **db_instp);
-static isc_result_t find_db_instance(const char *name, db_instance_t **instance);
+static void destroy_db_instance(db_instance_t **db_instp) ATTR_NONNULLS;
+static isc_result_t find_db_instance(const char *name, db_instance_t **instance) ATTR_NONNULLS;
 
 
 static void
@@ -87,7 +87,7 @@ destroy_manager(void)
 	UNLOCK(&instance_list_lock);
 }
 
-static void
+static void ATTR_NONNULLS
 destroy_db_instance(db_instance_t **db_instp)
 {
 	db_instance_t *db_inst;
@@ -207,7 +207,7 @@ cleanup:
 	return result;
 }
 
-static void
+static void ATTR_NONNULL(2)
 refresh_zones_action(isc_task_t *task, isc_event_t *event)
 {
 	db_instance_t *db_inst = event->ev_arg;
@@ -239,7 +239,7 @@ cleanup:
 	return result;
 }
 
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 find_db_instance(const char *name, db_instance_t **instance)
 {
 	db_instance_t *iterator;

@@ -196,7 +196,7 @@ zr_destroy(zone_register_t **zrp)
  * Create a new zone info structure.
  */
 #define PRINT_BUFF_SIZE 255
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 create_zone_info(isc_mem_t *mctx, dns_zone_t *zone, const char *dn,
 		settings_set_t *global_settings, zone_info_t **zinfop)
 {
@@ -233,7 +233,7 @@ cleanup:
  * Delete a zone info structure. The two arguments are of type void * so the
  * function can be used as a node deleter for the red-black tree.
  */
-static void
+static void ATTR_NONNULL(2)
 delete_zone_info(void *arg1, void *arg2)
 {
 	zone_info_t *zinfo = arg1;

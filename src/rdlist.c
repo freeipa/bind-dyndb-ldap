@@ -43,7 +43,7 @@ struct rr_sort {
 	isc_region_t	rdatareg;	/* handle to binary area with RR data */
 };
 
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 rdata_clone(isc_mem_t *mctx, dns_rdata_t *source, dns_rdata_t **targetp)
 {
 	isc_result_t result;
@@ -130,7 +130,7 @@ rdatalist_length(const dns_rdatalist_t *rdlist)
 	return length;
 }
 
-static int
+static int ATTR_NONNULLS
 rr_sort_compare(const void *rdl1, const void *rdl2) {
 	const rr_sort_t *r1 = rdl1;
 	const rr_sort_t *r2 = rdl2;

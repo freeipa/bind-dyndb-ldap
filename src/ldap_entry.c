@@ -111,7 +111,7 @@ cleanup:
 	return result;
 }
 
-static void
+static void ATTR_NONNULLS
 ldap_valuelist_destroy(isc_mem_t *mctx, ldap_valuelist_t *values)
 {
 	ldap_value_t *value, *next;
@@ -125,7 +125,7 @@ ldap_valuelist_destroy(isc_mem_t *mctx, ldap_valuelist_t *values)
 	}
 }
 
-static void
+static void ATTR_NONNULLS
 ldap_attributelist_destroy(isc_mem_t *mctx, ldap_attributelist_t *attrlist)
 {
         ldap_attribute_t *attr, *next;
@@ -142,7 +142,7 @@ ldap_attributelist_destroy(isc_mem_t *mctx, ldap_attributelist_t *attrlist)
         }
 }
 
-static isc_result_t
+static isc_result_t ATTR_NONNULLS
 ldap_attr_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 		 ldap_attribute_t *attr)
 {
@@ -290,7 +290,7 @@ ldap_entry_getrdclass(const ldap_entry_t *entry)
 	return dns_rdataclass_in;
 }
 
-static isc_boolean_t
+static isc_boolean_t ATTR_NONNULLS
 array_contains_nocase(const char **haystack, const char *needle)
 {
 	for (unsigned int i = 0; haystack[i] != NULL; i++) {

@@ -34,11 +34,11 @@ typedef enum acl_type {
 extern const enum_txt_assoc_t acl_type_txts[];
 
 isc_result_t
-acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone);
+acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone) ATTR_NONNULLS;
 
 isc_result_t
 acl_from_ldap(isc_mem_t *mctx, const char *aclstr, acl_type_t type,
-	      dns_acl_t **aclp);
+	      dns_acl_t **aclp) ATTR_NONNULLS;
 /*
  * Converts multiple ACL element.
  *
@@ -46,6 +46,7 @@ acl_from_ldap(isc_mem_t *mctx, const char *aclstr, acl_type_t type,
  */
 
 isc_result_t
-acl_parse_forwarder(const char *forwarders_str, isc_mem_t *mctx, isc_sockaddr_t **sa);
+acl_parse_forwarder(const char *forwarders_str, isc_mem_t *mctx,
+		    isc_sockaddr_t **sa) ATTR_NONNULLS;
 
 #endif /* !_LD_ACL_H_ */

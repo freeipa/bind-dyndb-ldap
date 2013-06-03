@@ -91,40 +91,40 @@ isc_result_t
 settings_set_create(isc_mem_t *mctx, const setting_t default_settings[],
 		    const unsigned int default_set_length, const char *set_name,
 		    const settings_set_t *const parent_set,
-		    settings_set_t **target);
+		    settings_set_t **target) ATTR_NONNULLS;
 
 void
-settings_set_free(settings_set_t **set);
+settings_set_free(settings_set_t **set) ATTR_NONNULLS;
 
 isc_result_t
 settings_set_fill(settings_set_t *set, const char *const *argv,
-		  isc_task_t *task);
+		  isc_task_t *task) ATTR_NONNULLS;
 
 isc_boolean_t
-settings_set_isfilled(settings_set_t *set);
+settings_set_isfilled(settings_set_t *set) ATTR_NONNULLS;
 
 isc_result_t
 setting_get_uint(const char * const name, const settings_set_t * const set,
-		 isc_uint32_t * target);
+		 isc_uint32_t * target) ATTR_NONNULLS;
 
 isc_result_t
 setting_get_str(const char * const name, const settings_set_t * const set,
-		const char ** target);
+		const char ** target) ATTR_NONNULLS;
 
 isc_result_t
 setting_get_bool(const char * const name, const settings_set_t * const set,
-		 isc_boolean_t * target);
+		 isc_boolean_t * target) ATTR_NONNULLS;
 
 isc_result_t
 setting_set(const char *const name, const settings_set_t *set,
-	    const char *const value, isc_task_t *task);
+	    const char *const value, isc_task_t *task) ATTR_NONNULLS;
 
 isc_result_t
 setting_update_from_ldap_entry(const char *name, settings_set_t *set,
 			       const char *attr_name, ldap_entry_t *entry,
-			       isc_task_t *task);
+			       isc_task_t *task) ATTR_NONNULLS;
 
 isc_result_t
-get_enum_description(const enum_txt_assoc_t *map, int value, const char **desc);
+get_enum_description(const enum_txt_assoc_t *map, int value, const char **desc) ATTR_NONNULLS;
 
 #endif /* !_LD_SETTINGS_H_ */

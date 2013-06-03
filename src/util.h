@@ -116,4 +116,13 @@ extern isc_boolean_t verbose_checks; /* from settings.c */
 		dns_name_setbuffer(&name, &name##__buffer);		\
 	} while (0)
 
+/* If no argument index list is given to the nonnull attribute,
+ * all pointer arguments are marked as non-null. */
+#define ATTR_NONNULLS     ATTR_NONNULL()
+#ifdef __GNUC__
+#define ATTR_NONNULL(...) __attribute__((nonnull(__VA_ARGS__)))
+#else
+#define ATTR_NONNULL(...)
+#endif
+
 #endif /* !_LD_UTIL_H_ */

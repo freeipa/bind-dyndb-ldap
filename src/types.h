@@ -24,6 +24,8 @@
 #include <isc/refcount.h>
 #include <dns/name.h>
 
+#include "util.h"
+
 /*
  * some nice words about ldapdb_rdatalist_t:
  * - it is list of all RRs which have same owner name
@@ -55,5 +57,5 @@ typedef struct enum_txt_assoc {
 } enum_txt_assoc_t;
 
 isc_result_t
-ldapdbnode_create(isc_mem_t *mctx, dns_name_t *owner, ldapdb_node_t **nodep);
+ldapdbnode_create(isc_mem_t *mctx, dns_name_t *owner, ldapdb_node_t **nodep) ATTR_NONNULLS;
 #endif /* !_LD_TYPES_H_ */

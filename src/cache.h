@@ -31,13 +31,13 @@ typedef struct ldap_cache ldap_cache_t;
  * Create a new cache.
  */
 isc_result_t
-new_ldap_cache(isc_mem_t *mctx, settings_set_t *set, ldap_cache_t **cachep);
+new_ldap_cache(isc_mem_t *mctx, settings_set_t *set, ldap_cache_t **cachep) ATTR_NONNULLS;
 
 /*
  * Free all resources used up by the cache.
  */
 void
-destroy_ldap_cache(ldap_cache_t **cachep);
+destroy_ldap_cache(ldap_cache_t **cachep) ATTR_NONNULLS;
 
 /*
  * Get rdatalist from cache.
@@ -46,7 +46,7 @@ destroy_ldap_cache(ldap_cache_t **cachep);
  */
 isc_result_t
 ldap_cache_getrdatalist(isc_mem_t *mctx, ldap_cache_t *cache,
-			dns_name_t *name, ldapdb_rdatalist_t *rdatalist);
+			dns_name_t *name, ldapdb_rdatalist_t *rdatalist) ATTR_NONNULLS;
 
 /*
  * Add rdatalist to the cache.
@@ -57,32 +57,32 @@ ldap_cache_getrdatalist(isc_mem_t *mctx, ldap_cache_t *cache,
  */
 isc_result_t
 ldap_cache_addrdatalist(ldap_cache_t *cache, dns_name_t *name,
-			ldapdb_rdatalist_t *rdatalist);
+			ldapdb_rdatalist_t *rdatalist) ATTR_NONNULLS;
 
 /*
  * Delete matching "name" from the cache.
  */
 isc_result_t
-ldap_cache_deletename(ldap_cache_t *cache, dns_name_t *name);
+ldap_cache_deletename(ldap_cache_t *cache, dns_name_t *name) ATTR_NONNULLS;
 
 /*
  * Returns ISC_TRUE when cache is enabled.
  */
 isc_boolean_t
-ldap_cache_enabled(ldap_cache_t *cache);
+ldap_cache_enabled(ldap_cache_t *cache) ATTR_NONNULLS;
 
 /*
  * Discard 'name' from the cache. If caching is not really turned on or 'name'
  * is not cached, this function will still return ISC_R_SUCCESS.
  */
 isc_result_t
-discard_from_cache(ldap_cache_t *cache, dns_name_t *name);
+discard_from_cache(ldap_cache_t *cache, dns_name_t *name) ATTR_NONNULLS;
 
 /**
  * Discard all names from the cache and re-initialize internal RB-tree.
  * @return ISC_R_SUCCESS even if cache is disabled.
  */
 isc_result_t
-flush_ldap_cache(ldap_cache_t *cache);
+flush_ldap_cache(ldap_cache_t *cache) ATTR_NONNULLS;
 
 #endif /* !_LD_CACHE_H_ */

@@ -25,6 +25,8 @@
 #include <dns/log.h>
 #include <dns/result.h>
 
+#include "util.h"
+
 #ifdef LOG_AS_ERROR
 #define GET_LOG_LEVEL(level)	ISC_LOG_ERROR
 #else

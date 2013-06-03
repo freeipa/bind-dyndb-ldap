@@ -30,49 +30,49 @@ typedef struct zone_register zone_register_t;
 
 isc_result_t
 zr_create(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
-	  settings_set_t *glob_settings, zone_register_t **zrp);
+	  settings_set_t *glob_settings, zone_register_t **zrp) ATTR_NONNULLS;
 
 void
-zr_destroy(zone_register_t **zrp);
+zr_destroy(zone_register_t **zrp) ATTR_NONNULLS;
 
 isc_result_t
-zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn);
+zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn) ATTR_NONNULLS;
 
 isc_result_t
-zr_del_zone(zone_register_t *zr, dns_name_t *origin);
+zr_del_zone(zone_register_t *zr, dns_name_t *origin) ATTR_NONNULLS;
 
 isc_result_t
-zr_flush_all_caches(zone_register_t *zr);
+zr_flush_all_caches(zone_register_t *zr) ATTR_NONNULLS;
 
 isc_result_t
-zr_get_zone_cache(zone_register_t *zr, dns_name_t *name, ldap_cache_t **cachep);
+zr_get_zone_cache(zone_register_t *zr, dns_name_t *name, ldap_cache_t **cachep) ATTR_NONNULLS;
 
 isc_result_t
 zr_get_zone_dn(zone_register_t *zr, dns_name_t *name, const char **dn,
-	       dns_name_t *matched_name);
+	       dns_name_t *matched_name) ATTR_NONNULLS;
 
 isc_result_t
-zr_get_zone_ptr(zone_register_t *zr, dns_name_t *name, dns_zone_t **zonep);
+zr_get_zone_ptr(zone_register_t *zr, dns_name_t *name, dns_zone_t **zonep) ATTR_NONNULLS;
 
 isc_result_t
-zr_get_zone_settings(zone_register_t *zr, dns_name_t *name, settings_set_t **set);
+zr_get_zone_settings(zone_register_t *zr, dns_name_t *name, settings_set_t **set) ATTR_NONNULLS;
 
 isc_result_t
 zr_rbt_iter_init(zone_register_t *zr, rbt_iterator_t **iter,
-		 dns_name_t *nodename);
+		 dns_name_t *nodename) ATTR_NONNULLS;
 
 dns_rbt_t *
-zr_get_rbt(zone_register_t *zr);
+zr_get_rbt(zone_register_t *zr) ATTR_NONNULLS;
 
 isc_mem_t *
-zr_get_mctx(zone_register_t *zr);
+zr_get_mctx(zone_register_t *zr) ATTR_NONNULLS;
 
 isc_result_t
 zr_set_zone_serial_digest(zone_register_t *zr, dns_name_t *name,
-		isc_uint32_t serial, unsigned char *digest);
+		isc_uint32_t serial, unsigned char *digest) ATTR_NONNULLS;
 
 isc_result_t
 zr_get_zone_serial_digest(zone_register_t *zr, dns_name_t *name,
-		isc_uint32_t *serialp, unsigned char ** digestp);
+		isc_uint32_t *serialp, unsigned char ** digestp) ATTR_NONNULLS;
 
 #endif /* !_LD_ZONE_REGISTER_H_ */

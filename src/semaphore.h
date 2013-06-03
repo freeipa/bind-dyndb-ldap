@@ -24,6 +24,8 @@
 #include <isc/condition.h>
 #include <isc/mutex.h>
 
+#include "util.h"
+
 /* Multiplier for to user-defined connection parameter 'timeout'. */
 #define SEM_WAIT_TIMEOUT_MUL 6 /* times */
 extern isc_interval_t semaphore_wait_timeout;
@@ -42,9 +44,9 @@ struct semaphore {
 typedef struct semaphore	semaphore_t;
 
 /* Public functions. */
-isc_result_t	semaphore_init(semaphore_t *sem, int value);
-void		semaphore_destroy(semaphore_t *sem);
-isc_result_t	semaphore_wait_timed(semaphore_t *sem);
-void		semaphore_signal(semaphore_t *sem);
+isc_result_t	semaphore_init(semaphore_t *sem, int value) ATTR_NONNULLS;
+void		semaphore_destroy(semaphore_t *sem) ATTR_NONNULLS;
+isc_result_t	semaphore_wait_timed(semaphore_t *sem) ATTR_NONNULLS;
+void		semaphore_signal(semaphore_t *sem) ATTR_NONNULLS;
 
 #endif /* !_LD_SEMAPHORE_H_ */
