@@ -1,3 +1,22 @@
+3.3
+=====
+[1] Crash triggered by missing sasl_user parameter was fixed.
+
+[2] IPv6 handling in PTR record synchronization was fixed.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/118
+
+[3] Authentication settings are validated more strictly.
+    Conflicting options are reported and prevent named from starting.
+
+[4] Automatic empty zones defined in RFC 6303 are automatically unloaded
+    if conflicting master or forward zone is defined in LDAP.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/119
+
+[5] Configuration without persistent search is now deprecated
+    and informational message is logged. Support for zone_refresh
+    will be removed in 4.x release.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/120
+
 3.2
 =====
 [1] An error in dynamic update/transfer/query policy is interpreted as
