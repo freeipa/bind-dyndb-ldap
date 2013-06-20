@@ -3839,10 +3839,7 @@ update_config(isc_task_t *task, isc_event_t *event)
 
 	mctx = pevent->mctx;
 
-	result = manager_get_ldap_instance(pevent->dbname, &inst);
-	if (result != ISC_R_SUCCESS)
-		goto cleanup;
-
+	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
 	CHECK(ldap_query(inst, NULL, &ldap_qresult, pevent->dn,
 			 LDAP_SCOPE_BASE, attrs, 0,
 			 "(objectClass=idnsConfigObject)"));
