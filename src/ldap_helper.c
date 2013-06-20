@@ -3897,8 +3897,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 	mctx = pevent->mctx;
 
 	UNUSED(task);
-	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
-	
+
 	/* Structure to be stored in the cache. */
 	ldapdb_rdatalist_t rdatalist;
 
@@ -3912,6 +3911,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 	dns_name_init(&origin, NULL);
 	dns_name_init(&prevname, NULL);
 	dns_name_init(&prevorigin, NULL);
+	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
 	CHECK(dn_to_dnsname(mctx, pevent->dn, &name, &origin));
 	zone_found = ISC_TRUE;
 
