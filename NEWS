@@ -1,3 +1,8 @@
+3.4
+=====
+[1] Crash during BIND shutdown caused by race condition in update processing
+    was fixed.
+
 3.3
 =====
 [1] Crash triggered by missing sasl_user parameter was fixed.
