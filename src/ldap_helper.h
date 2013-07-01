@@ -22,7 +22,7 @@
 #ifndef _LD_LDAP_HELPER_H_
 #define _LD_LDAP_HELPER_H_
 
-#include "cache.h"
+#include "settings.h"
 #include "types.h"
 
 #include <isc/util.h>

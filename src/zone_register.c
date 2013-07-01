@@ -59,7 +59,6 @@ struct zone_register {
 typedef struct {
 	dns_zone_t	*zone;
 	char		*dn;
-	ldap_cache_t	*cache;
 	settings_set_t	*settings;
 } zone_info_t;
 
@@ -205,7 +204,6 @@ create_zone_info(isc_mem_t *mctx, dns_zone_t *zone, const char *dn,
 	CHECKED_MEM_GET_PTR(mctx, zinfo);
 	ZERO_PTR(zinfo);
 	CHECKED_MEM_STRDUP(mctx, dn, zinfo->dn);
-	CHECK(new_ldap_cache(mctx, &zinfo->cache));
 	dns_zone_attach(zone, &zinfo->zone);
 	zinfo->settings = NULL;
 	isc_string_printf_truncate(settings_name, PRINT_BUFF_SIZE,
@@ -236,7 +234,6 @@ delete_zone_info(void *arg1, void *arg2)
 	if (zinfo == NULL)
 		return;
 
-	destroy_ldap_cache(&zinfo->cache);
 	settings_set_free(&zinfo->settings);
 	isc_mem_free(mctx, zinfo->dn);
 	dns_zone_detach(&zinfo->zone);
@@ -318,62 +315,6 @@ zr_del_zone(zone_register_t *zr, dns_name_t *origin)
 
 cleanup:
 	RWUNLOCK(&zr->rwlock, isc_rwlocktype_write);
-
-	return result;
-}
-
-isc_result_t
-zr_flush_all_caches(zone_register_t *zr) {
-	dns_rbtnodechain_t chain;
-	isc_result_t result;
-
-	dns_rbtnodechain_init(&chain, zr->mctx);
-	RWLOCK(&zr->rwlock, isc_rwlocktype_write);
-
-	result = dns_rbtnodechain_first(&chain, zr->rbt, NULL, NULL);
-	while (result == DNS_R_NEWORIGIN || result == ISC_R_SUCCESS) {
-		dns_rbtnode_t *node = NULL;
-		ldap_cache_t *cache;
-
-		CHECK(dns_rbtnodechain_current(&chain, NULL, NULL, &node));
-		if (node->data != NULL) { /* skip auxiliary RBT nodes */
-			cache = ((zone_info_t *)(node->data))->cache;
-			CHECK(flush_ldap_cache(cache));
-		}
-		result = dns_rbtnodechain_next(&chain, NULL, NULL);
-	}
-
-cleanup:
-	RWUNLOCK(&zr->rwlock, isc_rwlocktype_write);
-	if (result == ISC_R_NOMORE || result == ISC_R_NOTFOUND)
-		result = ISC_R_SUCCESS;
-
-	return result;
-}
-
-isc_result_t
-zr_get_zone_cache(zone_register_t *zr, dns_name_t *name, ldap_cache_t **cachep) {
-	isc_result_t result;
-	void *zinfo = NULL;
-
-	REQUIRE(zr != NULL);
-	REQUIRE(name != NULL);
-	REQUIRE(cachep != NULL && *cachep == NULL);
-
-	if (!dns_name_isabsolute(name)) {
-		log_bug("trying to find zone with a relative name");
-		return ISC_R_FAILURE;
-	}
-
-	RWLOCK(&zr->rwlock, isc_rwlocktype_read);
-
-	result = dns_rbt_findname(zr->rbt, name, 0, NULL, &zinfo);
-	if (result == DNS_R_PARTIALMATCH)
-		result = ISC_R_SUCCESS;
-	if (result == ISC_R_SUCCESS)
-		*cachep = ((zone_info_t *)zinfo)->cache;
-
-	RWUNLOCK(&zr->rwlock, isc_rwlocktype_read);
 
 	return result;
 }

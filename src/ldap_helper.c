@@ -68,7 +68,6 @@
 
 #include "acl.h"
 #include "krb5_helper.h"
-#include "cache.h"
 #include "ldap_convert.h"
 #include "ldap_driver.h"
 #include "ldap_entry.h"
@@ -1411,7 +1410,6 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	isc_task_t *task = inst->task;
 	ldapdb_rdatalist_t rdatalist;
 	isc_boolean_t zone_dynamic = ISC_FALSE;
-	ldap_cache_t *cache = NULL;
 	settings_set_t *zone_settings = NULL;
 	const char *fake_mname = NULL;
 	isc_boolean_t serial_autoincrement;
@@ -1442,13 +1440,6 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	RUNTIME_CHECK(result == ISC_R_SUCCESS || result == ISC_R_LOCKBUSY);
 	if (result == ISC_R_SUCCESS)
 		unlock = ISC_TRUE;
-
-	/* cache will not exist before zone load */
-	result = zr_get_zone_cache(inst->zone_register, &name, &cache);
-	if (result == ISC_R_SUCCESS)
-		CHECK(discard_from_cache(cache, &name));
-	else if (result != ISC_R_NOTFOUND)
-		goto cleanup;
 
 	/*
 	 * TODO: Remove this hack, most probably before Fedora 20.
@@ -1819,22 +1810,13 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 	ldap_qresult_t *ldap_qresult = NULL;
 	ldap_entry_t *entry;
 	ld_string_t *string = NULL;
-	ldap_cache_t *cache = NULL;
 	const char *fake_mname = NULL;
 
 	REQUIRE(ldap_inst != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(rdatalist != NULL);
 
-	/* Check if RRs are in the cache */
-	CHECK(zr_get_zone_cache(ldap_inst->zone_register, name, &cache));
-	result = ldap_cache_getrdatalist(mctx, cache, name, rdatalist);
-	if (result == ISC_R_SUCCESS)
-		return ISC_R_SUCCESS;
-	else if (result != ISC_R_NOTFOUND)
-		return result;
-
-	/* RRs aren't in the cache, perform ordinary LDAP query */
+	/* Perform ordinary LDAP query */
 	INIT_LIST(*rdatalist);
 	CHECK(str_new(mctx, &string));
 	CHECK(dnsname_to_dn(ldap_inst->zone_register, name, string));
@@ -1856,11 +1838,7 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 					 rdatalist));
 	}
 
-	if (!EMPTY(*rdatalist)) {
-		/* Cache RRs */
-		CHECK(ldap_cache_addrdatalist(cache, name, rdatalist));
-		/* result = ISC_R_SUCCESS; - Performed by above call */
-	} else
+	if (EMPTY(*rdatalist))
 		result = ISC_R_NOTFOUND;
 
 cleanup:
@@ -3029,7 +3007,6 @@ ldap_sync_ptr(ldap_instance_t *ldap_inst, dns_name_t *a_name,
 	LDAPMod *change[2] = { NULL };
 
 	dns_name_t zone_name;
-	ldap_cache_t *zone_cache = NULL;
 	settings_set_t *zone_settings = NULL;
 	isc_boolean_t zone_dyn_update;
 
@@ -3096,9 +3073,6 @@ ldap_sync_ptr(ldap_instance_t *ldap_inst, dns_name_t *a_name,
 	/* Modify PTR record. */
 	CHECK(ldap_modify_do(ldap_inst, str_buf(ptr_dn),
 			     change, delete_node));
-	CHECK(zr_get_zone_cache(ldap_inst->zone_register,
-				dns_fixedname_name(&ptr_name), &zone_cache));
-	CHECK(discard_from_cache(zone_cache, dns_fixedname_name(&ptr_name)));
 
 cleanup:
 	if (dns_name_dynamic(&zone_name))
@@ -3120,7 +3094,6 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 	isc_mem_t *mctx = ldap_inst->mctx;
 	ld_string_t *owner_dn = NULL;
 	LDAPMod *change[3] = { NULL };
-	ldap_cache_t *cache = NULL;
 	isc_boolean_t zone_sync_ptr;
 	char **vals = NULL;
 	dns_name_t zone_name;
@@ -3157,10 +3130,6 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 
 	if (rdlist->type == dns_rdatatype_soa && mod_op == LDAP_MOD_DELETE)
 		CLEANUP_WITH(ISC_R_SUCCESS);
-
-	/* Flush modified record from the cache */
-	CHECK(zr_get_zone_cache(ldap_inst->zone_register, owner, &cache));
-	CHECK(discard_from_cache(cache, owner));
 
 	if (rdlist->type == dns_rdatatype_soa) {
 		result = modify_soa_record(ldap_inst, str_buf(owner_dn),
@@ -3504,7 +3473,6 @@ update_record(isc_task_t *task, isc_event_t *event)
 	ldap_syncreplevent_t *pevent = (ldap_syncreplevent_t *)event;
 	isc_result_t result;
 	ldap_instance_t *inst = NULL;
-	ldap_cache_t *cache = NULL;
 	isc_boolean_t serial_autoincrement;
 	isc_mem_t *mctx;
 	dns_zone_t *zone_ptr = NULL;
@@ -3562,11 +3530,6 @@ update_restart:
 		          pevent->dn);
 	}
 
-	/* Get cache instance & clean old record */
-	cache = NULL;
-	CHECK(zr_get_zone_cache(inst->zone_register, &name, &cache));
-	CHECK(discard_from_cache(cache, &name));
-
 	/* TODO: double check correctness before replacing ldap_query() with
 	 *       data from *event */
 	/* This code is disabled because we don't have UUID->DN database yet.
@@ -3577,20 +3540,18 @@ update_restart:
 			log_debug(5, "syncrepl_update: removing name from cache, dn: '%s'",
 					  pevent->prevdn);
 			cache = NULL;
-//
- * Remove old name!
 			zone = NULL;
 			rbtdb = NULL;
 			CHECK(zr_get_zone_ptr(inst->zone_register, &prevname, &zone));
 			result = dns_zone_getdb(zone, &rbtdb);
 			REQUIRE(result == ISC_R_SUCCESS);
-//
 
 			result = zr_get_zone_cache(inst->zone_register, &prevname, &cache);
 			if (result == ISC_R_SUCCESS)
 				CHECK(discard_from_cache(cache, &prevname));
 			else if (result != ISC_R_NOTFOUND)
 				goto cleanup;
+
 		} else {
 			log_debug(5, "syncrepl_update: old name wasn't managed "
 					"by plugin, dn '%s'", pevent->prevdn);
@@ -3639,11 +3600,6 @@ update_restart:
 		}
 
 		dns_db_closeversion(rbtdb, &version, ISC_TRUE);
-
-		/*
-		 * The cache is updated in ldapdb_rdatalist_get(...):
-		 * CHECK(ldap_cache_addrdatalist(cache, &name, &rdatalist);
-		 */
 	}
 
 	/* Check if the zone is loaded or not.

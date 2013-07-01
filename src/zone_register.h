@@ -21,7 +21,6 @@
 #ifndef _LD_ZONE_REGISTER_H_
 #define _LD_ZONE_REGISTER_H_
 
-#include "cache.h"
 #include "settings.h"
 #include "rbt_helper.h"
 #include "ldap_helper.h"
@@ -40,12 +39,6 @@ zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn) ATTR_NONNULLS
 
 isc_result_t
 zr_del_zone(zone_register_t *zr, dns_name_t *origin) ATTR_NONNULLS;
-
-isc_result_t
-zr_flush_all_caches(zone_register_t *zr) ATTR_NONNULLS;
-
-isc_result_t
-zr_get_zone_cache(zone_register_t *zr, dns_name_t *name, ldap_cache_t **cachep) ATTR_NONNULLS;
 
 isc_result_t
 zr_get_zone_dbs(zone_register_t *zr, dns_name_t *name, dns_db_t **ldapdbp,
