@@ -5,6 +5,7 @@ AM_INIT_AUTOMAKE([-Wall foreign dist-bzip2])
 
 AC_CONFIG_SRCDIR([src/zone_manager.h])
 AC_CONFIG_HEADERS([config.h])
+AC_CONFIG_MACRO_DIR([m4])
 
 # Disable static libraries
 AC_DISABLE_STATIC
