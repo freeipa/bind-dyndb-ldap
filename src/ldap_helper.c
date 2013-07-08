@@ -3709,10 +3709,12 @@ soa_serial_increment(isc_mem_t *mctx, ldap_instance_t *inst,
 	CHECK(ldap_get_zone_serial(inst, zone_name, &new_serial));
 
 cleanup:
-	if (result != ISC_R_SUCCESS ||
-	    isc_serial_gt(new_serial, old_serial) != ISC_TRUE)
-		log_error("SOA serial number incrementation failed in zone '%s'",
-				zone_dn_char);
+	if (result == ISC_R_SUCCESS &&
+	    isc_serial_gt(new_serial, old_serial) == ISC_FALSE)
+		result = DNS_R_UNCHANGED;
+	if (result != ISC_R_SUCCESS)
+		log_error_r("SOA serial number incrementation failed in zone "
+			    "'%s'", zone_dn_char);
 
 	str_destroy(&zone_dn);
 	ldapdb_rdatalist_destroy(mctx, &rdatalist);
