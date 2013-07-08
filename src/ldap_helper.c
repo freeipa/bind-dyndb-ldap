@@ -3473,6 +3473,7 @@ cleanup:
 	ldap_pool_destroy(&pool);
 	return result;
 }
+
 static void
 ldap_pool_destroy(ldap_pool_t **poolp)
 {
@@ -3486,14 +3487,16 @@ ldap_pool_destroy(ldap_pool_t **poolp)
 	if (pool == NULL)
 		return;
 
-	for (i = 0; i < pool->connections; i++) {
-		ldap_conn = pool->conns[i];
-		if (ldap_conn != NULL)
-			destroy_ldap_connection(&ldap_conn);
-	}
+	if (pool->conns != NULL) {
+		for (i = 0; i < pool->connections; i++) {
+			ldap_conn = pool->conns[i];
+			if (ldap_conn != NULL)
+				destroy_ldap_connection(&ldap_conn);
+		}
 
-	SAFE_MEM_PUT(pool->mctx, pool->conns,
-		     pool->connections * sizeof(ldap_connection_t *));
+		SAFE_MEM_PUT(pool->mctx, pool->conns,
+			     pool->connections * sizeof(ldap_connection_t *));
+	}
 
 	semaphore_destroy(&pool->conn_semaphore);
 
