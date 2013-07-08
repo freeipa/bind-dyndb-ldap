@@ -3513,6 +3513,9 @@ ldap_pool_getconnection(ldap_pool_t *pool, ldap_connection_t ** conn)
 	ldap_conn = *conn;
 
 	CHECK(semaphore_wait_timed(&pool->conn_semaphore));
+	/* Following assertion is necessary to convince clang static analyzer
+	 * that the loop is always entered. */
+	REQUIRE(pool->connections > 0);
 	for (i = 0; i < pool->connections; i++) {
 		ldap_conn = pool->conns[i];
 		if (isc_mutex_trylock(&ldap_conn->lock) == ISC_R_SUCCESS)
