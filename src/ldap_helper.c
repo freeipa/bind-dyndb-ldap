@@ -1632,6 +1632,7 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
 	dns_rbt_t *forward_rbt = NULL; /** < Forward zones only */
 	isc_boolean_t psearch;
 	const char *base = NULL;
+	rbt_iterator_t *iter = NULL;
 	char *config_attrs[] = {
 		"idnsForwardPolicy", "idnsForwarders", 
 		"idnsAllowSyncPTR", "idnsZoneRefresh",
@@ -1729,7 +1730,6 @@ refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
 
 	/* Walk through master zone register and remove all zones which
 	 * disappeared from LDAP. */
-	rbt_iterator_t *iter = NULL;
 	char name_txt[DNS_NAME_FORMATSIZE];
 	DECLARE_BUFFERED_NAME(registered_name);
 	DECLARE_BUFFERED_NAME(ldap_name);
