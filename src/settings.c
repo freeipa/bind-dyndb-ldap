@@ -63,7 +63,7 @@ static const setting_t settings_default[] = {
 	{ "sasl_password",		default_string("")		},
 	{ "krb5_keytab",		default_string("")		},
 	{ "fake_mname",			default_string("")		},
-	{ "psearch",			default_boolean(ISC_FALSE)	},
+	{ "psearch",			default_boolean(ISC_TRUE)	},
 	{ "ldap_hostname",		default_string("")		},
 	{ "sync_ptr",			default_boolean(ISC_FALSE)	},
 	{ "dyn_update",			default_boolean(ISC_FALSE)	},

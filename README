@@ -217,13 +217,13 @@ fake_mname (default "")
 	one LDAP database and every BIND reports itself as a primary master in
 	SOA record, for example.
 
-psearch (default no)
-	! Persistent search will be mandatory in future releases. !
+psearch (default yes)
+	! Persistent search will be replaced with RFC 4533 in future releases. !
 	Set this option to "yes" if you would like to use persistent search
 	query for zone records and global settings. When server supports
 	persistent search your zones and configuration will be automatically 
-	update when they change in LDAP.
-	Enabling psearch disables zone_refresh.
+	updated when they change in LDAP.
+	Persistent search conflicts with zone_refresh.
 
 reconnect_interval (default 60)
 	Time (in seconds) after that the plugin should try to connect to LDAP 
