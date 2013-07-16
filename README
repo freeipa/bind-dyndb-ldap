@@ -191,6 +191,7 @@ krb5_principal
 	is loaded from file specified in "krb5_keytab" option.
 
 cache_ttl (default 120)
+	! This option is DEPRECATED and will be removed in the future. !
 	This is the number of seconds to keep DNS records that we get
 	from the LDAP server in an internal cache. To disable the
 	caching completely, set this to 0. If your LDAP server is under
