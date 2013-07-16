@@ -1,3 +1,13 @@
+3.5
+=====
+[1] Crash triggered by zone_refresh with broken connection to LDAP was fixed.
+
+[2] Code was changed to not trigger false positives in Clang static analyzer.
+
+[3] Persistent search is enabled by default.
+
+[4] Options cache_ttl, psearch and zone_refresh were formally deprecated.
+
 3.4
 =====
 [1] Crash during BIND shutdown caused by race condition in update processing
