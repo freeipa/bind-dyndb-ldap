@@ -394,6 +394,11 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 		log_info("configuration without persistent search is deprecated "
 			 "and the support for zone_refresh will be removed "
 			 "in the future");
+	else
+		log_info("persistent search will be replaced with RFC 4533 "
+			 "and options cache_ttl, psearch and zone_refresh will "
+			 "be removed in the future; please prepare your LDAP "
+			 "server");
 
 	CHECK(setting_get_bool("serial_autoincrement", set, &serial_autoincrement));
 	if (serial_autoincrement && !psearch) {
