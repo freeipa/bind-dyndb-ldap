@@ -211,7 +211,7 @@ create_zone_info(isc_mem_t *mctx, dns_zone_t *zone, const char *dn,
 	CHECKED_MEM_GET_PTR(mctx, zinfo);
 	ZERO_PTR(zinfo);
 	CHECKED_MEM_STRDUP(mctx, dn, zinfo->dn);
-	CHECK(new_ldap_cache(mctx, global_settings, &zinfo->cache));
+	CHECK(new_ldap_cache(mctx, &zinfo->cache));
 	dns_zone_attach(zone, &zinfo->zone);
 	zinfo->settings = NULL;
 	isc_string_printf_truncate(settings_name, PRINT_BUFF_SIZE,

@@ -31,7 +31,7 @@ typedef struct ldap_cache ldap_cache_t;
  * Create a new cache.
  */
 isc_result_t
-new_ldap_cache(isc_mem_t *mctx, settings_set_t *set, ldap_cache_t **cachep) ATTR_NONNULLS;
+new_ldap_cache(isc_mem_t *mctx, ldap_cache_t **cachep) ATTR_NONNULLS;
 
 /*
  * Free all resources used up by the cache.
@@ -64,12 +64,6 @@ ldap_cache_addrdatalist(ldap_cache_t *cache, dns_name_t *name,
  */
 isc_result_t
 ldap_cache_deletename(ldap_cache_t *cache, dns_name_t *name) ATTR_NONNULLS;
-
-/*
- * Returns ISC_TRUE when cache is enabled.
- */
-isc_boolean_t
-ldap_cache_enabled(ldap_cache_t *cache) ATTR_NONNULLS;
 
 /*
  * Discard 'name' from the cache. If caching is not really turned on or 'name'

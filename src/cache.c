@@ -41,9 +41,6 @@ struct ldap_cache {
 	isc_mutex_t	mutex; /* TODO: RWLOCK? */
 	isc_mem_t	*mctx;
 	dns_rbt_t	*rbt;
-	/* Values for "fast path" - copied from settings_set_t structure. */
-	isc_interval_t	cache_ttl;
-	isc_boolean_t	psearch;
 };
 
 typedef struct {
@@ -78,10 +75,6 @@ cache_node_create(ldap_cache_t *cache, cache_node_t **nodep)
 	ZERO_PTR(node);
 	isc_mem_attach(cache->mctx, &node->mctx);
 	ZERO_PTR(&node->rdatalist);
-	/* Do not set the ttl when psearch is enabled. */
-	if (cache->psearch == ISC_FALSE)
-		CHECK(isc_time_nowplusinterval(&node->valid_until,
-					       &cache->cache_ttl));
 
 	*nodep = node;
 	return ISC_R_SUCCESS;
@@ -93,11 +86,10 @@ cleanup:
 }
 
 isc_result_t
-new_ldap_cache(isc_mem_t *mctx, settings_set_t *set, ldap_cache_t **cachep)
+new_ldap_cache(isc_mem_t *mctx, ldap_cache_t **cachep)
 {
 	isc_result_t result;
 	ldap_cache_t *cache = NULL;
-	isc_uint32_t cache_ttl_int;
 
 	REQUIRE(cachep != NULL && *cachep == NULL);
 
@@ -105,14 +97,9 @@ new_ldap_cache(isc_mem_t *mctx, settings_set_t *set, ldap_cache_t **cachep)
 	ZERO_PTR(cache);
 	isc_mem_attach(mctx, &cache->mctx);
 
-	CHECK(setting_get_bool("psearch", set, &cache->psearch));
-	CHECK(setting_get_uint("cache_ttl", set, &cache_ttl_int));
-	isc_interval_set(&cache->cache_ttl, cache_ttl_int, 0);
-	if (cache_ttl_int) {
-		CHECK(dns_rbt_create(mctx, cache_node_deleter, NULL,
-				     &cache->rbt));
-		CHECK(isc_mutex_init(&cache->mutex));
-	}
+	CHECK(dns_rbt_create(mctx, cache_node_deleter, NULL,
+			     &cache->rbt));
+	CHECK(isc_mutex_init(&cache->mutex));
 
 	*cachep = cache;
 	return ISC_R_SUCCESS;
@@ -167,28 +154,13 @@ ldap_cache_getrdatalist(isc_mem_t *mctx, ldap_cache_t *cache,
 	isc_result_t result;
 	ldapdb_rdatalist_t rdlist;
 	cache_node_t *node = NULL;
-	isc_time_t now;
 
 	REQUIRE(cache != NULL);
-
-	/* Return NOTFOUND if caching is disabled */
-	if (!ldap_cache_enabled(cache))
-		return ISC_R_NOTFOUND;
 
 	LOCK(&cache->mutex);
 	result = dns_rbt_findname(cache->rbt, name, 0, NULL, (void *)&node);
 	switch (result) {
 	case ISC_R_SUCCESS:
-		/* Check cache TTL only when psearch is disabled. */
-		if (!cache->psearch) {
-			CHECK(isc_time_now(&now));
-			if (isc_time_compare(&now, &node->valid_until) > 0) {
-				/* Delete expired records and treat them as NOTFOUND */
-				CHECK(dns_rbt_deletename(cache->rbt, name, ISC_FALSE));
-				result = ISC_R_NOTFOUND;
-				goto cleanup;
-			}
-		}
 		rdlist = node->rdatalist;
 		CHECK(ldap_rdatalist_copy(mctx, rdlist, rdatalist));
 		INSIST(!EMPTY(*rdatalist)); /* Empty rdatalist indicates a bug */
@@ -216,12 +188,6 @@ cleanup:
 	return result;
 }
 
-isc_boolean_t
-ldap_cache_enabled(ldap_cache_t *cache)
-{
-	return (cache->rbt != NULL) ? ISC_TRUE : ISC_FALSE;
-}
-
 /**
 * @brief Insert rdatalist to the cache.
 *
@@ -245,9 +211,6 @@ ldap_cache_addrdatalist(ldap_cache_t *cache, dns_name_t *name,
 
 	REQUIRE(cache != NULL);
 	REQUIRE(rdatalist != NULL && !EMPTY(*rdatalist));
-
-	if (!ldap_cache_enabled(cache))
-		return ISC_R_SUCCESS; /* Caching is disabled */
 
 	CHECK(cache_node_create(cache, &node));
 	CHECK(ldap_rdatalist_copy(cache->mctx, *rdatalist, &node->rdatalist));
@@ -309,13 +272,9 @@ flush_ldap_cache(ldap_cache_t *cache)
 	REQUIRE(cache != NULL);
 
 	LOCK(&cache->mutex);
-	if (!ldap_cache_enabled(cache)) {
-		result = ISC_R_SUCCESS;
-	} else {
-		dns_rbt_destroy(&cache->rbt);
-		CHECK(dns_rbt_create(cache->mctx, cache_node_deleter, NULL,
-				&cache->rbt));
-	}
+	dns_rbt_destroy(&cache->rbt);
+	CHECK(dns_rbt_create(cache->mctx, cache_node_deleter, NULL,
+			&cache->rbt));
 
 cleanup:
 	if (result != ISC_R_SUCCESS)

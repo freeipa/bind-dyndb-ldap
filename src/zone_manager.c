@@ -108,8 +108,6 @@ destroy_db_instance(db_instance_t **db_instp)
 	*db_instp = NULL;
 }
 
-static void refresh_zones_action(isc_task_t *task, isc_event_t *event);
-
 isc_result_t
 manager_create_db_instance(isc_mem_t *mctx, const char *name,
 			   const char * const *argv,
@@ -117,11 +115,6 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 {
 	isc_result_t result;
 	db_instance_t *db_inst = NULL;
-	isc_uint32_t zone_refresh;
-	isc_boolean_t psearch;
-	isc_timermgr_t *timer_mgr;
-	isc_interval_t interval;
-	isc_timertype_t timer_type = isc_timertype_inactive;
 	isc_task_t *task;
 	settings_set_t *local_settings = NULL;
 
@@ -146,57 +139,13 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 	CHECK(new_ldap_instance(mctx, db_inst->name, argv, dyndb_args, task,
 				&db_inst->ldap_inst));
 
-	/* Add a timer to periodically refresh the zones. Create inactive timer if
-	 * zone refresh is disabled. (For simplifying configuration change.)
-	 *
-	 * Timer must exist before refresh_zones_from_ldap() is called. */
-	timer_mgr = dns_dyndb_get_timermgr(dyndb_args);
-
 	local_settings = ldap_instance_getsettings_local(db_inst->ldap_inst);
-	CHECK(setting_get_uint("zone_refresh", local_settings, &zone_refresh));
-	CHECK(setting_get_bool("psearch", local_settings, &psearch));
 	CHECK(setting_get_bool("verbose_checks", local_settings, &verbose_checks));
-
-	isc_interval_set(&interval, zone_refresh, 0);
-
-	if (zone_refresh && !psearch) {
-		timer_type = isc_timertype_ticker;
-	} else {
-		timer_type = isc_timertype_inactive;
-	}
-
-	CHECK(isc_timer_create(timer_mgr, timer_type, NULL,
-					   &interval, task, refresh_zones_action,
-					   db_inst, &db_inst->timer));
 
 	/* instance must be in list while calling refresh_zones_from_ldap() */
 	LOCK(&instance_list_lock);
 	APPEND(instance_list, db_inst, link);
 	UNLOCK(&instance_list_lock);
-
-	result = refresh_zones_from_ldap(db_inst->ldap_inst, ISC_FALSE);
-	if (result != ISC_R_SUCCESS) {
-		/* In case we don't find any zones, we at least return
-		 * ISC_R_SUCCESS so BIND won't exit because of this. */
-		log_error_r("no valid zones found in LDAP");
-		/*
-		 * Do not jump to cleanup. Rather start timer for zone refresh.
-		 * This is just a workaround when the LDAP server is not available
-		 * during the initialization process.
-		 *
-		 * If no period is set (i.e. refresh is disabled in config), use 30 sec.
-		 * Timer is already started for cases where period != 0.
-		 */
-		if (!zone_refresh) { /* Enforce zone refresh in emergency situation. */
-			isc_interval_set(&interval, 30, 0);
-			result = isc_timer_reset(db_inst->timer, isc_timertype_ticker, NULL,
-						&interval, ISC_TRUE);
-			if (result != ISC_R_SUCCESS) {
-					log_error("Could not adjust ZoneRefresh timer while init");
-					goto cleanup;
-			}
-		}
-	}
 
 	return ISC_R_SUCCESS;
 
@@ -205,18 +154,6 @@ cleanup:
 		destroy_db_instance(&db_inst);
 
 	return result;
-}
-
-static void ATTR_NONNULL(2)
-refresh_zones_action(isc_task_t *task, isc_event_t *event)
-{
-	db_instance_t *db_inst = event->ev_arg;
-
-	UNUSED(task);
-
-	refresh_zones_from_ldap(db_inst->ldap_inst, ISC_FALSE);
-
-	isc_event_free(&event);
 }
 
 isc_result_t

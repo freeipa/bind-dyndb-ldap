@@ -242,7 +242,7 @@ static const setting_t settings_local_default[] = {
 	{ "connections",		no_default_uint		},
 	{ "reconnect_interval",		no_default_uint		},
 	{ "timeout",			no_default_uint		},
-	{ "cache_ttl",			no_default_uint		},
+	{ "cache_ttl",			no_default_string	}, /* No longer supported */
 	{ "base",			no_default_string	},
 	{ "auth_method",		no_default_string	},
 	{ "auth_method_enum",		no_default_uint		},
@@ -256,8 +256,8 @@ static const setting_t settings_local_default[] = {
 	{ "sasl_password",		no_default_string	},
 	{ "krb5_keytab",		no_default_string	},
 	{ "fake_mname",			no_default_string	},
-	{ "zone_refresh",		no_default_uint		},
-	{ "psearch",			no_default_boolean	},
+	{ "zone_refresh",		no_default_string	}, /* No longer supported */
+	{ "psearch",			no_default_string	}, /* No longer supported */
 	{ "ldap_hostname",		no_default_string	},
 	{ "sync_ptr",			no_default_boolean	},
 	{ "dyn_update",			no_default_boolean	},
@@ -270,8 +270,6 @@ static const setting_t settings_local_default[] = {
 static setting_t settings_global_default[] = {
 	{ "dyn_update",		no_default_boolean	},
 	{ "sync_ptr",		no_default_boolean	},
-	{ "zone_refresh",	no_default_uint		},
-/*	{ "psearch",		no_default_boolean	}, unsupported */
 	end_of_settings
 };
 
@@ -357,8 +355,6 @@ isc_result_t
 validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 	isc_result_t result;
 
-	isc_boolean_t psearch;
-	isc_boolean_t serial_autoincrement;
 	isc_uint32_t uint;
 	const char *sasl_mech = NULL;
 	const char *sasl_user = NULL;
@@ -369,6 +365,11 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 	const char *password = NULL;
 	ld_string_t *buff = NULL;
 
+	/* handle cache_ttl, psearch and zone_refresh in special way */
+	const char *obsolete_value = NULL;
+	char *obsolete_options[] = {"cache_ttl", "psearch", "zone_refresh",
+				    NULL};
+
 	char print_buff[PRINT_BUFF_SIZE];
 	const char *auth_method_str = NULL;
 	ldap_auth_t auth_method_enum = AUTH_INVALID;
@@ -378,40 +379,11 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 	if (semaphore_wait_timeout.seconds < uint*SEM_WAIT_TIMEOUT_MUL)
 		semaphore_wait_timeout.seconds = uint*SEM_WAIT_TIMEOUT_MUL;
 
-	CHECK(setting_get_bool("psearch", set, &psearch));
 	CHECK(setting_get_uint("connections", set, &uint));
-	if (!psearch && uint < 1) {
-		log_error("zone refresh mode requires one connection at least");
-		CLEANUP_WITH(ISC_R_RANGE);
-	}
-	else if (psearch && uint < 2) {
-		log_error("persistent search mode requires two connections "
-			  "at least");
+	if (uint < 2) {
+		log_error("at least two connections are required");
 		/* watcher needs one and update_*() requests second connection */
 		CLEANUP_WITH(ISC_R_RANGE);
-	}
-	if (!psearch)
-		log_info("configuration without persistent search is deprecated "
-			 "and the support for zone_refresh will be removed "
-			 "in the future");
-	else
-		log_info("persistent search will be replaced with RFC 4533 "
-			 "and options cache_ttl, psearch and zone_refresh will "
-			 "be removed in the future; please prepare your LDAP "
-			 "server");
-
-	CHECK(setting_get_bool("serial_autoincrement", set, &serial_autoincrement));
-	if (serial_autoincrement && !psearch) {
-		log_error("SOA serial number auto-increment feature requires "
-			  "persistent search");
-		CLEANUP_WITH(ISC_R_FAILURE);
-	}
-
-	CHECK(setting_get_uint("zone_refresh", set, &uint));
-	if (uint != 0 && psearch) {
-		log_error("zone refresh and persistent search "
-			  "cannot be enabled at same time");
-		CLEANUP_WITH(ISC_R_FAILURE);
 	}
 
 	/* Select authentication method. */
@@ -499,6 +471,12 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 			 "are untested; expect problems");
 	}
 
+	for (char **option = obsolete_options; *option != NULL; option++) {
+		CHECK(setting_get_str(*option, set, &obsolete_value));
+		if (memcmp("", obsolete_value, 1) != 0)
+			log_error("option '%s' is not supported, ignoring", *option);
+	}
+
 	if (settings_set_isfilled(set) != ISC_TRUE)
 		result = ISC_R_FAILURE;
 
@@ -521,7 +499,6 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	ldap_instance_t *ldap_inst;
 	dns_view_t *view = NULL;
 	dns_forwarders_t *orig_global_forwarders = NULL;
-	isc_boolean_t psearch;
 	isc_uint32_t connections;
 	char settings_name[PRINT_BUFF_SIZE];
 
@@ -558,7 +535,6 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	if (settings_set_isfilled(ldap_inst->global_settings) != ISC_TRUE)
 		CLEANUP_WITH(ISC_R_FAILURE);
 
-	CHECK(setting_get_bool("psearch", ldap_inst->local_settings, &psearch));
 	CHECK(setting_get_uint("connections", ldap_inst->local_settings, &connections));
 
 	CHECK(zr_create(mctx, ldap_inst, ldap_inst->global_settings,
@@ -596,14 +572,12 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	CHECK(ldap_pool_create(mctx, connections, &ldap_inst->pool));
 	CHECK(ldap_pool_connect(ldap_inst->pool, ldap_inst));
 
-	if (psearch) {
-		/* Start the watcher thread */
-		result = isc_thread_create(ldap_psearch_watcher, ldap_inst,
-					   &ldap_inst->watcher);
-		if (result != ISC_R_SUCCESS) {
-			log_error("Failed to create psearch watcher thread");
-			goto cleanup;
-		}
+	/* Start the watcher thread */
+	result = isc_thread_create(ldap_psearch_watcher, ldap_inst,
+				   &ldap_inst->watcher);
+	if (result != ISC_R_SUCCESS) {
+		log_error("Failed to create psearch watcher thread");
+		goto cleanup;
 	}
 
 cleanup:
@@ -1294,10 +1268,6 @@ static isc_result_t ATTR_NONNULLS
 ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst)
 {
 	isc_result_t result;
-	isc_timer_t *timer_inst;
-	isc_interval_t timer_interval;
-	isc_uint32_t interval_sec;
-	isc_timertype_t timer_type;
 
 	/* BIND functions are thread safe, ldap instance 'inst' is locked
 	 * inside setting* functions. */
@@ -1323,28 +1293,6 @@ ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst)
 						entry, inst->task);
 	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
 		goto cleanup;
-
-	result = setting_update_from_ldap_entry("zone_refresh",
-						inst->global_settings,
-						"idnsZoneRefresh",
-						entry, inst->task);
-	if (result == ISC_R_SUCCESS) {
-		RUNTIME_CHECK(manager_get_db_timer(inst->db_name, &timer_inst)
-			      == ISC_R_SUCCESS);
-		CHECK(setting_get_uint("zone_refresh", inst->global_settings,
-				       &interval_sec));
-		isc_interval_set(&timer_interval, interval_sec, 0);
-		/* update interval only, not timer type */
-		timer_type = isc_timer_gettype(timer_inst);
-		result = isc_timer_reset(timer_inst, timer_type, NULL,
-				&timer_interval, ISC_TRUE);
-		if (result != ISC_R_SUCCESS) {
-			log_error_r("could not adjust ZoneRefresh timer");
-			goto cleanup;
-		}
-	} else if (result != ISC_R_IGNORE) {
-		goto cleanup;
-	}
 
 cleanup:
 	/* Configuration errors are not fatal. */
@@ -1612,221 +1560,6 @@ cleanup:
 	ldapdb_rdatalist_destroy(inst->mctx, &rdatalist);
 
 	return result;
-}
-
-/*
- * Search in LDAP for zones.
- *
- * @param delete_only Do LDAP vs. zone register cross-check and delete zones
- *                    which aren't in LDAP, but do not load new zones.
- *
- * Returns ISC_R_SUCCESS if we found and successfully added at least one zone.
- * Returns ISC_R_FAILURE otherwise.
- */
-isc_result_t
-refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only)
-{
-	isc_result_t result = ISC_R_SUCCESS;
-	ldap_connection_t *ldap_conn = NULL;
-	ldap_qresult_t *ldap_config_qresult = NULL;
-	ldap_qresult_t *ldap_zones_qresult = NULL;
-	int zone_count = 0;
-	ldap_entryclass_t zone_class;
-	ldap_entry_t *entry;
-	dns_rbt_t *master_rbt = NULL;  /** < Master zones only */
-	dns_rbt_t *forward_rbt = NULL; /** < Forward zones only */
-	isc_boolean_t psearch;
-	const char *base = NULL;
-	rbt_iterator_t *iter = NULL;
-	char *config_attrs[] = {
-		"idnsForwardPolicy", "idnsForwarders", 
-		"idnsAllowSyncPTR", "idnsZoneRefresh",
-		"idnsPersistentSearch", NULL
-	};
-	char *zone_attrs[] = {
-		"idnsName", "idnsUpdatePolicy", "idnsAllowQuery",
-		"idnsAllowTransfer", "idnsForwardPolicy", "idnsForwarders",
-		"idnsAllowDynUpdate", "idnsAllowSyncPTR", "objectClass", NULL
-	};
-
-	REQUIRE(ldap_inst != NULL);
-
-	CHECK(setting_get_bool("psearch", ldap_inst->global_settings,
-			       &psearch));
-	if (psearch && !delete_only) {
-		/* Watcher does the work for us, but deletion is allowed. */
-		return ISC_R_SUCCESS;
-	}
-
-	log_debug(2, "refreshing list of zones for %s", ldap_inst->db_name);
-
-	/* Query for configuration and zones from LDAP and release LDAP connection
-	 * before processing them. It prevents deadlock in situations where
-	 * ldap_parse_zoneentry() requests another connection. */
-	CHECK(setting_get_str("base", ldap_inst->global_settings, &base));
-	CHECK(ldap_pool_getconnection(ldap_inst->pool, &ldap_conn));
-	CHECK(ldap_query(ldap_inst, ldap_conn, &ldap_zones_qresult, base,
-			 LDAP_SCOPE_SUBTREE, zone_attrs, 0,
-			 "(&(idnsZoneActive=TRUE)"
-			 "(|(objectClass=idnsZone)(objectClass=idnsForwardZone)))"));
-
-	/* Do not touch configuration from psearch watcher thread, otherwise
-	 * BIND will crash. The problem is that isc_task_beginexclusive()
-	 * is called before task associated with psearch watcher thread
-	 * is fully initialized. */
-	if (!delete_only)
-		CHECK(ldap_query(ldap_inst, ldap_conn, &ldap_config_qresult,
-				base, LDAP_SCOPE_SUBTREE,
-				config_attrs, 0, "(objectClass=idnsConfigObject)"));
-
-	ldap_pool_putconnection(ldap_inst->pool, &ldap_conn);
-
-	if (!delete_only) {
-		for (entry = HEAD(ldap_config_qresult->ldap_entries);
-		     entry != NULL;
-		     entry = NEXT(entry, link))
-			CHECK(ldap_parse_configentry(entry, ldap_inst));
-	}
-
-	/*
-	 * Create RB-trees with all master and forward zones stored in LDAP
-	 * for cross check with zones registered in plugin.
-	 */
-	CHECK(dns_rbt_create(ldap_inst->mctx, NULL, NULL, &master_rbt));
-	CHECK(dns_rbt_create(ldap_inst->mctx, NULL, NULL, &forward_rbt));
-
-	for (entry = HEAD(ldap_zones_qresult->ldap_entries);
-	     entry != NULL;
-	     entry = NEXT(entry, link)) {
-		if (ldap_entry_getclass(entry, &zone_class) != ISC_R_SUCCESS)
-			continue;
-
-		/* Derive the dns name of the zone from the DN. */
-		dns_name_t name;
-		dns_name_init(&name, NULL);
-		result = dn_to_dnsname(ldap_inst->mctx, entry->dn, &name, NULL);
-		if (result == ISC_R_SUCCESS) {
-			log_debug(5, "Refresh %s", entry->dn);
-			/* Add found zone to RB-tree for later check. */
-			if (zone_class & LDAP_ENTRYCLASS_MASTER)
-				result = dns_rbt_addname(master_rbt, &name, NULL);
-			else if (zone_class & LDAP_ENTRYCLASS_FORWARD)
-				result = dns_rbt_addname(forward_rbt, &name, NULL);
-		}
-		if (dns_name_dynamic(&name))
-			dns_name_free(&name, ldap_inst->mctx);
-
-		if (result != ISC_R_SUCCESS) {
-			log_error("Could not parse zone %s", entry->dn);
-			continue;
-		}
-
-		if (!delete_only) {
-			if (zone_class & LDAP_ENTRYCLASS_MASTER)
-				result = ldap_parse_master_zoneentry(entry, ldap_inst);
-			else if (zone_class & LDAP_ENTRYCLASS_FORWARD)
-				result = ldap_parse_fwd_zoneentry(entry, ldap_inst);
-		}
-		if (result == ISC_R_SUCCESS)
-			zone_count++;
-		else
-			log_error_r("error parsing zone '%s'", entry->dn);
-	}
-
-	/* Walk through master zone register and remove all zones which
-	 * disappeared from LDAP. */
-	char name_txt[DNS_NAME_FORMATSIZE];
-	DECLARE_BUFFERED_NAME(registered_name);
-	DECLARE_BUFFERED_NAME(ldap_name);
-
-	INIT_BUFFERED_NAME(registered_name);
-	result = zr_rbt_iter_init(ldap_inst->zone_register, &iter, &registered_name);
-	while (result == ISC_R_SUCCESS) {
-		void *data = NULL;
-		INIT_BUFFERED_NAME(ldap_name);
-
-		result = dns_rbt_findname(master_rbt, &registered_name,
-					  DNS_RBTFIND_EMPTYDATA,
-					  &ldap_name, &data);
-		if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
-			rbt_iter_stop(&iter);
-			dns_name_format(&registered_name, name_txt, DNS_NAME_FORMATSIZE);
-			log_debug(1, "master zone '%s' is being removed", name_txt);
-			result = ldap_delete_zone2(ldap_inst, &registered_name,
-						   ISC_FALSE, ISC_FALSE);
-			if (result != ISC_R_SUCCESS) {
-				log_error_r("unable to delete master zone '%s'", name_txt);
-			} else {
-				/* Deletion invalidated the chain, restart iteration. */
-				result = zr_rbt_iter_init(ldap_inst->zone_register,
-							  &iter, &registered_name);
-				continue;
-			}
-		} else if (result != ISC_R_SUCCESS) {
-			break;
-		}
-		result = rbt_iter_next(&iter, &registered_name);
-	}
-	if (result != ISC_R_NOTFOUND && result != ISC_R_NOMORE)
-		goto cleanup;
-
-	/* Walk through forward zone register and remove all zones which
-	 * disappeared from LDAP. */
-	INIT_BUFFERED_NAME(registered_name);
-	iter = NULL;
-	result = fwdr_rbt_iter_init(ldap_inst->fwd_register, &iter, &registered_name);
-	while (result == ISC_R_SUCCESS) {
-		void *data = NULL;
-		INIT_BUFFERED_NAME(ldap_name);
-
-		result = dns_rbt_findname(forward_rbt, &registered_name,
-					  DNS_RBTFIND_EMPTYDATA,
-					  &ldap_name, &data);
-		if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
-			rbt_iter_stop(&iter);
-			dns_name_format(&registered_name, name_txt, DNS_NAME_FORMATSIZE);
-			log_debug(1, "forward zone '%s' is being removed", name_txt);
-			result = delete_forwarding_table(ldap_inst, &registered_name,
-							 "forward zone", name_txt);
-			if (result != ISC_R_SUCCESS) {
-				log_error_r("could not remove forwarding for zone '%s': "
-					    "forward register mismatch", name_txt);
-			}
-			result = fwdr_del_zone(ldap_inst->fwd_register, &registered_name);
-			if (result == ISC_R_SUCCESS) {
-				/* Deletion invalidated the chain, restart iteration. */
-				result = fwdr_rbt_iter_init(ldap_inst->fwd_register,
-							    &iter, &registered_name);
-				continue;
-			} else {
-				log_error_r("unable to delete forward zone '%s' "
-					    "from forwarding register", name_txt);
-			}
-		} else if (result != ISC_R_SUCCESS) {
-			break;
-		}
-		result = rbt_iter_next(&iter, &registered_name);
-	}
-	if (result == ISC_R_NOTFOUND || result == ISC_R_NOMORE)
-		goto cleanup;
-
-cleanup:
-	rbt_iter_stop(&iter);
-	if (master_rbt != NULL)
-		dns_rbt_destroy(&master_rbt);
-	if (forward_rbt != NULL)
-		dns_rbt_destroy(&forward_rbt);
-
-	ldap_query_free(ISC_FALSE, &ldap_config_qresult);
-	ldap_query_free(ISC_FALSE, &ldap_zones_qresult);
-	ldap_pool_putconnection(ldap_inst->pool, &ldap_conn);
-
-	log_debug(2, "finished refreshing list of zones");
-
-	if (zone_count > 0)
-		return ISC_R_SUCCESS;
-	else
-		return ISC_R_FAILURE;
 }
 
 static isc_result_t
@@ -4271,8 +4004,6 @@ ldap_psearch_watcher(isc_threadarg_t arg)
 	int ret, cnt;
 	isc_result_t result;
 	sigset_t sigset;
-	isc_boolean_t flush_required;
-	isc_boolean_t psearch;
 	isc_uint32_t reconnect_interval;
 	const char *base = NULL;
 
@@ -4317,33 +4048,29 @@ ldap_psearch_watcher(isc_threadarg_t arg)
 restart:
 	/* Perform initial lookup */
 	ldap_query_free(ISC_TRUE, &ldap_qresult);
-	flush_required = ISC_TRUE;
 	CHECK(setting_get_str("base", inst->global_settings, &base));
-	CHECK(setting_get_bool("psearch", inst->global_settings, &psearch));
-	if (psearch) {
-		log_debug(1, "Sending initial psearch lookup");
-		ret = ldap_search_ext(conn->handle,
-				      base,
-				      LDAP_SCOPE_SUBTREE,
-				      /*    class = record
-				       * OR class = config
-				       * OR class = zone
-				       * OR class = forward
-				       *
-				       * Inactive zones are handled
-				       * in update_zone. */
-				      "(|"
-				      "(objectClass=idnsRecord)"
-				      "(objectClass=idnsConfigObject)"
-				      "(objectClass=idnsZone)"
-				      "(objectClass=idnsForwardZone))",
-				      NULL, 0, conn->serverctrls, NULL, NULL,
-				      LDAP_NO_LIMIT, &conn->msgid);
-		if (ret != LDAP_SUCCESS) {
-			log_error("failed to send initial psearch request");
-			ldap_unbind_ext_s(conn->handle, NULL, NULL);
-			goto cleanup;
-		}
+	log_debug(1, "Sending initial psearch lookup");
+	ret = ldap_search_ext(conn->handle,
+			      base,
+			      LDAP_SCOPE_SUBTREE,
+			      /*    class = record
+			       * OR class = config
+			       * OR class = zone
+			       * OR class = forward
+			       *
+			       * Inactive zones are handled
+			       * in update_zone. */
+			      "(|"
+			      "(objectClass=idnsRecord)"
+			      "(objectClass=idnsConfigObject)"
+			      "(objectClass=idnsZone)"
+			      "(objectClass=idnsForwardZone))",
+			      NULL, 0, conn->serverctrls, NULL, NULL,
+			      LDAP_NO_LIMIT, &conn->msgid);
+	if (ret != LDAP_SUCCESS) {
+		log_error("failed to send initial psearch request");
+		ldap_unbind_ext_s(conn->handle, NULL, NULL);
+		goto cleanup;
 	}
 
 	while (!inst->exiting) {
@@ -4365,33 +4092,6 @@ restart:
 					goto cleanup;
 			}
 			goto restart;
-		} else if (flush_required == ISC_TRUE) {
-			isc_boolean_t restart_needed = ISC_FALSE;
-			/* First LDAP result after (re)start was received successfully:
-			 * Unload old zones and flush record cache.
-			 * We want to save cache in case of search timeout during restart.
-			 */
-			if ((result = refresh_zones_from_ldap(inst, ISC_TRUE))
-			     != ISC_R_SUCCESS) {
-				log_error_r("zone refresh after initial psearch lookup failed");
-				restart_needed = ISC_TRUE;
-			} else if ((result = zr_flush_all_caches(inst->zone_register))
-				    != ISC_R_SUCCESS) {
-				log_error_r("cache flush after initial psearch lookup failed");
-				restart_needed = ISC_TRUE;
-			}
-
-			if (restart_needed) {
-				CHECK(setting_get_uint("reconnect_interval",
-						       inst->global_settings,
-						       &reconnect_interval));
-				if (!sane_sleep(inst, reconnect_interval))
-					goto cleanup;
-
-				goto restart;
-			}
-
-			flush_required = ISC_FALSE;
 		}
 
 		switch (ret) {

@@ -190,23 +190,6 @@ krb5_principal
 	If not set then it is copied from "sasl_user" option. Principal
 	is loaded from file specified in "krb5_keytab" option.
 
-cache_ttl (default 120)
-	! This option is DEPRECATED and will be removed in the future. !
-	This is the number of seconds to keep DNS records that we get
-	from the LDAP server in an internal cache. To disable the
-	caching completely, set this to 0. If your LDAP server is under
-	a heavy load and/or you don't update your records very often, you
-	probably want to set this option on a higher value.
-
-zone_refresh (default 0)
-	! This option is DEPRECATED and will be removed in the future. !
-	Interval (in seconds) of how often the LDAP driver should query the
-	LDAP server for changes in zone settings. If this option is set to 0,
-	the LDAP driver will never refresh the settings.
-	Currently, global settings in idnsConfigObject and zone specific
-	settings in idnsZone attributes are refreshed.
-	Zone refresh and persistent search (psearch) are mutually exclusive.
-
 timeout (default 10)
 	Timeout (in seconds) of the queries to the LDAP server. If the LDAP
 	server don't respond before this timeout then lookup is aborted and
@@ -217,14 +200,6 @@ fake_mname (default "")
 	and use this value instead. This allows multiple BIND processes to share
 	one LDAP database and every BIND reports itself as a primary master in
 	SOA record, for example.
-
-psearch (default yes)
-	! Persistent search will be replaced with RFC 4533 in future releases. !
-	Set this option to "yes" if you would like to use persistent search
-	query for zone records and global settings. When server supports
-	persistent search your zones and configuration will be automatically 
-	updated when they change in LDAP.
-	Persistent search conflicts with zone_refresh.
 
 reconnect_interval (default 60)
 	Time (in seconds) after that the plugin should try to connect to LDAP 
@@ -284,7 +259,6 @@ dynamic-db "my_db_name" {
 	arg "uri ldap://ldap.example.com";
 	arg "base cn=dns, dc=example, dc=com";
 	arg "auth_method none";
-	arg "cache_ttl 300";
 };
 
 With this configuration, the LDAP back-end will try to connect to server
@@ -293,7 +267,7 @@ will then do an LDAP subtree search in the "cn=dns,dc=example,dc=com"
 base for entries with object class idnsZone, for which the
 idnsZoneActive attribute is set to True. For each entry it will find, it
 will register a new zone with BIND. The LDAP back-end will keep each
-record it gets from LDAP in its cache for 5 minutes.
+record it gets from LDAP in its memory.
 
 5.3 Configuration in LDAP
 -------------------------

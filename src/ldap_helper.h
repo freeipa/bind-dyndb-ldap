@@ -82,8 +82,6 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		  const char * const *argv, dns_dyndb_arguments_t *dyndb_args,
 		  isc_task_t *task, ldap_instance_t **ldap_instp) ATTR_NONNULLS;
 void destroy_ldap_instance(ldap_instance_t **ldap_inst) ATTR_NONNULLS;
-isc_result_t
-refresh_zones_from_ldap(ldap_instance_t *ldap_inst, isc_boolean_t delete_only) ATTR_NONNULLS;
 
 isc_result_t
 ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
