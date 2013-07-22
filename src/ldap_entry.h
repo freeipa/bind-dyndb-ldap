@@ -22,6 +22,7 @@
 #ifndef _LD_LDAP_ENTRY_H_
 #define _LD_LDAP_ENTRY_H_
 
+#include <isc/lex.h>
 #include <isc/util.h>
 #include <dns/types.h>
 
@@ -51,6 +52,11 @@ struct ldap_entry {
 	ldap_attribute_t	*lastattr;
 	ldap_attributelist_t	attrs;
 	LINK(ldap_entry_t)	link;
+
+	/* Parsing. */
+	isc_lex_t		*lex;
+	isc_buffer_t		rdata_target;
+	unsigned char		*rdata_target_mem;
 };
 
 /* Represents LDAP attribute and it's values */
@@ -69,6 +75,11 @@ struct ldap_attribute {
 #define LDAP_ENTRYCLASS_FORWARD	0x8
 
 typedef unsigned char		ldap_entryclass_t;
+
+/* Max type length definitions, from lib/dns/master.c */
+#define MINTSIZ (65535 - 12 - 1 - 2 - 2 - 4 - 2)
+#define TOKENSIZ (8*1024)
+
 
 isc_result_t
 ldap_entrylist_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *msg,

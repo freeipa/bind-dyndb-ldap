@@ -198,8 +198,6 @@ ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 	INIT_LIST(entry->attrs);
 	INIT_LINK(entry, link);
 
-	result = ISC_R_SUCCESS;
-
 	for (attribute = ldap_first_attribute(ld, ldap_entry, &ber);
 	     attribute != NULL;
 	     attribute = ldap_next_attribute(ld, ldap_entry, ber)) {
@@ -221,14 +219,21 @@ ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 		CLEANUP_WITH(ISC_R_FAILURE);
 	}
 
+	CHECKED_MEM_GET(mctx, entry->rdata_target_mem, MINTSIZ);
+	CHECK(isc_lex_create(mctx, TOKENSIZ, &entry->lex));
+
 	*entryp = entry;
 
 cleanup:
 	if (ber != NULL)
 		ber_free(ber, 0);
 	if (result != ISC_R_SUCCESS) {
-		if (entry != NULL)
+		if (entry != NULL) {
 			ldap_attributelist_destroy(mctx, &entry->attrs);
+			SAFE_MEM_PUT(mctx, entry->rdata_target_mem, MINTSIZ);
+			if (entry->lex != NULL)
+				isc_lex_destroy(&entry->lex);
+		}
 		SAFE_MEM_PUT_PTR(mctx, entry);
 		SAFE_MEM_PUT_PTR(mctx, attr);
 	}
@@ -248,6 +253,13 @@ ldap_entry_destroy(isc_mem_t *mctx, ldap_entry_t **entryp)
 	ldap_attributelist_destroy(mctx, &entry->attrs);
 	if (entry->dn != NULL)
 		ldap_memfree(entry->dn);
+	if (entry->lex != NULL) {
+		isc_lex_close(entry->lex);
+		isc_lex_destroy(&entry->lex);
+	}
+	if (entry->rdata_target_mem != NULL)
+		isc_mem_put(mctx, entry->rdata_target_mem, MINTSIZ);
+
 	SAFE_MEM_PUT_PTR(mctx, entry);
 
 	*entryp = NULL;
