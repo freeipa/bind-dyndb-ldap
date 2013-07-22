@@ -2159,7 +2159,7 @@ parse_rdata(isc_mem_t *mctx, ldap_entry_t *entry,
 	CHECK(isc_lex_openbuffer(entry->lex, &lex_buffer));
 
 	isc_buffer_init(&entry->rdata_target, entry->rdata_target_mem,
-			MINTSIZ);
+			DNS_RDATA_MAXLENGTH);
 	CHECK(dns_rdata_fromtext(NULL, rdclass, rdtype, entry->lex, origin,
 				 0, mctx, &entry->rdata_target, NULL));
 
@@ -2856,7 +2856,7 @@ ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
 
 	rdata = rdata_head;
 	for (i = 0; i < rdata_count && rdata != NULL; i++) {
-		DECLARE_BUFFER(buffer, MINTSIZ);
+		DECLARE_BUFFER(buffer, DNS_RDATA_MAXLENGTH);
 		isc_region_t region;
 
 		/* Convert rdata to text. */

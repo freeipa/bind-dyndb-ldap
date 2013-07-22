@@ -19,6 +19,7 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
+#include <dns/rdata.h>
 #include <dns/ttl.h>
 #include <dns/types.h>
 
@@ -219,7 +220,7 @@ ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 		CLEANUP_WITH(ISC_R_FAILURE);
 	}
 
-	CHECKED_MEM_GET(mctx, entry->rdata_target_mem, MINTSIZ);
+	CHECKED_MEM_GET(mctx, entry->rdata_target_mem, DNS_RDATA_MAXLENGTH);
 	CHECK(isc_lex_create(mctx, TOKENSIZ, &entry->lex));
 
 	*entryp = entry;
@@ -230,7 +231,8 @@ cleanup:
 	if (result != ISC_R_SUCCESS) {
 		if (entry != NULL) {
 			ldap_attributelist_destroy(mctx, &entry->attrs);
-			SAFE_MEM_PUT(mctx, entry->rdata_target_mem, MINTSIZ);
+			SAFE_MEM_PUT(mctx, entry->rdata_target_mem,
+				     DNS_RDATA_MAXLENGTH);
 			if (entry->lex != NULL)
 				isc_lex_destroy(&entry->lex);
 		}
@@ -258,7 +260,7 @@ ldap_entry_destroy(isc_mem_t *mctx, ldap_entry_t **entryp)
 		isc_lex_destroy(&entry->lex);
 	}
 	if (entry->rdata_target_mem != NULL)
-		isc_mem_put(mctx, entry->rdata_target_mem, MINTSIZ);
+		isc_mem_put(mctx, entry->rdata_target_mem, DNS_RDATA_MAXLENGTH);
 
 	SAFE_MEM_PUT_PTR(mctx, entry);
 

@@ -77,7 +77,6 @@ struct ldap_attribute {
 typedef unsigned char		ldap_entryclass_t;
 
 /* Max type length definitions, from lib/dns/master.c */
-#define MINTSIZ (65535 - 12 - 1 - 2 - 2 - 4 - 2)
 #define TOKENSIZ (8*1024)
 
 
