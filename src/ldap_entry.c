@@ -248,9 +248,11 @@ ldap_entry_destroy(isc_mem_t *mctx, ldap_entry_t **entryp)
 {
 	ldap_entry_t *entry;
 
-	REQUIRE(entryp != NULL && *entryp != NULL);
+	REQUIRE(entryp != NULL);
 
 	entry = *entryp;
+	if (entry == NULL)
+		return;
 
 	ldap_attributelist_destroy(mctx, &entry->attrs);
 	if (entry->dn != NULL)
@@ -451,22 +453,6 @@ ldap_entry_getclass(ldap_entry_t *entry, ldap_entryclass_t *class)
 
 	*class = entryclass;
 	return ISC_R_SUCCESS;
-
-#if 0
-	/* Preserve current attribute iterator */
-	lastattr = = entry->lastattr;
-	entry->lastattr = NULL;
-
-	while ((attr = ldap_entry_nextattr(entry, "objectClass")) != NULL) {
-		if (!strcasecmp(attr->ldap_values[0], "idnsrecord")) {
-			entryclass |= LDAP_ENTRYCLASS_RR;
-		} else if (!strcasecmp(attr->ldap_values[0], "idnszone")) {
-			entryclass |= LDAP_ENTRYCLASS_ZONE;
-		}
-	}
-
-	entry->lastattr = lastattr;
-#endif
 }
 
 isc_result_t

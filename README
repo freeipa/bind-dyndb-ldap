@@ -17,7 +17,7 @@ is required.
 ===========
 * support for dynamic updates
 * SASL authentication
-* persistent search for zones (experimental)
+* SyncRepl (RFC 4533) for run-time synchronization with LDAP server
 
 
 3. Installation

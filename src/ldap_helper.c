@@ -178,7 +178,6 @@ struct ldap_connection {
 	isc_mutex_t		lock;
 
 	LDAP			*handle;
-	LDAPControl		*serverctrls[2]; /* psearch/NULL or NULL/NULL */
 	int			msgid;
 
 	/* For reconnection logic. */
@@ -211,11 +210,11 @@ const ldap_auth_pair_t supported_ldap_auth[] = {
 };
 
 #define LDAPDB_EVENTCLASS 	ISC_EVENTCLASS(0xDDDD)
-#define LDAPDB_EVENT_PSEARCH	(LDAPDB_EVENTCLASS + 0)
+#define LDAPDB_EVENT_SYNCREPL	(LDAPDB_EVENTCLASS + 0)
 
-typedef struct ldap_psearchevent ldap_psearchevent_t;
-struct ldap_psearchevent {
-	ISC_EVENT_COMMON(ldap_psearchevent_t);
+typedef struct ldap_syncreplevent ldap_syncreplevent_t;
+struct ldap_syncreplevent {
+	ISC_EVENT_COMMON(ldap_syncreplevent_t);
 	isc_mem_t *mctx;
 	char *dbname;
 	char *dn;
@@ -323,17 +322,9 @@ static void ldap_pool_putconnection(ldap_pool_t *pool,
 static isc_result_t ldap_pool_connect(ldap_pool_t *pool,
 		ldap_instance_t *ldap_inst) ATTR_NONNULLS;
 
-/* Functions for manipulating LDAP persistent search control */
-static isc_result_t ldap_pscontrol_create(LDAPControl **ctrlp) ATTR_NONNULLS;
-
-static isc_threadresult_t ldap_psearch_watcher(isc_threadarg_t arg) ATTR_NONNULLS;
-static void psearch_update(ldap_instance_t *inst, ldap_entry_t *entry,
-		LDAPControl **ctrls) ATTR_NONNULL(1, 2);
-
-
 /* Persistent updates watcher */
 static isc_threadresult_t
-ldap_psearch_watcher(isc_threadarg_t arg);
+ldap_syncrepl_watcher(isc_threadarg_t arg) ATTR_NONNULLS;
 
 #define PRINT_BUFF_SIZE 10 /* for unsigned int 2^32 */
 isc_result_t
@@ -558,10 +549,10 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	CHECK(ldap_pool_connect(ldap_inst->pool, ldap_inst));
 
 	/* Start the watcher thread */
-	result = isc_thread_create(ldap_psearch_watcher, ldap_inst,
+	result = isc_thread_create(ldap_syncrepl_watcher, ldap_inst,
 				   &ldap_inst->watcher);
 	if (result != ISC_R_SUCCESS) {
-		log_error("Failed to create psearch watcher thread");
+		log_error("Failed to create syncrepl watcher thread");
 		goto cleanup;
 	}
 
@@ -650,8 +641,6 @@ new_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
 
 	isc_mem_attach(pool->mctx, &ldap_conn->mctx);
 
-	CHECK(ldap_pscontrol_create(&ldap_conn->serverctrls[0]));
-
 	*ldap_connp = ldap_conn;
 
 	return ISC_R_SUCCESS;
@@ -676,10 +665,6 @@ destroy_ldap_connection(ldap_connection_t **ldap_connp)
 	DESTROYLOCK(&ldap_conn->lock);
 	if (ldap_conn->handle != NULL)
 		ldap_unbind_ext_s(ldap_conn->handle, NULL, NULL);
-
-	if (ldap_conn->serverctrls[0] != NULL) {
-		ldap_control_free(ldap_conn->serverctrls[0]);
-	}
 
 	MEM_PUT_AND_DETACH(*ldap_connp);
 }
@@ -2197,7 +2182,7 @@ ldap_connect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 cleanup:
 	if (ld != NULL)
 		ldap_unbind_ext_s(ld, NULL, NULL);
-	
+
 	/* Make sure handle is NULL. */
 	if (ldap_conn->handle != NULL) {
 		ldap_unbind_ext_s(ldap_conn->handle, NULL, NULL);
@@ -3313,65 +3298,18 @@ cleanup:
 	return result;
 }
 
-#define LDAP_CONTROL_PERSISTENTSEARCH "2.16.840.1.113730.3.4.3"
-#define LDAP_CONTROL_ENTRYCHANGE "2.16.840.1.113730.3.4.7"
+#define LDAP_ENTRYCHANGE_ALL	(LDAP_SYNC_CAPI_ADD | LDAP_SYNC_CAPI_DELETE | LDAP_SYNC_CAPI_MODIFY)
 
-#define LDAP_ENTRYCHANGE_NONE	0 /* entry change control is not present */
-#define LDAP_ENTRYCHANGE_ADD	1
-#define LDAP_ENTRYCHANGE_DEL	2
-#define LDAP_ENTRYCHANGE_MOD	4
-#define LDAP_ENTRYCHANGE_MODDN	8
-#define LDAP_ENTRYCHANGE_ALL	(1 | 2 | 4 | 8)
-
-#define PSEARCH_ADD(chgtype) ((chgtype & LDAP_ENTRYCHANGE_ADD) != 0)
-#define PSEARCH_DEL(chgtype) ((chgtype & LDAP_ENTRYCHANGE_DEL) != 0)
-#define PSEARCH_MOD(chgtype) ((chgtype & LDAP_ENTRYCHANGE_MOD) != 0)
-#define PSEARCH_MODDN(chgtype) ((chgtype & LDAP_ENTRYCHANGE_MODDN) != 0)
-#define PSEARCH_ANY(chgtype) ((chgtype & LDAP_ENTRYCHANGE_ALL) != 0)
-/*
- * Creates persistent search (aka psearch,
- * http://tools.ietf.org/id/draft-ietf-ldapext-psearch-03.txt) control.
+#define SYNCREPL_ADD(chgtype) (chgtype == LDAP_SYNC_CAPI_ADD)
+#define SYNCREPL_DEL(chgtype) (chgtype == LDAP_SYNC_CAPI_DELETE)
+#define SYNCREPL_MOD(chgtype) (chgtype == LDAP_SYNC_CAPI_MODIFY)
+/* SYNCREPL_MODDN: Change in DN can be detected only via UUID->DN mapping:
+ * Map UUID to (remembered) DN and compare remembered DN with new one. */
+/* SYNCREPL_ANY: Initial database dump should be detected via sync_ctx state:
+ * All changes received before first 'intermediate' message contain initial
+ * state of the database.
+#define SYNCREPL_ANY(chgtype) ((chgtype & LDAP_ENTRYCHANGE_ALL) != 0)
  */
-static isc_result_t
-ldap_pscontrol_create(LDAPControl **ctrlp)
-{
-	BerElement *ber = NULL;
-	struct berval *berval = NULL;
-	isc_result_t result = ISC_R_FAILURE;
-
-	REQUIRE(ctrlp != NULL && *ctrlp == NULL);
-
-	ber = ber_alloc_t(LBER_USE_DER);
-	if (ber == NULL)
-		return ISC_R_NOMEMORY;
-
-	/*
-	 * Check the draft above, section 4 to get info about PS control
-	 * format.
-	 *
-	 * We are interested in all changes in DNS related DNs and we
-	 * want to get initial state of the "watched" LDAP subtree.
-	 */
-	if (ber_printf(ber, "{ibb}", LDAP_ENTRYCHANGE_ALL, 0, 1) == -1)
-		goto cleanup;
-
-	if (ber_flatten(ber, &berval) < 0)
-		goto cleanup;
-
-	if (ldap_control_create(LDAP_CONTROL_PERSISTENTSEARCH, 1, berval, 1, ctrlp)
-			!= LDAP_SUCCESS)
-		goto cleanup;
-
-	result = ISC_R_SUCCESS;
-
-cleanup:
-	if (ber != NULL)
-		ber_free(ber, 1);
-	if (berval != NULL)
-		ber_bvfree(berval);
-
-	return result;
-}
 
 static inline isc_result_t
 ldap_get_zone_serial(ldap_instance_t *inst, dns_name_t *zone_name,
@@ -3464,14 +3402,14 @@ cleanup:
 static void
 update_zone(isc_task_t *task, isc_event_t *event)
 {
-	ldap_psearchevent_t *pevent = (ldap_psearchevent_t *)event;
+	ldap_syncreplevent_t *pevent = (ldap_syncreplevent_t *)event;
 	isc_result_t result ;
 	ldap_instance_t *inst = NULL;
 	ldap_qresult_t *ldap_qresult_zone = NULL;
-	ldap_qresult_t *ldap_qresult_record = NULL;
+	/* ldap_qresult_t *ldap_qresult_record = NULL; */
 	ldap_entryclass_t objclass;
 	ldap_entry_t *entry_zone = NULL;
-	ldap_entry_t *entry_record = NULL;
+	/* ldap_entry_t *entry_record = NULL; */
 	isc_mem_t *mctx;
 	dns_name_t prevname;
 	dns_name_t currname;
@@ -3480,9 +3418,9 @@ update_zone(isc_task_t *task, isc_event_t *event)
 		"idnsAllowTransfer", "idnsForwardPolicy", "idnsForwarders",
 		"idnsAllowDynUpdate", "idnsAllowSyncPTR", "objectClass", NULL
 	};
-	char *attrs_record[] = {
+	/* char *attrs_record[] = {
 			"objectClass", "dn", NULL
-	};
+	}; */
 
 	UNUSED(task);
 
@@ -3511,7 +3449,8 @@ update_zone(isc_task_t *task, isc_event_t *event)
 		else if (objclass & LDAP_ENTRYCLASS_FORWARD)
 			CHECK(ldap_parse_fwd_zoneentry(entry_zone, inst));
 
-		if (PSEARCH_MODDN(pevent->chgtype)) {
+		/* This code is disabled because we don't have UUID->DN database yet.
+		 if (SYNCREPL_MODDN(pevent->chgtype)) {
 			if (dn_to_dnsname(inst->mctx, pevent->prevdn, &prevname, NULL)
 					== ISC_R_SUCCESS) {
 				CHECK(ldap_delete_zone(inst, pevent->prevdn,
@@ -3521,7 +3460,7 @@ update_zone(isc_task_t *task, isc_event_t *event)
 					     "by plugin, dn '%s'", pevent->prevdn);
 			}
 
-			/* fill the cache with records from renamed zone */
+			// fill the cache with records from renamed zone //
 			if (objclass & LDAP_ENTRYCLASS_MASTER) {
 				CHECK(ldap_query(inst, NULL, &ldap_qresult_record, pevent->dn,
 						LDAP_SCOPE_ONELEVEL, attrs_record, 0,
@@ -3531,10 +3470,11 @@ update_zone(isc_task_t *task, isc_event_t *event)
 						entry_record != NULL;
 						entry_record = NEXT(entry_record, link)) {
 
-					psearch_update(inst, entry_record, NULL);
+					syncrepl_update(inst, entry_record, NULL);
 				}
 			}
 		}
+		*/
 
 		INSIST(NEXT(entry_zone, link) == NULL); /* no multiple zones with same DN */
 	} else {
@@ -3543,12 +3483,12 @@ update_zone(isc_task_t *task, isc_event_t *event)
 
 cleanup:
 	if (result != ISC_R_SUCCESS)
-		log_error_r("update_zone (psearch) failed for '%s'. "
+		log_error_r("update_zone (syncrepl) failed for '%s'. "
 			  "Zones can be outdated, run `rndc reload`",
 			  pevent->dn);
 
 	ldap_query_free(ISC_FALSE, &ldap_qresult_zone);
-	ldap_query_free(ISC_FALSE, &ldap_qresult_record);
+	/* ldap_query_free(ISC_FALSE, &ldap_qresult_record); */
 	if (dns_name_dynamic(&currname))
 		dns_name_free(&currname, inst->mctx);
 	if (dns_name_dynamic(&prevname))
@@ -3564,7 +3504,7 @@ cleanup:
 static void
 update_config(isc_task_t *task, isc_event_t *event)
 {
-	ldap_psearchevent_t *pevent = (ldap_psearchevent_t *)event;
+	ldap_syncreplevent_t *pevent = (ldap_syncreplevent_t *)event;
 	isc_result_t result ;
 	ldap_instance_t *inst = NULL;
 	ldap_qresult_t *ldap_qresult = NULL;
@@ -3598,7 +3538,7 @@ update_config(isc_task_t *task, isc_event_t *event)
 
 cleanup:
 	if (result != ISC_R_SUCCESS)
-		log_error_r("update_config (psearch) failed for '%s'. "
+		log_error_r("update_config (syncrepl) failed for '%s'. "
 			  "Configuration can be outdated, run `rndc reload`",
 			  pevent->dn);
 
@@ -3615,13 +3555,13 @@ cleanup:
  * If it exists it is replaced with newer version.
  *
  * @param task Task indentifier.
- * @param event Internal data of type ldap_psearchevent_t.
+ * @param event Internal data of type ldap_syncreplevent_t.
  */
 static void
 update_record(isc_task_t *task, isc_event_t *event)
 {
-	/* Psearch event */
-	ldap_psearchevent_t *pevent = (ldap_psearchevent_t *)event;
+	/* syncrepl event */
+	ldap_syncreplevent_t *pevent = (ldap_syncreplevent_t *)event;
 	isc_result_t result;
 	ldap_instance_t *inst = NULL;
 	ldap_cache_t *cache = NULL;
@@ -3653,8 +3593,10 @@ update_record(isc_task_t *task, isc_event_t *event)
 	zone_found = ISC_TRUE;
 
 update_restart:
-	if (PSEARCH_DEL(pevent->chgtype) || PSEARCH_MODDN(pevent->chgtype)) {
-		log_debug(5, "psearch_update: removing name from cache, dn: '%s'",
+	/* This code is disabled because we don't have UUID->DN database yet.
+	    || SYNCREPL_MODDN(pevent->chgtype)) { */
+	if (SYNCREPL_DEL(pevent->chgtype)) {
+		log_debug(5, "syncrepl_update: removing name from cache, dn: '%s'",
 		          pevent->dn);
 	}
 
@@ -3665,11 +3607,12 @@ update_restart:
 
 	/* TODO: double check correctness before replacing ldap_query() with
 	 *       data from *event */
-	if (PSEARCH_MODDN(pevent->chgtype)) {
-		/* remove previous name only if it was inside DNS subtree */
+	/* This code is disabled because we don't have UUID->DN database yet.
+	if (SYNCREPL_MODDN(pevent->chgtype)) {
+		// remove previous name only if it was inside DNS subtree //
 		if (dn_to_dnsname(mctx, pevent->prevdn, &prevname, &prevorigin)
 				== ISC_R_SUCCESS) {
-			log_debug(5, "psearch_update: removing name from cache, dn: '%s'",
+			log_debug(5, "syncrepl_update: removing name from cache, dn: '%s'",
 					  pevent->prevdn);
 			cache = NULL;
 			result = zr_get_zone_cache(inst->zone_register, &prevname, &cache);
@@ -3678,20 +3621,22 @@ update_restart:
 			else if (result != ISC_R_NOTFOUND)
 				goto cleanup;
 		} else {
-			log_debug(5, "psearch_update: old name wasn't managed "
+			log_debug(5, "syncrepl_update: old name wasn't managed "
 					"by plugin, dn '%s'", pevent->prevdn);
 		}
 	}
+	*/
 
-	if (PSEARCH_ADD(pevent->chgtype) || PSEARCH_MOD(pevent->chgtype) ||
-			PSEARCH_MODDN(pevent->chgtype) || !PSEARCH_ANY(pevent->chgtype)) {
+	if (SYNCREPL_ADD(pevent->chgtype) || SYNCREPL_MOD(pevent->chgtype)) /* ||
+			SYNCREPL_MODDN(pevent->chgtype) ||
+			!SYNCREPL_ANY(pevent->chgtype)) */ {
 		/* 
-		 * Find new data in LDAP. !PSEARCH_ANY indicates unchanged entry
+		 * Find new data in LDAP. !SYNCREPL_ANY indicates unchanged entry
 		 * found during initial lookup (i.e. database dump).
 		 *
 		 * @todo Change this to convert ldap_entry_t to ldapdb_rdatalist_t.
 		 */
-		log_debug(5, "psearch_update: updating name in cache, dn: '%s'",
+		log_debug(5, "syncrepl_update: updating name in cache, dn: '%s'",
 		          pevent->dn);
 		CHECK(ldapdb_rdatalist_get(mctx, inst, &name, &origin, &rdatalist));
 	
@@ -3705,7 +3650,10 @@ update_restart:
 	}
 
 	/* Do not bump serial during initial database dump. */
-	if (PSEARCH_ANY(pevent->chgtype)) {
+	/* This optimization is disabled because we don't have SYNCREPL_ANY
+	 * detection at the moment.
+	if (SYNCREPL_ANY(pevent->chgtype)) { */
+	{
 		zone_settings = NULL;
 		CHECK(zr_get_zone_settings(inst->zone_register, &origin, &zone_settings));
 		CHECK(setting_get_bool("serial_autoincrement", zone_settings,
@@ -3756,7 +3704,7 @@ cleanup:
 
 	} else if (result != ISC_R_SUCCESS) {
 		/* error other than invalid zone */
-		log_error_r("update_record (psearch) failed, dn '%s' change type 0x%x. "
+		log_error_r("update_record (syncrepl) failed, dn '%s' change type 0x%x. "
 			  "Records can be outdated, run `rndc reload`",
 			  pevent->dn, pevent->chgtype);
 	}
@@ -3779,71 +3727,12 @@ cleanup:
 	isc_event_free(&event);
 }
 
-/*
- * Parses persistent search entrychange control.
- *
- * This entry says if particular entry was added/modified/deleted.
- * Details are in http://tools.ietf.org/id/draft-ietf-ldapext-psearch-03.txt
- */
-static isc_result_t
-ldap_parse_entrychangectrl(LDAPControl **ctrls, int *chgtypep, char **prevdnp)
-{
-	int i;
-	isc_result_t result = ISC_R_SUCCESS;
-	BerElement *ber = NULL;
-	ber_int_t chgtype;
-	ber_tag_t berret;
-	char *prevdn = NULL;
-
-	REQUIRE(ctrls != NULL);
-	REQUIRE(chgtypep != NULL);
-	REQUIRE(prevdnp != NULL && *prevdnp == NULL);
-
-	/* Find entrycontrol OID */
-	for (i = 0; ctrls[i] != NULL; i++) {
-		if (strcmp(ctrls[i]->ldctl_oid,
-		    LDAP_CONTROL_ENTRYCHANGE) == 0)
-			break;
-	}
-
-	if (ctrls[i] == NULL)
-		return ISC_R_NOTFOUND;
-
-	ber = ber_init(&(ctrls[i]->ldctl_value));
-	if (ber == NULL)
-		return ISC_R_NOMEMORY;
-
-	berret = ber_scanf(ber, "{e", &chgtype);
-	if (berret == LBER_ERROR) {
-		result = ISC_R_FAILURE;
-		goto cleanup;
-	}
-
-	if (chgtype == LDAP_ENTRYCHANGE_MODDN) {
-		berret = ber_scanf(ber, "a", &prevdn);
-		if (berret == LBER_ERROR) {
-			result = ISC_R_FAILURE;
-			goto cleanup;
-		}
-	}
-
-	*chgtypep = chgtype;
-	*prevdnp = prevdn;
-
-cleanup:
-	if (ber != NULL)
-		ber_free(ber, 1);
-
-	return result;
-}
-
 static void
-psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
+syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 {
 	ldap_entryclass_t class;
 	isc_result_t result = ISC_R_SUCCESS;
-	ldap_psearchevent_t *pevent = NULL;
-	int chgtype = LDAP_ENTRYCHANGE_NONE;
+	ldap_syncreplevent_t *pevent = NULL;
 	char *dn = NULL;
 	char *prevdn_ldap = NULL;
 	char *prevdn = NULL;
@@ -3853,23 +3742,20 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 
 	CHECK(ldap_entry_getclass(entry, &class));
 
-	if (ctrls != NULL)
-		CHECK(ldap_parse_entrychangectrl(ctrls, &chgtype, &prevdn_ldap));
-
-
-	log_debug(20,"psearch change type: none%d, add%d, del%d, mod%d, moddn%d",
-				!PSEARCH_ANY(chgtype), PSEARCH_ADD(chgtype),
-				PSEARCH_DEL(chgtype), PSEARCH_MOD(chgtype),
-				PSEARCH_MODDN(chgtype));
+	log_debug(20, "syncrepl change type: " /*"none%d,"*/ "add%d, del%d, mod%d", /* moddn%d", */
+		  /* !SYNCREPL_ANY(chgtype), */ SYNCREPL_ADD(chgtype),
+		  SYNCREPL_DEL(chgtype), SYNCREPL_MOD(chgtype)/*, SYNCREPL_MODDN(chgtype) */ );
 
 	isc_mem_attach(inst->mctx, &mctx);
 
 	CHECKED_MEM_STRDUP(mctx, entry->dn, dn);
 	CHECKED_MEM_STRDUP(mctx, inst->db_name, dbname);
 
-	if (PSEARCH_MODDN(chgtype)) {
+	/* This code is disabled because we don't have UUID->DN database yet.
+	if (SYNCREPL_MODDN(chgtype)) {
 		CHECKED_MEM_STRDUP(mctx, prevdn_ldap, prevdn);
 	}
+	*/
 
 	/*
 	 * We are very simple. Every update (add/mod/del) means that
@@ -3891,10 +3777,10 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 		goto cleanup;
 	}
 
-	pevent = (ldap_psearchevent_t *)isc_event_allocate(inst->mctx,
-				inst, LDAPDB_EVENT_PSEARCH,
+	pevent = (ldap_syncreplevent_t *)isc_event_allocate(inst->mctx,
+				inst, LDAPDB_EVENT_SYNCREPL,
 				action, NULL,
-				sizeof(ldap_psearchevent_t));
+				sizeof(ldap_syncreplevent_t));
 
 	if (pevent == NULL) {
 		result = ISC_R_NOMEMORY;
@@ -3909,8 +3795,6 @@ psearch_update(ldap_instance_t *inst, ldap_entry_t *entry, LDAPControl **ctrls)
 	isc_task_send(inst->task, (isc_event_t **)&pevent);
 
 cleanup:
-	if (ctrls != NULL)
-		ldap_controls_free(ctrls);
 	if (result != ISC_R_SUCCESS) {
 		if (dbname != NULL)
 			isc_mem_free(mctx, dbname);
@@ -3923,7 +3807,7 @@ cleanup:
 		if (prevdn_ldap != NULL)
 			ldap_memfree(prevdn);
 
-		log_error_r("psearch_update failed for '%s' zone. "
+		log_error_r("syncrepl_update failed for '%s' zone. "
 			  "Zone can be outdated, run `rndc reload`",
 			  entry->dn);
 	}
@@ -3985,23 +3869,200 @@ install_usr1handler(void)
 }
 
 /*
+ * Called when a reference is returned by ldap_sync_init()/ldap_sync_poll().
+ */
+static int
+ldap_sync_search_reference (
+	ldap_sync_t			*ls,
+	LDAPMessage			*msg ) {
+
+	UNUSED(ls);
+	UNUSED(msg);
+
+	log_error("ldap_sync_search_reference is not yet handled");
+	return LDAP_SUCCESS;
+}
+
+/*
+ * Called when an entry is returned by ldap_sync_init()/ldap_sync_poll().
+ * If phase is LDAP_SYNC_CAPI_ADD or LDAP_SYNC_CAPI_MODIFY,
+ * the entry has been either added or modified, and thus
+ * the complete view of the entry should be in the LDAPMessage.
+ * If phase is LDAP_SYNC_CAPI_PRESENT or LDAP_SYNC_CAPI_DELETE,
+ * only the DN should be in the LDAPMessage.
+ */
+int ldap_sync_search_entry (
+	ldap_sync_t			*ls,
+	LDAPMessage			*msg,
+	struct berval			*entryUUID,
+	ldap_sync_refresh_t		phase ) {
+
+	ldap_instance_t *inst = ls->ls_private;
+	ldap_entry_t *entry = NULL;
+	isc_result_t result;
+
+	/* TODO: Use this for UUID->DN mapping and MODDN detection. */
+	UNUSED(entryUUID);
+
+	CHECK(ldap_entry_create(inst->mctx, ls->ls_ld, msg, &entry));
+	syncrepl_update(inst, entry, phase);
+
+cleanup:
+	if (result != ISC_R_SUCCESS)
+		log_error_r("ldap_sync_search_entry failed");
+		/* TODO: Add 'tainted' flag to the LDAP instance. */
+	ldap_entry_destroy(inst->mctx, &entry);
+
+	/* Following return code will never reach upper layers.
+	 * It is limitation in ldap_sync_init() and ldap_sync_poll()
+	 * provided by OpenLDAP libs at the time of writing (2013-07-22). */
+	return LDAP_SUCCESS;
+}
+
+/*
+ * Called when specific intermediate/final messages are returned
+ * by ldap_sync_init()/ldap_sync_poll().
+ * If phase is LDAP_SYNC_CAPI_PRESENTS or LDAP_SYNC_CAPI_DELETES,
+ * a "presents" or "deletes" phase begins.
+ * If phase is LDAP_SYNC_CAPI_DONE, a special "presents" phase
+ * with refreshDone set to "TRUE" has been returned, to indicate
+ * that the refresh phase of a refreshAndPersist is complete.
+ * In the above cases, syncUUIDs is NULL.
+ *
+ * If phase is LDAP_SYNC_CAPI_PRESENTS_IDSET or
+ * LDAP_SYNC_CAPI_DELETES_IDSET, syncUUIDs is an array of UUIDs
+ * that are either present or have been deleted.
+ */
+int ldap_sync_intermediate (
+	ldap_sync_t			*ls,
+	LDAPMessage			*msg,
+	BerVarray			syncUUIDs,
+	ldap_sync_refresh_t		phase ) {
+
+	UNUSED(ls);
+	UNUSED(msg);
+	UNUSED(syncUUIDs);
+	UNUSED(phase);
+
+	log_error("ldap_sync_intermediate is not yet handled");
+	return LDAP_SUCCESS;
+}
+
+/*
+ * Called when a searchResultDone is returned
+ * by ldap_sync_init()/ldap_sync_poll().
+ * In refreshAndPersist, this can only occur if the search for any reason
+ * is being terminated by the server.
+ */
+int ldap_sync_search_result (
+	ldap_sync_t			*ls,
+	LDAPMessage			*msg,
+	int				refreshDeletes ) {
+
+	UNUSED(ls);
+	UNUSED(msg);
+	UNUSED(refreshDeletes);
+
+	log_error("ldap_sync_search_result is not yet handled");
+	return LDAP_SUCCESS;
+}
+
+static void
+ldap_sync_cleanup(ldap_sync_t **ldap_syncp) {
+	ldap_sync_t *ldap_sync = NULL;
+
+	REQUIRE(ldap_syncp != NULL);
+
+	if (*ldap_syncp == NULL)
+		return;
+
+	ldap_sync = *ldap_syncp;
+	ldap_sync_destroy(ldap_sync, 1);
+
+	*ldap_syncp = NULL;
+}
+
+
+static isc_result_t
+ldap_sync_prepare(ldap_instance_t *inst, settings_set_t *settings,
+		  ldap_connection_t *conn, ldap_sync_t **ldap_syncp) {
+	isc_result_t result;
+	const char *base = NULL;
+	isc_uint32_t reconnect_interval;
+	ldap_sync_t *ldap_sync = NULL;
+
+	REQUIRE(ldap_syncp != NULL && *ldap_syncp == NULL);
+
+	/* Try to connect. */
+	while (conn->handle == NULL) {
+		result = ISC_R_SHUTTINGDOWN;
+		CHECK_EXIT;
+		CHECK(setting_get_uint("reconnect_interval", settings,
+				       &reconnect_interval));
+
+		log_error("ldap_syncrepl will reconnect in %d second%s",
+			  reconnect_interval,
+			  reconnect_interval == 1 ? "": "s");
+		if (!sane_sleep(inst, reconnect_interval))
+			CLEANUP_WITH(ISC_R_SHUTTINGDOWN);
+		handle_connection_error(inst, conn, ISC_TRUE);
+	}
+
+	ldap_sync = ldap_sync_initialize(NULL);
+	if (ldap_sync == NULL) {
+		log_error("cannot initialize LDAP syncrepl context");
+		CLEANUP_WITH(ISC_R_NOMEMORY);
+	}
+	ZERO_PTR(ldap_sync);
+
+	CHECK(setting_get_str("base", settings, &base));
+	ldap_sync->ls_base = ldap_strdup(base);
+	if (ldap_sync->ls_base == NULL)
+		CLEANUP_WITH(ISC_R_NOMEMORY);
+	ldap_sync->ls_scope = LDAP_SCOPE_SUBTREE;
+	ldap_sync->ls_filter = ldap_strdup("(|(objectClass=idnsConfigObject)"
+					   "  (objectClass=idnsZone)"
+					   "  (objectClass=idnsForwardZone)"
+					   "  (objectClass=idnsRecord))");
+	if (ldap_sync->ls_filter == NULL)
+		CLEANUP_WITH(ISC_R_NOMEMORY);
+	ldap_sync->ls_timeout = -1; /* sync_poll is blocking */
+	ldap_sync->ls_ld = conn->handle;
+	/* This is a hack: ldap_sync_destroy() will call ldap_unbind().
+	 * We have to ensure that unbind() will not be called twice! */
+	conn->handle = NULL;
+	ldap_sync->ls_search_entry = ldap_sync_search_entry;
+	ldap_sync->ls_search_reference = ldap_sync_search_reference;
+	ldap_sync->ls_intermediate = ldap_sync_intermediate;
+	ldap_sync->ls_search_result = ldap_sync_search_result;
+	ldap_sync->ls_private = inst;
+
+	result = ISC_R_SUCCESS;
+	*ldap_syncp = ldap_sync;
+
+cleanup:
+	if (result != ISC_R_SUCCESS)
+		ldap_sync_cleanup(&ldap_sync);
+
+	return result;
+}
+
+
+/*
  * NOTE:
- * Every blocking call in psearch_watcher thread must be preemptible.
+ * Every blocking call in syncrepl_watcher thread must be preemptible.
  */
 static isc_threadresult_t
-ldap_psearch_watcher(isc_threadarg_t arg)
+ldap_syncrepl_watcher(isc_threadarg_t arg)
 {
 	ldap_instance_t *inst = (ldap_instance_t *)arg;
 	ldap_connection_t *conn = NULL;
-	ldap_qresult_t *ldap_qresult = NULL;
-	struct timeval tv;
-	int ret, cnt;
+	int ret;
 	isc_result_t result;
 	sigset_t sigset;
-	isc_uint32_t reconnect_interval;
-	const char *base = NULL;
+	ldap_sync_t *ldap_sync = NULL;
 
-	log_debug(1, "Entering ldap_psearch_watcher");
+	log_debug(1, "Entering ldap_syncrepl_watcher");
 
 	install_usr1handler();
 
@@ -4017,131 +4078,38 @@ ldap_psearch_watcher(isc_threadarg_t arg)
 	/* pthread_sigmask fails only due invalid args */
 	RUNTIME_CHECK(ret == 0);
 
-	/* Wait indefinitely */
-	tv.tv_sec = -1;
-	tv.tv_usec = 0;
-
 	/* Pick connection, one is reserved purely for this thread */
 	CHECK(ldap_pool_getconnection(inst->pool, &conn));
 
-	/* Try to connect. */
-	while (conn->handle == NULL) {
-		CHECK_EXIT;
-		CHECK(setting_get_uint("reconnect_interval", inst->global_settings,
-				       &reconnect_interval));
-
-		log_error("ldap_psearch_watcher handle is NULL. "
-		          "Next try in %ds", reconnect_interval);
-		if (!sane_sleep(inst, reconnect_interval))
-			goto cleanup;
-		handle_connection_error(inst, conn, ISC_TRUE);
-	}
-
-	CHECK(ldap_query_create(conn->mctx, &ldap_qresult));
-
-restart:
-	/* Perform initial lookup */
-	ldap_query_free(ISC_TRUE, &ldap_qresult);
-	CHECK(setting_get_str("base", inst->global_settings, &base));
-	log_debug(1, "Sending initial psearch lookup");
-	ret = ldap_search_ext(conn->handle,
-			      base,
-			      LDAP_SCOPE_SUBTREE,
-			      /*    class = record
-			       * OR class = config
-			       * OR class = zone
-			       * OR class = forward
-			       *
-			       * Inactive zones are handled
-			       * in update_zone. */
-			      "(|"
-			      "(objectClass=idnsRecord)"
-			      "(objectClass=idnsConfigObject)"
-			      "(objectClass=idnsZone)"
-			      "(objectClass=idnsForwardZone))",
-			      NULL, 0, conn->serverctrls, NULL, NULL,
-			      LDAP_NO_LIMIT, &conn->msgid);
-	if (ret != LDAP_SUCCESS) {
-		log_error("failed to send initial psearch request");
-		ldap_unbind_ext_s(conn->handle, NULL, NULL);
-		goto cleanup;
-	}
-
 	while (!inst->exiting) {
-		ret = ldap_result(conn->handle, conn->msgid, 0, &tv,
-				  &ldap_qresult->result);
-		if (ret <= 0) {
-			/* Don't reconnect if signaled to exit */
-			CHECK_EXIT;
-			while (handle_connection_error(inst, conn, ISC_TRUE)
-			       != ISC_R_SUCCESS) {
-				CHECK(setting_get_uint("reconnect_interval",
-						       inst->global_settings,
-						       &reconnect_interval));
-				log_error("ldap_psearch_watcher failed to "
-					  "handle LDAP connection error. "
-					  "Reconnection in %ds",
-					  reconnect_interval);
-				if (!sane_sleep(inst, reconnect_interval))
-					goto cleanup;
-			}
-			goto restart;
+		ldap_sync_cleanup(&ldap_sync);
+		result = ldap_sync_prepare(inst, inst->global_settings,
+					   conn, &ldap_sync);
+		if (result != ISC_R_SUCCESS) {
+			log_error_r("ldap_sync_prepare() failed, retrying "
+				    "in 1 second");
+			sane_sleep(inst, 1);
+			continue;
 		}
 
-		switch (ret) {
-		case LDAP_RES_SEARCH_ENTRY:
-			break;
-		default:
-			log_debug(3, "Ignoring psearch msg with retcode %x",
-				  ret);
-		}
+		log_debug(1, "Sending initial syncrepl lookup");
+		ret = ldap_sync_init(ldap_sync, LDAP_SYNC_REFRESH_AND_PERSIST);
+		/* TODO: error handling, set tainted flag & do full reload? */
 
-		conn->tries = 0;
-		cnt = ldap_count_entries(conn->handle, ldap_qresult->result);
-
-		if (cnt > 0) {
-			log_debug(3, "Got psearch updates (%d)", cnt);
-			result = ldap_entrylist_append(conn->mctx,
-						       conn->handle,
-						       ldap_qresult->result,
-						       &ldap_qresult->ldap_entries);
-			if (result != ISC_R_SUCCESS) {
-				/*
-				 * Error means inconsistency of our zones
-				 * data.
-				 */
-				log_error_r("ldap_psearch_watcher failed, zones "
-					  "might be outdated. Run `rndc reload`");
-				goto soft_err;
+		while (!inst->exiting && ret == LDAP_SUCCESS) {
+			ret = ldap_sync_poll(ldap_sync);
+			if (!inst->exiting && ret != LDAP_SUCCESS) {
+				log_ldap_error(ldap_sync->ls_ld,
+					       "ldap_sync_poll() failed");
+				/* force reconnect in sync_prepare */
+				conn->handle = NULL;
 			}
-
-			ldap_entry_t *entry;
-			for (entry = HEAD(ldap_qresult->ldap_entries);
-			     entry != NULL;
-			     entry = NEXT(entry, link)) {
-				LDAPControl **ctrls = NULL;
-				ret = ldap_get_entry_controls(conn->handle,
-							      entry->ldap_entry,
-							      &ctrls);
-				if (ret != LDAP_SUCCESS) {
-					log_error("failed to extract controls "
-						  "from psearch update. Zones "
-						  "might be outdated, run "
-						  "`rndc reload");
-					goto soft_err;
-				}
-
-				psearch_update(inst, entry, ctrls);
-			}
-soft_err:
-			ldap_query_free(ISC_TRUE, &ldap_qresult);
 		}
 	}
-
-	log_debug(1, "Ending ldap_psearch_watcher");
 
 cleanup:
-	ldap_query_free(ISC_FALSE, &ldap_qresult);
+	log_debug(1, "Ending ldap_syncrepl_watcher");
+	ldap_sync_cleanup(&ldap_sync);
 	ldap_pool_putconnection(inst->pool, &conn);
 
 	return (isc_threadresult_t)0;
