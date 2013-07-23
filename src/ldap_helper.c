@@ -220,6 +220,7 @@ struct ldap_syncreplevent {
 	char *dn;
 	char *prevdn;
 	int chgtype;
+	ldap_entry_t *entry;
 };
 
 extern const settings_set_t settings_default_set;
@@ -1628,7 +1629,9 @@ free_rdatalist(isc_mem_t *mctx, dns_rdatalist_t *rdlist)
 		SAFE_MEM_PUT_PTR(mctx, rdata);
 	}
 }
-
+/**
+ * @param rdatalist[in,out] Has to be empty initialized list.
+ */
 static isc_result_t
 ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
 		   const char *fake_mname, ldapdb_rdatalist_t *rdatalist)
@@ -1644,6 +1647,8 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
 	const char *dn = "<NULL entry>";
 	const char *data_str = "<NULL data>";
 	ld_string_t *data_buf = NULL;
+
+	REQUIRE(EMPTY(*rdatalist));
 
 	CHECK(str_new(mctx, &data_buf));
 	CHECK(ldap_entry_getclass(entry, &objclass));
@@ -3405,22 +3410,13 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	ldap_syncreplevent_t *pevent = (ldap_syncreplevent_t *)event;
 	isc_result_t result ;
 	ldap_instance_t *inst = NULL;
-	ldap_qresult_t *ldap_qresult_zone = NULL;
-	/* ldap_qresult_t *ldap_qresult_record = NULL; */
 	ldap_entryclass_t objclass;
-	ldap_entry_t *entry_zone = NULL;
-	/* ldap_entry_t *entry_record = NULL; */
 	isc_mem_t *mctx;
 	dns_name_t prevname;
 	dns_name_t currname;
-	char *attrs_zone[] = {
-		"idnsName", "idnsUpdatePolicy", "idnsAllowQuery",
-		"idnsAllowTransfer", "idnsForwardPolicy", "idnsForwarders",
-		"idnsAllowDynUpdate", "idnsAllowSyncPTR", "objectClass", NULL
-	};
-	/* char *attrs_record[] = {
-			"objectClass", "dn", NULL
-	}; */
+	ldap_entry_t *entry = pevent->entry;
+	ldap_valuelist_t values;
+	isc_boolean_t zone_active = ISC_FALSE;
 
 	UNUSED(task);
 
@@ -3429,25 +3425,21 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	dns_name_init(&prevname, NULL);
 
 	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
-
-	result = ldap_query(inst, NULL, &ldap_qresult_zone, pevent->dn,
-			 LDAP_SCOPE_BASE, attrs_zone, 0,
-			 "(&(|(objectClass=idnsZone)"
-			 "(objectClass=idnsForwardZone))"
-			 "(idnsZoneActive=TRUE))");
-	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
-		goto cleanup;
-
 	CHECK(dn_to_dnsname(inst->mctx, pevent->dn, &currname, NULL));
 
-	if (ldap_qresult_zone != NULL &&
-	    HEAD(ldap_qresult_zone->ldap_entries) != NULL) {
-		entry_zone = HEAD(ldap_qresult_zone->ldap_entries);
-		CHECK(ldap_entry_getclass(entry_zone, &objclass));
+	if (!SYNCREPL_DEL(pevent->chgtype)) {
+		CHECK(ldap_entry_getvalues(entry, "idnsZoneActive", &values));
+		if (HEAD(values) != NULL &&
+		    strcasecmp(HEAD(values)->value, "TRUE") == 0)
+			zone_active = ISC_TRUE;
+	}
+
+	if (zone_active) {
+		CHECK(ldap_entry_getclass(entry, &objclass));
 		if (objclass & LDAP_ENTRYCLASS_MASTER)
-			CHECK(ldap_parse_master_zoneentry(entry_zone, inst));
+			CHECK(ldap_parse_master_zoneentry(entry, inst));
 		else if (objclass & LDAP_ENTRYCLASS_FORWARD)
-			CHECK(ldap_parse_fwd_zoneentry(entry_zone, inst));
+			CHECK(ldap_parse_fwd_zoneentry(entry, inst));
 
 		/* This code is disabled because we don't have UUID->DN database yet.
 		 if (SYNCREPL_MODDN(pevent->chgtype)) {
@@ -3475,8 +3467,6 @@ update_zone(isc_task_t *task, isc_event_t *event)
 			}
 		}
 		*/
-
-		INSIST(NEXT(entry_zone, link) == NULL); /* no multiple zones with same DN */
 	} else {
 		CHECK(ldap_delete_zone(inst, pevent->dn, ISC_TRUE, ISC_FALSE));
 	}
@@ -3487,8 +3477,6 @@ cleanup:
 			  "Zones can be outdated, run `rndc reload`",
 			  pevent->dn);
 
-	ldap_query_free(ISC_FALSE, &ldap_qresult_zone);
-	/* ldap_query_free(ISC_FALSE, &ldap_qresult_record); */
 	if (dns_name_dynamic(&currname))
 		dns_name_free(&currname, inst->mctx);
 	if (dns_name_dynamic(&prevname))
@@ -3497,6 +3485,7 @@ cleanup:
 	if (pevent->prevdn != NULL)
 		isc_mem_free(mctx, pevent->prevdn);
 	isc_mem_free(mctx, pevent->dn);
+	ldap_entry_destroy(mctx, &entry);
 	isc_mem_detach(&mctx);
 	isc_event_free(&event);
 }
@@ -3505,44 +3494,25 @@ static void
 update_config(isc_task_t *task, isc_event_t *event)
 {
 	ldap_syncreplevent_t *pevent = (ldap_syncreplevent_t *)event;
-	isc_result_t result ;
+	isc_result_t result;
 	ldap_instance_t *inst = NULL;
-	ldap_qresult_t *ldap_qresult = NULL;
-	ldap_entry_t *entry;
+	ldap_entry_t *entry = pevent->entry;
 	isc_mem_t *mctx;
-	char *attrs[] = {
-		"idnsAllowSyncPTR", "idnsForwardPolicy", "idnsForwarders",
-		"idnsZoneRefresh", "idnsPersistentSearch", NULL
-	};
 
 	UNUSED(task);
 
 	mctx = pevent->mctx;
 
 	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
-	CHECK(ldap_query(inst, NULL, &ldap_qresult, pevent->dn,
-			 LDAP_SCOPE_BASE, attrs, 0,
-			 "(objectClass=idnsConfigObject)"));
-
-	if (EMPTY(ldap_qresult->ldap_entries))
-		log_error("Config object can not be empty"); /* TODO: WHY? */
-
-	for (entry = HEAD(ldap_qresult->ldap_entries);
-	     entry != NULL;
-	     entry = NEXT(entry, link)) {
-		result = ldap_parse_configentry(entry, inst);
-		if (result != ISC_R_SUCCESS)
-			goto cleanup;
-	}
-
+	CHECK(ldap_parse_configentry(entry, inst));
 
 cleanup:
 	if (result != ISC_R_SUCCESS)
 		log_error_r("update_config (syncrepl) failed for '%s'. "
-			  "Configuration can be outdated, run `rndc reload`",
-			  pevent->dn);
+			    "Configuration can be outdated, run `rndc reload`",
+			    pevent->dn);
 
-	ldap_query_free(ISC_FALSE, &ldap_qresult);
+	ldap_entry_destroy(mctx, &entry);
 	isc_mem_free(mctx, pevent->dbname);
 	isc_mem_free(mctx, pevent->dn);
 	isc_mem_detach(&mctx);
@@ -3571,15 +3541,19 @@ update_record(isc_task_t *task, isc_event_t *event)
 	isc_boolean_t zone_found = ISC_FALSE;
 	isc_boolean_t zone_reloaded = ISC_FALSE;
 	isc_uint32_t serial;
+	ldap_entry_t *entry = pevent->entry;
+	settings_set_t *zone_settings;
+	const char *fake_mname = NULL;
+
 	mctx = pevent->mctx;
 
 	UNUSED(task);
 
 	/* Structure to be stored in the cache. */
 	ldapdb_rdatalist_t rdatalist;
+	INIT_LIST(rdatalist);
 
 	/* Convert domain name from text to struct dns_name_t. */
-	settings_set_t *zone_settings;
 	dns_name_t name;
 	dns_name_t origin;
 	dns_name_t prevname;
@@ -3638,13 +3612,15 @@ update_restart:
 		 */
 		log_debug(5, "syncrepl_update: updating name in cache, dn: '%s'",
 		          pevent->dn);
-		CHECK(ldapdb_rdatalist_get(mctx, inst, &name, &origin, &rdatalist));
-	
-		/* 
-		 * The cache is updated in ldapdb_rdatalist_get(...):
-		 * CHECK(ldap_cache_addrdatalist(cache, &name, &rdatalist);
-		 */
+		CHECK(setting_get_str("fake_mname", inst->local_settings,
+				      &fake_mname));
+		CHECK(ldap_parse_rrentry(mctx, entry, &origin, fake_mname,
+					 &rdatalist));
 
+		if (!EMPTY(rdatalist))
+			/* Cache RRs */
+			CHECK(ldap_cache_addrdatalist(cache, &name, &rdatalist));
+	
 		/* Destroy rdatalist, it is now in the cache. */
 		ldapdb_rdatalist_destroy(mctx, &rdatalist);
 	}
@@ -3722,6 +3698,7 @@ cleanup:
 	isc_mem_free(mctx, pevent->dbname);
 	if (pevent->prevdn != NULL)
 		isc_mem_free(mctx, pevent->prevdn);
+	ldap_entry_destroy(mctx, &entry);
 	isc_mem_free(mctx, pevent->dn);
 	isc_mem_detach(&mctx);
 	isc_event_free(&event);
@@ -3773,7 +3750,8 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	else if ((class & LDAP_ENTRYCLASS_RR) != 0)
 		action = update_record;
 	else {
-		result = ISC_R_FAILURE;
+		log_error("unsupported objectClass: dn '%s'", dn);
+		result = ISC_R_NOTIMPLEMENTED;
 		goto cleanup;
 	}
 
@@ -3792,10 +3770,14 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	pevent->dn = dn;
 	pevent->prevdn = prevdn;
 	pevent->chgtype = chgtype;
+	pevent->entry = entry;
 	isc_task_send(inst->task, (isc_event_t **)&pevent);
 
 cleanup:
 	if (result != ISC_R_SUCCESS) {
+		log_error_r("syncrepl_update failed for object '%s'",
+			    entry->dn);
+
 		if (dbname != NULL)
 			isc_mem_free(mctx, dbname);
 		if (dn != NULL)
@@ -3806,10 +3788,7 @@ cleanup:
 			isc_mem_detach(&mctx);
 		if (prevdn_ldap != NULL)
 			ldap_memfree(prevdn);
-
-		log_error_r("syncrepl_update failed for '%s' zone. "
-			  "Zone can be outdated, run `rndc reload`",
-			  entry->dn);
+		ldap_entry_destroy(inst->mctx, &entry);
 	}
 }
 
@@ -3911,7 +3890,6 @@ cleanup:
 	if (result != ISC_R_SUCCESS)
 		log_error_r("ldap_sync_search_entry failed");
 		/* TODO: Add 'tainted' flag to the LDAP instance. */
-	ldap_entry_destroy(inst->mctx, &entry);
 
 	/* Following return code will never reach upper layers.
 	 * It is limitation in ldap_sync_init() and ldap_sync_poll()
