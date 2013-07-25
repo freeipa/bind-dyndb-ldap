@@ -82,6 +82,21 @@ ldapdb_get_rbtdb(dns_db_t *db) {
 	return ldapdb->rbtdb;
 }
 
+/**
+ * Get full DNS name from the node.
+ *
+ * @warning
+ * The code silently expects that "node" came from RBTDB and thus
+ * assumption dns_dbnode_t (from RBTDB) == dns_rbtnode_t is correct.
+ *
+ * This should work as long as we use only RBTDB and nothing else.
+ */
+static isc_result_t
+ldapdb_name_fromnode(dns_dbnode_t *node, dns_name_t *name) {
+	dns_rbtnode_t *rbtnode = (dns_rbtnode_t *) node;
+	return dns_rbt_fullnamefromnode(rbtnode, name);
+}
+
 /*
  * Functions.
  *
@@ -403,48 +418,160 @@ allrdatasets(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	return dns_db_allrdatasets(ldapdb->rbtdb, node, version, now, iteratorp);
 }
 
-/* !!! Write back to the LDAP is missing.
- * Only in-memory RBTDB will be modified. */
+/* TODO: Add 'tainted' flag to the LDAP instance if something went wrong. */
 static isc_result_t
 addrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	    isc_stdtime_t now, dns_rdataset_t *rdataset, unsigned int options,
 	    dns_rdataset_t *addedrdataset)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
+	dns_fixedname_t fname;
+	dns_rdatalist_t *rdlist = NULL;
+	isc_result_t result;
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
 
-	return dns_db_addrdataset(ldapdb->rbtdb, node, version, now,
-				  rdataset, options, addedrdataset);
+	dns_fixedname_init(&fname);
+
+	CHECK(dns_db_addrdataset(ldapdb->rbtdb, node, version, now,
+				  rdataset, options, addedrdataset));
+
+	CHECK(ldapdb_name_fromnode(node, dns_fixedname_name(&fname)));
+	result = dns_rdatalist_fromrdataset(rdataset, &rdlist);
+	INSIST(result == ISC_R_SUCCESS);
+	CHECK(write_to_ldap(dns_fixedname_name(&fname), ldapdb->ldap_inst, rdlist));
+
+cleanup:
+	return result;
+
 }
 
-/* !!! Write back to the LDAP is missing.
- * Only in-memory RBTDB will be modified. */
+static isc_result_t
+node_isempty(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
+	     isc_stdtime_t now, isc_boolean_t *isempty) {
+	dns_rdatasetiter_t *rds_iter = NULL;
+	dns_fixedname_t fname;
+	char buff[DNS_NAME_FORMATSIZE];
+	isc_result_t result;
+
+	dns_fixedname_init(&fname);
+
+	CHECK(ldapdb_name_fromnode(node, dns_fixedname_name(&fname)));
+
+	result = dns_db_allrdatasets(db, node, version, now, &rds_iter);
+	if (result == ISC_R_NOTFOUND) {
+		*isempty = ISC_TRUE;
+	} else if (result == ISC_R_SUCCESS) {
+		result = dns_rdatasetiter_first(rds_iter);
+		if (result == ISC_R_NOMORE) {
+			*isempty = ISC_TRUE;
+			result = ISC_R_SUCCESS;
+		} else if (result == ISC_R_SUCCESS) {
+			*isempty = ISC_FALSE;
+			result = ISC_R_SUCCESS;
+		} else if (result != ISC_R_SUCCESS) {
+			dns_name_format(dns_fixedname_name(&fname),
+					buff, DNS_NAME_FORMATSIZE);
+			log_error_r("dns_rdatasetiter_first() failed during "
+				    "node_isempty() for name '%s'", buff);
+		}
+		dns_rdatasetiter_destroy(&rds_iter);
+	} else {
+		dns_name_format(dns_fixedname_name(&fname),
+				buff, DNS_NAME_FORMATSIZE);
+		log_error_r("dns_db_allrdatasets() failed during "
+			    "node_isempty() for name '%s'", buff);
+	}
+
+cleanup:
+	return result;
+}
+
+/* TODO: Add 'tainted' flag to the LDAP instance if something went wrong. */
 static isc_result_t
 subtractrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 		 dns_rdataset_t *rdataset, unsigned int options,
 		 dns_rdataset_t *newrdataset)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
+	dns_fixedname_t fname;
+	dns_rdatalist_t *rdlist = NULL;
+	isc_boolean_t empty_node = ISC_FALSE;
+	isc_result_t substract_result;
+	isc_result_t result;
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
 
-	return dns_db_subtractrdataset(ldapdb->rbtdb, node, version, rdataset,
-				       options, newrdataset);
+	dns_fixedname_init(&fname);
+
+	result = dns_db_subtractrdataset(ldapdb->rbtdb, node, version,
+					 rdataset, options, newrdataset);
+	/* DNS_R_NXRRSET mean that whole RRset was deleted. */
+	if (result != ISC_R_SUCCESS && result != DNS_R_NXRRSET)
+		goto cleanup;
+
+	substract_result = result;
+	/* TODO: Could it create some race-condition? What about unprocessed
+	 * changes in synrepl queue? */
+	if (substract_result == DNS_R_NXRRSET) {
+		CHECK(node_isempty(ldapdb->rbtdb, node, version, 0,
+				   &empty_node));
+	}
+
+	result = dns_rdatalist_fromrdataset(rdataset, &rdlist);
+	INSIST(result == ISC_R_SUCCESS);
+	CHECK(ldapdb_name_fromnode(node, dns_fixedname_name(&fname)));
+	CHECK(remove_values_from_ldap(dns_fixedname_name(&fname), ldapdb->ldap_inst,
+				      rdlist, empty_node));
+
+cleanup:
+	if (result == ISC_R_SUCCESS)
+		result = substract_result;
+	return result;
 }
 
-/* !!! Write back to the LDAP is missing.
- * Only in-memory RBTDB will be modified. */
+/* This function is usually not called for non-cache DBs, so we don't need to
+ * care about performance.
+ * TODO: Add 'tainted' flag to the LDAP instance if something went wrong. */
 static isc_result_t
 deleterdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	       dns_rdatatype_t type, dns_rdatatype_t covers)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
+	dns_fixedname_t fname;
+	isc_boolean_t empty_node;
+	char attr_name[LDAP_ATTR_FORMATSIZE];
+	dns_rdatalist_t fake_rdlist; /* required by remove_values_from_ldap */
+	isc_result_t result;
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
 
-	return dns_db_deleterdataset(ldapdb->rbtdb, node, version, type,
-				     covers);
+	dns_fixedname_init(&fname);
+	dns_rdatalist_init(&fake_rdlist);
+
+	result = dns_db_deleterdataset(ldapdb->rbtdb, node, version, type,
+				       covers);
+	/* DNS_R_UNCHANGED mean that there was no RRset with given type. */
+	if (result != ISC_R_SUCCESS)
+		goto cleanup;
+
+	/* TODO: Could it create some race-condition? What about unprocessed
+	 * changes in synrepl queue? */
+	CHECK(node_isempty(ldapdb->rbtdb, node, version, 0, &empty_node));
+	CHECK(ldapdb_name_fromnode(node, dns_fixedname_name(&fname)));
+
+	if (empty_node == ISC_TRUE) {
+		CHECK(remove_entry_from_ldap(dns_fixedname_name(&fname),
+					     ldapdb->ldap_inst));
+	} else {
+		CHECK(rdatatype_to_ldap_attribute(type, attr_name,
+						  LDAP_ATTR_FORMATSIZE));
+		CHECK(remove_attr_from_ldap(dns_fixedname_name(&fname),
+					      ldapdb->ldap_inst, attr_name));
+	}
+
+cleanup:
+	return result;
 }
 
 static isc_boolean_t

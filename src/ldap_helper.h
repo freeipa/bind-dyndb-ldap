@@ -86,8 +86,15 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 /* Functions for writing to LDAP. */
 isc_result_t write_to_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		dns_rdatalist_t *rdlist) ATTR_NONNULLS;
-isc_result_t remove_from_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,
+isc_result_t remove_values_from_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		dns_rdatalist_t *rdlist, isc_boolean_t delete_node) ATTR_NONNULLS;
+
+isc_result_t
+remove_attr_from_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,
+		      const char *attr) ATTR_NONNULLS;
+
+isc_result_t
+remove_entry_from_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst) ATTR_NONNULLS;
 
 settings_set_t * ldap_instance_getsettings_local(ldap_instance_t *ldap_inst) ATTR_NONNULLS;
 

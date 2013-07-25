@@ -3181,12 +3181,76 @@ write_to_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst, dns_rdatalist_t *rd
 }
 
 isc_result_t
-remove_from_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,
+remove_values_from_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		 dns_rdatalist_t *rdlist, isc_boolean_t delete_node)
 {
 	return modify_ldap_common(owner, ldap_inst, rdlist, LDAP_MOD_DELETE,
 				  delete_node);
 }
+
+isc_result_t
+remove_attr_from_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,
+		      const char *attr) {
+	LDAPMod *change[2] = { NULL };
+	ld_string_t *dn = NULL;
+	isc_result_t result;
+
+	CHECK(str_new(ldap_inst->mctx, &dn));
+
+	CHECK(ldap_mod_create(ldap_inst->mctx, &change[0]));
+	change[0]->mod_op = LDAP_MOD_DELETE;
+	CHECK(isc_string_copy(change[0]->mod_type, LDAP_ATTR_FORMATSIZE, attr));
+	change[0]->mod_vals.modv_strvals = NULL; /* delete all values from given attribute */
+
+	CHECK(dnsname_to_dn(ldap_inst->zone_register,
+			    owner, dn));
+	CHECK(ldap_modify_do(ldap_inst, str_buf(dn), change, ISC_FALSE));
+
+cleanup:
+	ldap_mod_free(ldap_inst->mctx, &change[0]);
+	str_destroy(&dn);
+	return result;
+}
+
+
+isc_result_t
+remove_entry_from_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst) {
+	ldap_connection_t *ldap_conn = NULL;
+	ld_string_t *dn = NULL;
+	int ret;
+	isc_result_t result;
+
+	CHECK(str_new(ldap_inst->mctx, &dn));
+	CHECK(dnsname_to_dn(ldap_inst->zone_register, owner, dn));
+	log_debug(2, "deleting whole node: '%s'", str_buf(dn));
+
+	CHECK(ldap_pool_getconnection(ldap_inst->pool, &ldap_conn));
+	if (ldap_conn->handle == NULL) {
+		/*
+		 * handle can be NULL when the first connection to LDAP wasn't
+		 * successful
+		 * TODO: handle this case inside ldap_pool_getconnection()?
+		 */
+		CHECK(ldap_connect(ldap_inst, ldap_conn, ISC_FALSE));
+	}
+	ret = ldap_delete_ext_s(ldap_conn->handle, str_buf(dn), NULL, NULL);
+	result = (ret == LDAP_SUCCESS) ? ISC_R_SUCCESS : ISC_R_FAILURE;
+	if (ret == LDAP_SUCCESS)
+		goto cleanup;
+
+	LDAP_OPT_CHECK(ldap_get_option(ldap_conn->handle, LDAP_OPT_RESULT_CODE,
+		       &ret), "remove_entry_from_ldap failed to obtain "
+		       "ldap error code");
+
+	if (result != ISC_R_SUCCESS)
+		log_ldap_error(ldap_conn->handle, "while deleting entry '%s'",
+			       str_buf(dn));
+cleanup:
+	ldap_pool_putconnection(ldap_inst->pool, &ldap_conn);
+	str_destroy(&dn);
+	return result;
+}
+
 
 static isc_result_t
 ldap_pool_create(isc_mem_t *mctx, unsigned int connections, ldap_pool_t **poolp)
