@@ -18,6 +18,7 @@ is required.
 * support for dynamic updates
 * SASL authentication
 * SyncRepl (RFC 4533) for run-time synchronization with LDAP server
+* read-query performance nearly same as with plain BIND
 
 
 3. Installation

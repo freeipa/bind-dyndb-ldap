@@ -54,10 +54,6 @@ void free_rdatalist(isc_mem_t *mctx, dns_rdatalist_t *rdlist) ATTR_NONNULLS;
  * Free all dynamically allocated memory inside rdlist.
  */
 
-isc_result_t ldapdb_nodelist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
-				  dns_name_t *name, dns_name_t *origin,
-				  ldapdb_nodelist_t *nodelist) ATTR_NONNULLS;
-
 isc_result_t ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
 				  dns_name_t *name, dns_name_t *origin,
 				  ldapdb_rdatalist_t *rdatalist)

@@ -23,6 +23,7 @@
 #include <isc/util.h>
 #include <isc/md5.h>
 
+#include <dns/db.h>
 #include <dns/rbt.h>
 #include <dns/result.h>
 #include <dns/zone.h>
@@ -30,6 +31,7 @@
 #include <isc/string.h>
 #include <string.h>
 
+#include "ldap_driver.h"
 #include "log.h"
 #include "util.h"
 #include "zone_register.h"
@@ -57,8 +59,6 @@ struct zone_register {
 typedef struct {
 	dns_zone_t	*zone;
 	char		*dn;
-	isc_uint32_t	serial; /* last value processed by plugin (!= value in DB) */
-	unsigned char	digest[RDLIST_DIGESTLENGTH]; /* MD5 digest from all RRs in zone record */
 	ldap_cache_t	*cache;
 	settings_set_t	*settings;
 } zone_info_t;
@@ -379,6 +379,51 @@ zr_get_zone_cache(zone_register_t *zr, dns_name_t *name, ldap_cache_t **cachep) 
 }
 
 /*
+ * Find a zone containing 'name' within in the zone register 'zr'. If an
+ * exact or partial match is found, the pointer to the LDAP DB and internal
+ * RBT DB is attached to ldapdbp or rbtdbp respectively. Caller is responsible
+ * for detaching the database pointer.
+ *
+ * Either ldapdbp or rbtdbp can be NULL.
+ */
+isc_result_t
+zr_get_zone_dbs(zone_register_t *zr, dns_name_t *name, dns_db_t **ldapdbp,
+		dns_db_t **rbtdbp)
+{
+	isc_result_t result;
+	void *zinfo = NULL;
+	dns_db_t *ldapdb = NULL;
+
+	REQUIRE(zr != NULL);
+	REQUIRE(name != NULL);
+
+	if (!dns_name_isabsolute(name)) {
+		log_bug("trying to find zone with a relative name");
+		return ISC_R_FAILURE;
+	}
+
+	RWLOCK(&zr->rwlock, isc_rwlocktype_read);
+
+	result = dns_rbt_findname(zr->rbt, name, 0, NULL, &zinfo);
+	if (result == DNS_R_PARTIALMATCH)
+		result = ISC_R_SUCCESS;
+	if (result == ISC_R_SUCCESS) {
+		CHECK(dns_zone_getdb(((zone_info_t *)zinfo)->zone, &ldapdb));
+		if (ldapdbp != NULL)
+			dns_db_attach(ldapdb, ldapdbp);
+		if (rbtdbp != NULL)
+			dns_db_attach(ldapdb_get_rbtdb(ldapdb), rbtdbp);
+	}
+
+cleanup:
+	RWUNLOCK(&zr->rwlock, isc_rwlocktype_read);
+	if (ldapdb)
+		dns_db_detach(&ldapdb);
+
+	return result;
+}
+
+/*
  * Find the closest match to zone with origin 'name' in the zone register 'zr'.
  * The 'matched_name' will be set to the name that was matched while finding
  * 'name' in the red-black tree. The 'dn' will be set to the LDAP DN that
@@ -448,39 +493,6 @@ zr_get_zone_ptr(zone_register_t *zr, dns_name_t *name, dns_zone_t **zonep)
 	return result;
 }
 
-/**
- * Return last values processed by autoincrement feature.
- */
-isc_result_t
-zr_get_zone_serial_digest(zone_register_t *zr, dns_name_t *name,
-		isc_uint32_t *serialp, unsigned char ** digestp)
-{
-	isc_result_t result;
-	zone_info_t *zinfo = NULL;
-
-	REQUIRE(zr != NULL);
-	REQUIRE(name != NULL);
-	REQUIRE(serialp != NULL);
-	REQUIRE(digestp != NULL && *digestp == NULL);
-
-	if (!dns_name_isabsolute(name)) {
-		log_bug("trying to find zone with a relative name");
-		return ISC_R_FAILURE;
-	}
-
-	RWLOCK(&zr->rwlock, isc_rwlocktype_read);
-
-	result = dns_rbt_findname(zr->rbt, name, 0, NULL, (void *)&zinfo);
-	if (result == ISC_R_SUCCESS) {
-		*serialp = zinfo->serial;
-		*digestp = zinfo->digest;
-	}
-
-	RWUNLOCK(&zr->rwlock, isc_rwlocktype_read);
-
-	return result;
-}
-
 /*
  * Find a zone with origin 'name' within in the zone register 'zr'. If an
  * exact match is found, the pointer to the zone's settings is returned through
@@ -508,38 +520,6 @@ zr_get_zone_settings(zone_register_t *zr, dns_name_t *name, settings_set_t **set
 		*set = ((zone_info_t *)zinfo)->settings;
 
 	RWUNLOCK(&zr->rwlock, isc_rwlocktype_read);
-
-	return result;
-}
-
-/**
- * Set last SOA serial and digest from RRs processed by autoincrement feature.
- */
-isc_result_t
-zr_set_zone_serial_digest(zone_register_t *zr, dns_name_t *name,
-		isc_uint32_t serial, unsigned char *digest)
-{
-	isc_result_t result;
-	zone_info_t *zinfo = NULL;
-
-	REQUIRE(zr != NULL);
-	REQUIRE(name != NULL);
-	REQUIRE(digest != NULL);
-
-	if (!dns_name_isabsolute(name)) {
-		log_bug("trying to find zone with a relative name");
-		return ISC_R_FAILURE;
-	}
-
-	RWLOCK(&zr->rwlock, isc_rwlocktype_write);
-
-	result = dns_rbt_findname(zr->rbt, name, 0, NULL, (void *)&zinfo);
-	if (result == ISC_R_SUCCESS) {
-		zinfo->serial = serial;
-		memcpy(zinfo->digest, digest, RDLIST_DIGESTLENGTH);
-	}
-
-	RWUNLOCK(&zr->rwlock, isc_rwlocktype_write);
 
 	return result;
 }

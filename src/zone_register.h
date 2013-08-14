@@ -48,6 +48,10 @@ isc_result_t
 zr_get_zone_cache(zone_register_t *zr, dns_name_t *name, ldap_cache_t **cachep) ATTR_NONNULLS;
 
 isc_result_t
+zr_get_zone_dbs(zone_register_t *zr, dns_name_t *name, dns_db_t **ldapdbp,
+		dns_db_t **rbtdbp);
+
+isc_result_t
 zr_get_zone_dn(zone_register_t *zr, dns_name_t *name, const char **dn,
 	       dns_name_t *matched_name) ATTR_NONNULLS;
 
@@ -63,13 +67,5 @@ zr_rbt_iter_init(zone_register_t *zr, rbt_iterator_t **iter,
 
 isc_mem_t *
 zr_get_mctx(zone_register_t *zr) ATTR_NONNULLS;
-
-isc_result_t
-zr_set_zone_serial_digest(zone_register_t *zr, dns_name_t *name,
-		isc_uint32_t serial, unsigned char *digest) ATTR_NONNULLS;
-
-isc_result_t
-zr_get_zone_serial_digest(zone_register_t *zr, dns_name_t *name,
-		isc_uint32_t *serialp, unsigned char ** digestp) ATTR_NONNULLS;
 
 #endif /* !_LD_ZONE_REGISTER_H_ */

@@ -21,10 +21,12 @@
  */
 
 #include <dns/dynamic_db.h>
+#include <dns/diff.h>
 #include <dns/rbt.h>
 #include <dns/rdata.h>
 #include <dns/rdataclass.h>
 #include <dns/rdatalist.h>
+#include <dns/rdatasetiter.h>
 #include <dns/rdatatype.h>
 #include <dns/result.h>
 #include <dns/ttl.h>
@@ -68,6 +70,7 @@
 #include "krb5_helper.h"
 #include "cache.h"
 #include "ldap_convert.h"
+#include "ldap_driver.h"
 #include "ldap_entry.h"
 #include "ldap_helper.h"
 #include "log.h"
@@ -281,8 +284,9 @@ static isc_result_t parse_rdata(isc_mem_t *mctx, ldap_entry_t *entry,
 		dns_rdataclass_t rdclass, dns_rdatatype_t rdtype,
 		dns_name_t *origin, const char *rdata_text,
 		dns_rdata_t **rdatap) ATTR_NONNULLS;
-static inline isc_result_t ldap_get_zone_serial(ldap_instance_t *inst,
-		dns_name_t *zone_name, isc_uint32_t *serial) ATTR_NONNULLS;
+static isc_result_t
+ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
+		   const char *fake_mname, ldapdb_rdatalist_t *rdatalist);
 
 static isc_result_t ldap_connect(ldap_instance_t *ldap_inst,
 		ldap_connection_t *ldap_conn, isc_boolean_t force) ATTR_NONNULLS;
@@ -309,8 +313,6 @@ static isc_result_t ldap_rdata_to_char_array(isc_mem_t *mctx,
 static void free_char_array(isc_mem_t *mctx, char ***valsp) ATTR_NONNULLS;
 static isc_result_t modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		dns_rdatalist_t *rdlist, int mod_op, isc_boolean_t delete_node) ATTR_NONNULLS;
-static isc_result_t soa_serial_increment(isc_mem_t *mctx, ldap_instance_t *inst,
-		dns_name_t *zone_name) ATTR_NONNULLS;
 
 /* Functions for maintaining pool of LDAP connections */
 static isc_result_t ldap_pool_create(isc_mem_t *mctx, unsigned int connections,
@@ -1311,6 +1313,88 @@ cleanup:
 	return result;
 }
 
+/**
+ * Add all RRs from rdataset to the diff. Create strictly minimal diff.
+ */
+static isc_result_t
+rdataset_to_diff(isc_mem_t *mctx, dns_diffop_t op, dns_name_t *name,
+		dns_rdataset_t *rds, dns_diff_t *diff) {
+	dns_difftuple_t *tp = NULL;
+	isc_result_t result = ISC_R_SUCCESS;
+	dns_rdata_t rdata;
+
+	for (result = dns_rdataset_first(rds);
+	     result == ISC_R_SUCCESS;
+	     result = dns_rdataset_next(rds)) {
+		dns_rdata_init(&rdata);
+		dns_rdataset_current(rds, &rdata);
+		CHECK(dns_difftuple_create(mctx, op, name, rds->ttl, &rdata,
+					   &tp));
+		dns_diff_appendminimal(diff, &tp);
+	}
+
+cleanup:
+	return result;
+}
+
+/**
+ * Add all RRs from rdatalist to the diff. Create strictly minimal diff.
+ */
+static isc_result_t
+rdatalist_to_diff(isc_mem_t *mctx, dns_diffop_t op, dns_name_t *name,
+		  dns_rdatalist_t *rdatalist, dns_diff_t *diff) {
+	dns_difftuple_t *tp = NULL;
+	isc_result_t result = ISC_R_SUCCESS;
+
+	for (dns_rdata_t *rd = HEAD(rdatalist->rdata);
+			  rd != NULL;
+			  rd = NEXT(rd, link)) {
+		CHECK(dns_difftuple_create(mctx, op, name, rdatalist->ttl, rd,
+					   &tp));
+		dns_diff_appendminimal(diff, &tp);
+	}
+
+cleanup:
+	return result;
+}
+
+/**
+ * Compute minimal diff between rdatalist and rdataset iterator. This produces
+ * minimal diff applicable to a database.
+ */
+static isc_result_t
+diff_ldap_rbtdb(isc_mem_t *mctx, dns_name_t *name, ldapdb_rdatalist_t *ldap_rdatalist,
+		    dns_rdatasetiter_t *rbt_rds_iter, dns_diff_t *diff) {
+	isc_result_t result;
+	dns_rdataset_t rbt_rds;
+	dns_rdatalist_t *l;
+
+	dns_rdataset_init(&rbt_rds);
+
+	/* FIXME: rbt_rds_iter == NULL || ldap_rdatalist == NULL */
+	for (result = dns_rdatasetiter_first(rbt_rds_iter);
+	     result == ISC_R_SUCCESS;
+	     result = dns_rdatasetiter_next(rbt_rds_iter)) {
+		dns_rdatasetiter_current(rbt_rds_iter, &rbt_rds);
+		result = rdataset_to_diff(mctx, DNS_DIFFOP_DEL, name, &rbt_rds,
+					  diff);
+		if (result != ISC_R_SUCCESS && result != ISC_R_NOMORE)
+			goto cleanup;
+		dns_rdataset_disassociate(&rbt_rds);
+	}
+
+	for (l = HEAD(*ldap_rdatalist);
+	     l != NULL;
+	     l = NEXT(l, link)) {
+		result = rdatalist_to_diff(mctx, DNS_DIFFOP_ADD, name, l, diff);
+		if (result != ISC_R_SUCCESS && result != ISC_R_NOMORE)
+			goto cleanup;
+	}
+
+cleanup:
+	return result;
+}
+
 /* Parse the master zone entry */
 static isc_result_t ATTR_NONNULLS
 ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
@@ -1325,15 +1409,20 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	isc_boolean_t published = ISC_FALSE;
 	isc_boolean_t ssu_changed;
 	isc_task_t *task = inst->task;
-	isc_uint32_t ldap_serial;
-	isc_uint32_t zr_serial;	/* SOA serial value from in-memory zone register */
-	unsigned char ldap_digest[RDLIST_DIGESTLENGTH] = {0};
-	unsigned char *zr_digest = NULL;
 	ldapdb_rdatalist_t rdatalist;
 	isc_boolean_t zone_dynamic = ISC_FALSE;
 	ldap_cache_t *cache = NULL;
 	settings_set_t *zone_settings = NULL;
-	isc_boolean_t serial_autoincrement;
+	const char *fake_mname = NULL;
+	isc_uint32_t serial;
+
+	dns_db_t *rbtdb = NULL;
+	dns_diff_t diff;
+	dns_dbversion_t *version = NULL;
+	dns_dbnode_t *node = NULL;
+	dns_rdatasetiter_t *rbt_rds_iterator = NULL;
+
+	dns_diff_init(inst->mctx, &diff);
 
 	REQUIRE(entry != NULL);
 	REQUIRE(inst != NULL);
@@ -1455,61 +1544,55 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	 * SERVFAIL for queries beneath this zone. This is
 	 * admin's problem.
 	 */
+
+	/* !!! We should parse existing zone records before dns_zone_load(). */
 	result = dns_zone_load(zone);
 	if (result != ISC_R_SUCCESS && result != DNS_R_UPTODATE
 		&& result != DNS_R_DYNAMIC && result != DNS_R_CONTINUE)
 		goto cleanup;
-
 	zone_dynamic = (result == DNS_R_DYNAMIC);
 
-	/* initialize serial in zone register and always increment serial
-	 * for a new zone (typically after BIND start)
-	 * - the zone was possibly changed in meanwhile */
-	if (publish) {
-		CHECK(ldap_get_zone_serial(inst, &name, &ldap_serial));
-		CHECK(zr_set_zone_serial_digest(inst->zone_register, &name, ldap_serial,
-				ldap_digest));
-	}
+	/* synchronize zone origin with LDAP */
+	CHECK(setting_get_str("fake_mname", inst->local_settings,
+			      &fake_mname));
+	CHECK(ldap_parse_rrentry(inst->mctx, entry, &name, fake_mname,
+				 &rdatalist));
 
-	/* SOA serial autoincrement feature for SOA record:
-	 * 1) Remember old (already processed) SOA serial and digest computed from
-	 *    zone root records in zone register.
-	 * 2) After each change notification compare the old and new SOA serials
-	 *    and recomputed digests. If:
-	 * 3a) Nothing was changed (false change notification received) - do nothing
-	 * 3b) Serial was changed - remember the new serial and recompute digest,
-	 *     do not autoincrement (respect external change).
-	 * 3c) The old and new serials are same: autoincrement only if something
-	 *     else was changed.
-	 */
-	CHECK(ldap_get_zone_serial(inst, &name, &ldap_serial));
-	CHECK(zr_get_zone_serial_digest(inst->zone_register, &name, &zr_serial,
-			&zr_digest));
-	CHECK(setting_get_bool("serial_autoincrement", zone_settings,
-			       &serial_autoincrement));
-	if (serial_autoincrement) {
-		CHECK(ldapdb_rdatalist_get(inst->mctx, inst, &name,
-				&name, &rdatalist));
-		CHECK(rdatalist_digest(inst->mctx, &rdatalist, ldap_digest));
+	CHECK(zr_get_zone_dbs(inst->zone_register, &name, NULL, &rbtdb));
+	CHECK(dns_db_newversion(rbtdb, &version));
+	CHECK(dns_db_getoriginnode(rbtdb, &node));
+	result = dns_db_allrdatasets(rbtdb, node, version, 0,
+				     &rbt_rds_iterator);
+	if (result == ISC_R_SUCCESS) {
+		CHECK(diff_ldap_rbtdb(inst->mctx, &name, &rdatalist,
+				      rbt_rds_iterator, &diff));
+		dns_rdatasetiter_destroy(&rbt_rds_iterator);
+	} else if (result != ISC_R_NOTFOUND)
+		goto cleanup;
 
-		if (ldap_serial == zr_serial) {
-			/* serials are same - increment only if something was changed */
-			if (memcmp(zr_digest, ldap_digest, RDLIST_DIGESTLENGTH) != 0)
-				CHECK(soa_serial_increment(inst->mctx, inst, &name));
-		}
-	}
-	if (ldap_serial != zr_serial) {
-		/* serial in LDAP was changed - update zone register */
-		CHECK(zr_set_zone_serial_digest(inst->zone_register, &name,
-				ldap_serial, ldap_digest));
+	dns_db_detachnode(rbtdb, &node);
+#if RBTDB_DEBUG >= 2
+	dns_diff_print(&diff, stdout);
+#endif
+	CHECK(dns_diff_apply(&diff, rbtdb, version));
+	dns_db_closeversion(rbtdb, &version, ISC_TRUE);
 
-		if (zone_dynamic)
-			dns_zone_notify(zone);
-	}
+	CHECK(dns_zone_getserial2(zone, &serial));
 	if (publish)
-		dns_zone_log(zone, ISC_LOG_INFO, "loaded serial %u", ldap_serial);
+		dns_zone_log(zone, ISC_LOG_INFO, "loaded serial %u", serial);
+	if (zone_dynamic)
+		dns_zone_notify(zone);
 
 cleanup:
+	dns_diff_clear(&diff);
+	if (rbt_rds_iterator != NULL)
+		dns_rdatasetiter_destroy(&rbt_rds_iterator);
+	if (node != NULL)
+		dns_db_detachnode(rbtdb, &node);
+	if (rbtdb != NULL && version != NULL)
+		dns_db_closeversion(rbtdb, &version, ISC_FALSE);
+	if (rbtdb != NULL)
+		dns_db_detach(&rbtdb);
 	if (publish && !published) { /* Failure in ACL parsing or so. */
 		log_error_r("zone '%s': publishing failed, rolling back due to",
 			    entry->dn);
@@ -1690,74 +1773,6 @@ cleanup:
 		data_str = str_buf(data_buf);
 	log_error_r("failed to parse RR entry: dn '%s': data '%s'", dn, data_str);
 	str_destroy(&data_buf);
-	return result;
-}
-
-isc_result_t
-ldapdb_nodelist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *name,
-		     dns_name_t *origin, ldapdb_nodelist_t *nodelist)
-{
-	isc_result_t result;
-	ldap_qresult_t *ldap_qresult = NULL;
-	ldap_entry_t *entry;
-	ld_string_t *string = NULL;
-	ldapdb_node_t *node;
-	dns_name_t node_name;
-	const char *fake_mname = NULL;
-
-	REQUIRE(ldap_inst != NULL);
-	REQUIRE(name != NULL);
-	REQUIRE(nodelist != NULL);
-
-	/* RRs aren't in the cache, perform ordinary LDAP query */
-	INIT_LIST(*nodelist);
-	CHECK(str_new(mctx, &string));
-	CHECK(dnsname_to_dn(ldap_inst->zone_register, name, string));
-
-	CHECK(ldap_query(ldap_inst, NULL, &ldap_qresult, str_buf(string),
-			 LDAP_SCOPE_SUBTREE, NULL, 0, "(objectClass=idnsRecord)"));
-
-	if (EMPTY(ldap_qresult->ldap_entries)) {
-		result = ISC_R_NOTFOUND;
-		goto cleanup;
-	}
-
-	CHECK(setting_get_str("fake_mname", ldap_inst->local_settings,
-			      &fake_mname));
-	for (entry = HEAD(ldap_qresult->ldap_entries);
-		entry != NULL;
-		entry = NEXT(entry, link)) {
-		node = NULL;	
-		dns_name_init(&node_name, NULL);
-		if (dn_to_dnsname(mctx, entry->dn,  &node_name, NULL)
-		    != ISC_R_SUCCESS) {
-			continue;
-		}
-
-		result = ldapdbnode_create(mctx, &node_name, &node);
-		dns_name_free(&node_name, mctx);
-		if (result == ISC_R_SUCCESS) {
-			result = ldap_parse_rrentry(mctx, entry, origin,
-						    fake_mname,
-						    &node->rdatalist);
-		}
-		if (result != ISC_R_SUCCESS) {
-			/* node cleaning */	
-			dns_name_reset(&node->owner);
-			ldapdb_rdatalist_destroy(mctx, &node->rdatalist);
-			SAFE_MEM_PUT_PTR(mctx, node);
-			continue;
-		}
-		INIT_LINK(node, link);
-		APPEND(*nodelist, node, link);
-	}
-
-	result = ISC_R_SUCCESS;
-
-cleanup:
-	ldap_query_free(ISC_FALSE, &ldap_qresult);
-	str_destroy(&string);
-
 	return result;
 }
 
@@ -3316,86 +3331,6 @@ cleanup:
 #define SYNCREPL_ANY(chgtype) ((chgtype & LDAP_ENTRYCHANGE_ALL) != 0)
  */
 
-static inline isc_result_t
-ldap_get_zone_serial(ldap_instance_t *inst, dns_name_t *zone_name,
-				isc_uint32_t *serial) {
-	isc_result_t result;
-	dns_zone_t *zone = NULL;
-
-	CHECK(zr_get_zone_ptr(inst->zone_register, zone_name, &zone));
-	CHECK(dns_zone_getserial2(zone, serial));
-
-cleanup:
-	if (zone != NULL)
-		dns_zone_detach(&zone);
-	return result;
-}
-
-static isc_result_t
-soa_serial_increment(isc_mem_t *mctx, ldap_instance_t *inst,
-		dns_name_t *zone_name) {
-	isc_result_t result = ISC_R_FAILURE;
-	ld_string_t *zone_dn = NULL;
-	const char *zone_dn_char = "INACTIVE/UNKNOWN";
-	ldapdb_rdatalist_t rdatalist;
-	dns_rdatalist_t *rdlist = NULL;
-	dns_rdata_t *soa_rdata = NULL;
-	isc_uint32_t old_serial;
-	isc_uint32_t new_serial;
-	isc_time_t curr_time;
-	ldap_cache_t *cache = NULL;
-
-	REQUIRE(inst != NULL);
-	REQUIRE(zone_name != NULL);
-
-	INIT_LIST(rdatalist);
-	CHECK(str_new(mctx, &zone_dn));
-	CHECK(dnsname_to_dn(inst->zone_register, zone_name, zone_dn));
-	zone_dn_char = str_buf(zone_dn);
-	log_debug(5, "incrementing SOA serial number in zone '%s'",
-				str_buf(zone_dn));
-
-	/* get original SOA rdata and serial value */
-	CHECK(ldapdb_rdatalist_get(mctx, inst, zone_name, zone_name, &rdatalist));
-	CHECK(ldapdb_rdatalist_findrdatatype(&rdatalist, dns_rdatatype_soa, &rdlist));
-	soa_rdata = ISC_LIST_HEAD(rdlist->rdata);
-	CHECK(ldap_get_zone_serial(inst, zone_name, &old_serial));
-
-	/* Compute the new SOA serial - use actual timestamp.
-	 * If timestamp <= oldSOAserial then increment old serial by one. */
-	isc_time_now(&curr_time);
-	new_serial = isc_time_seconds(&curr_time) & 0xFFFFFFFF;
-	if (!isc_serial_gt(new_serial, old_serial)) {
-		/* increment by one, RFC1982, from bind-9.8.2/bin/named/update.c */
-		new_serial = (old_serial + 1) & 0xFFFFFFFF;
-	}
-	if (new_serial == 0)
-		new_serial = 1;
-	log_debug(5,"zone '%s': old serial %u, new serial %u",
-				str_buf(zone_dn), old_serial, new_serial);
-	dns_soa_setserial(new_serial, soa_rdata);
-
-	/* write the new serial back to DB */
-	CHECK(modify_soa_record(inst, str_buf(zone_dn), soa_rdata));
-	CHECK(zr_get_zone_cache(inst->zone_register, zone_name, &cache));
-	CHECK(discard_from_cache(cache, zone_name));
-
-	/* put the new SOA to inst->cache and compare old and new serials */
-	CHECK(ldap_get_zone_serial(inst, zone_name, &new_serial));
-
-cleanup:
-	if (result == ISC_R_SUCCESS &&
-	    isc_serial_gt(new_serial, old_serial) == ISC_FALSE)
-		result = DNS_R_UNCHANGED;
-	if (result != ISC_R_SUCCESS)
-		log_error_r("SOA serial number incrementation failed in zone "
-			    "'%s'", zone_dn_char);
-
-	str_destroy(&zone_dn);
-	ldapdb_rdatalist_destroy(mctx, &rdatalist);
-	return result;
-}
-
 /*
  * update_zone routine is processed asynchronously so it cannot assume
  * anything about state of ldap_inst from where it was sent. The ldap_inst
@@ -3535,19 +3470,27 @@ update_record(isc_task_t *task, isc_event_t *event)
 	isc_result_t result;
 	ldap_instance_t *inst = NULL;
 	ldap_cache_t *cache = NULL;
-	isc_boolean_t serial_autoincrement;
 	isc_mem_t *mctx;
 	dns_zone_t *zone_ptr = NULL;
 	isc_boolean_t zone_found = ISC_FALSE;
 	isc_boolean_t zone_reloaded = ISC_FALSE;
 	isc_uint32_t serial;
 	ldap_entry_t *entry = pevent->entry;
-	settings_set_t *zone_settings;
 	const char *fake_mname = NULL;
 
+	dns_db_t *rbtdb;
+	dns_diff_t diff;
+	dns_dbversion_t *version = NULL; /* version is shared between rbtdb and ldapdb */
+	dns_dbnode_t *node = NULL; /* node is shared between rbtdb and ldapdb */
+	dns_rdatasetiter_t *rbt_rds_iterator = NULL;
+
 	mctx = pevent->mctx;
+	dns_diff_init(mctx, &diff);
 
 	UNUSED(task);
+#ifdef RBTDB_DEBUG
+	static unsigned int count = 0;
+#endif
 
 	/* Structure to be stored in the cache. */
 	ldapdb_rdatalist_t rdatalist;
@@ -3564,9 +3507,14 @@ update_record(isc_task_t *task, isc_event_t *event)
 	dns_name_init(&prevorigin, NULL);
 	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
 	CHECK(dn_to_dnsname(mctx, pevent->dn, &name, &origin));
+	CHECK(zr_get_zone_ptr(inst->zone_register, &origin, &zone_ptr));
 	zone_found = ISC_TRUE;
 
 update_restart:
+	rbtdb = NULL;
+	ldapdb_rdatalist_destroy(mctx, &rdatalist);
+	CHECK(zr_get_zone_dbs(inst->zone_register, &name, NULL, &rbtdb));
+
 	/* This code is disabled because we don't have UUID->DN database yet.
 	    || SYNCREPL_MODDN(pevent->chgtype)) { */
 	if (SYNCREPL_DEL(pevent->chgtype)) {
@@ -3589,6 +3537,15 @@ update_restart:
 			log_debug(5, "syncrepl_update: removing name from cache, dn: '%s'",
 					  pevent->prevdn);
 			cache = NULL;
+//
+ * Remove old name!
+			zone = NULL;
+			rbtdb = NULL;
+			CHECK(zr_get_zone_ptr(inst->zone_register, &prevname, &zone));
+			result = dns_zone_getdb(zone, &rbtdb);
+			REQUIRE(result == ISC_R_SUCCESS);
+//
+
 			result = zr_get_zone_cache(inst->zone_register, &prevname, &cache);
 			if (result == ISC_R_SUCCESS)
 				CHECK(discard_from_cache(cache, &prevname));
@@ -3601,14 +3558,9 @@ update_restart:
 	}
 	*/
 
-	if (SYNCREPL_ADD(pevent->chgtype) || SYNCREPL_MOD(pevent->chgtype)) /* ||
-			SYNCREPL_MODDN(pevent->chgtype) ||
-			!SYNCREPL_ANY(pevent->chgtype)) */ {
+	if (SYNCREPL_ADD(pevent->chgtype) || SYNCREPL_MOD(pevent->chgtype)) {
 		/* 
-		 * Find new data in LDAP. !SYNCREPL_ANY indicates unchanged entry
-		 * found during initial lookup (i.e. database dump).
-		 *
-		 * @todo Change this to convert ldap_entry_t to ldapdb_rdatalist_t.
+		 * Parse new data from LDAP.
 		 */
 		log_debug(5, "syncrepl_update: updating name in cache, dn: '%s'",
 		          pevent->dn);
@@ -3617,43 +3569,56 @@ update_restart:
 		CHECK(ldap_parse_rrentry(mctx, entry, &origin, fake_mname,
 					 &rdatalist));
 
-		if (!EMPTY(rdatalist))
-			/* Cache RRs */
-			CHECK(ldap_cache_addrdatalist(cache, &name, &rdatalist));
-	
-		/* Destroy rdatalist, it is now in the cache. */
-		ldapdb_rdatalist_destroy(mctx, &rdatalist);
+		CHECK(dns_db_newversion(rbtdb, &version));
+		CHECK(dns_db_findnode(rbtdb, &name, ISC_TRUE, &node));
+		result = dns_db_allrdatasets(rbtdb, node, version, 0,
+					     &rbt_rds_iterator);
+		if (result == ISC_R_SUCCESS) {
+			CHECK(diff_ldap_rbtdb(mctx, &name, &rdatalist,
+					      rbt_rds_iterator, &diff));
+			dns_rdatasetiter_destroy(&rbt_rds_iterator);
+		} else if (result != ISC_R_NOTFOUND)
+			goto cleanup;
+
+		dns_db_detachnode(rbtdb, &node);
+#if RBTDB_DEBUG >= 2
+		dns_diff_print(&diff, stdout);
+#endif
+		CHECK(dns_diff_apply(&diff, rbtdb, version));
+		dns_db_closeversion(rbtdb, &version, ISC_TRUE);
+
+		/*
+		 * The cache is updated in ldapdb_rdatalist_get(...):
+		 * CHECK(ldap_cache_addrdatalist(cache, &name, &rdatalist);
+		 */
 	}
 
-	/* Do not bump serial during initial database dump. */
-	/* This optimization is disabled because we don't have SYNCREPL_ANY
-	 * detection at the moment.
-	if (SYNCREPL_ANY(pevent->chgtype)) { */
-	{
-		zone_settings = NULL;
-		CHECK(zr_get_zone_settings(inst->zone_register, &origin, &zone_settings));
-		CHECK(setting_get_bool("serial_autoincrement", zone_settings,
-				       &serial_autoincrement));
-
-		/* Serial autoincrement does zone state check implicitly.
-		 * Ldap_get_zone_serial() is required for other cases, because
-		 * no function above returns DNS_R_NOTLOADED for invalid zone. */
-		if (serial_autoincrement)
-			CHECK(soa_serial_increment(mctx, inst, &origin));
-		else {
-			CHECK(ldap_get_zone_serial(inst, &origin, &serial));
-		}
-	}
+	/* Check if the zone is loaded or not.
+	 * No other function above returns DNS_R_NOTLOADED. */
+	result = dns_zone_getserial2(zone_ptr, &serial);
 
 cleanup:
+#ifdef RBTDB_DEBUG
+	if (++count % 100 == 0)
+		log_info("update_record: %u entries processed; inuse: %zd",
+			 count, isc_mem_inuse(mctx));
+#endif
+	dns_diff_clear(&diff);
+	if (rbt_rds_iterator != NULL)
+		dns_rdatasetiter_destroy(&rbt_rds_iterator);
+	if (node != NULL)
+		dns_db_detachnode(rbtdb, &node);
+	if (rbtdb != NULL && version != NULL)
+		dns_db_closeversion(rbtdb, &version, ISC_FALSE); /* rollback */
+	if (rbtdb != NULL)
+		dns_db_detach(&rbtdb);
 	if (result != ISC_R_SUCCESS && zone_found && !zone_reloaded &&
 	   (result == DNS_R_NOTLOADED || result == DNS_R_BADZONE)) {
 		log_debug(1, "reloading invalid zone after a change; "
 			     "reload triggered by change in '%s'",
 			     pevent->dn);
 
-		result = zr_get_zone_ptr(inst->zone_register, &origin, &zone_ptr);
-		if (result == ISC_R_SUCCESS)
+		if (zone_ptr != NULL)
 			result = dns_zone_load(zone_ptr);
 
 		if (result == ISC_R_SUCCESS || result == DNS_R_UPTODATE ||
@@ -3673,9 +3638,10 @@ cleanup:
 					     "reload");
 			}
 		} else {
-			log_error_r("unable to reload invalid zone; "
-				    "reload triggered by change in '%s'",
-				    pevent->dn);
+			dns_zone_log(zone_ptr, ISC_LOG_ERROR,
+				    "unable to reload invalid zone; "
+				    "reload triggered by change in '%s':%s",
+				    pevent->dn, dns_result_totext(result));
 		}
 
 	} else if (result != ISC_R_SUCCESS) {
@@ -3695,6 +3661,7 @@ cleanup:
 		dns_name_free(&origin, inst->mctx);
 	if (dns_name_dynamic(&prevorigin))
 		dns_name_free(&prevorigin, inst->mctx);
+	ldapdb_rdatalist_destroy(mctx, &rdatalist);
 	isc_mem_free(mctx, pevent->dbname);
 	if (pevent->prevdn != NULL)
 		isc_mem_free(mctx, pevent->prevdn);
@@ -3733,13 +3700,6 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 		CHECKED_MEM_STRDUP(mctx, prevdn_ldap, prevdn);
 	}
 	*/
-
-	/*
-	 * We are very simple. Every update (add/mod/del) means that
-	 * we remove the zone/record, fetch it's entry from LDAP
-	 * and then add it again. This is definitely place for improvement
-	 * but it should be enough for now.
-	 */
 
 	if ((class & LDAP_ENTRYCLASS_CONFIG) != 0)
 		action = update_config;
@@ -3879,12 +3839,21 @@ int ldap_sync_search_entry (
 	ldap_instance_t *inst = ls->ls_private;
 	ldap_entry_t *entry = NULL;
 	isc_result_t result;
+#ifdef RBTDB_DEBUG
+	static unsigned int count = 0;
+#endif
 
 	/* TODO: Use this for UUID->DN mapping and MODDN detection. */
 	UNUSED(entryUUID);
 
+
 	CHECK(ldap_entry_create(inst->mctx, ls->ls_ld, msg, &entry));
 	syncrepl_update(inst, entry, phase);
+#ifdef RBTDB_DEBUG
+	if (++count % 100 == 0)
+		log_info("ldap_sync_search_entry: %u entries read; inuse: %zd",
+			 count, isc_mem_inuse(inst->mctx));
+#endif
 
 cleanup:
 	if (result != ISC_R_SUCCESS)

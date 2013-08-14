@@ -41,21 +41,9 @@
  */
 typedef LIST(dns_rdatalist_t) ldapdb_rdatalist_t;
 
-typedef struct ldapdb_node ldapdb_node_t;
-typedef LIST(ldapdb_node_t) ldapdb_nodelist_t;
-struct ldapdb_node {
-	unsigned int		magic;
-	isc_refcount_t		refs;
-	dns_name_t		owner;
-	ldapdb_rdatalist_t	rdatalist;
-	ISC_LINK(ldapdb_node_t)	link;
-};
-
 typedef struct enum_txt_assoc {
 	int		value;
 	const char	*description;
 } enum_txt_assoc_t;
 
-isc_result_t
-ldapdbnode_create(isc_mem_t *mctx, dns_name_t *owner, ldapdb_node_t **nodep) ATTR_NONNULLS;
 #endif /* !_LD_TYPES_H_ */
