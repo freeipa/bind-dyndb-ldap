@@ -8,6 +8,7 @@ HDRS =				\
 	fwd_register.h		\
 	krb5_helper.h		\
 	ldap_convert.h		\
+	ldap_driver.h		\
 	ldap_entry.h		\
 	ldap_helper.h		\
 	log.h			\

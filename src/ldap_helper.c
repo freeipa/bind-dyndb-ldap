@@ -1414,15 +1414,19 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	ldap_cache_t *cache = NULL;
 	settings_set_t *zone_settings = NULL;
 	const char *fake_mname = NULL;
+	isc_boolean_t serial_autoincrement;
 	isc_uint32_t serial;
 
 	dns_db_t *rbtdb = NULL;
+	dns_db_t *ldapdb = NULL;
 	dns_diff_t diff;
+	dns_diff_t soa_diff;
 	dns_dbversion_t *version = NULL;
 	dns_dbnode_t *node = NULL;
 	dns_rdatasetiter_t *rbt_rds_iterator = NULL;
 
 	dns_diff_init(inst->mctx, &diff);
+	dns_diff_init(inst->mctx, &soa_diff);
 
 	REQUIRE(entry != NULL);
 	REQUIRE(inst != NULL);
@@ -1558,7 +1562,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	CHECK(ldap_parse_rrentry(inst->mctx, entry, &name, fake_mname,
 				 &rdatalist));
 
-	CHECK(zr_get_zone_dbs(inst->zone_register, &name, NULL, &rbtdb));
+	CHECK(zr_get_zone_dbs(inst->zone_register, &name, &ldapdb, &rbtdb));
 	CHECK(dns_db_newversion(rbtdb, &version));
 	CHECK(dns_db_getoriginnode(rbtdb, &node));
 	result = dns_db_allrdatasets(rbtdb, node, version, 0,
@@ -1574,7 +1578,35 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 #if RBTDB_DEBUG >= 2
 	dns_diff_print(&diff, stdout);
 #endif
+	CHECK(setting_get_bool("serial_autoincrement", inst->local_settings,
+			       &serial_autoincrement));
+	/* No real change in RR data -> do not increment SOA serial. */
+	if (HEAD(diff.tuples) == NULL)
+		serial_autoincrement = ISC_FALSE;
+
+	/* Detect if SOA serial is affected by the update or not. */
+	CHECK(dns_zone_getserial2(zone, &serial));
+	for (dns_difftuple_t *tp = HEAD(diff.tuples);
+			      tp != NULL && serial_autoincrement == ISC_TRUE;
+			      tp = NEXT(tp, link)) {
+		if (tp->rdata.type == dns_rdatatype_soa) {
+			if (isc_serial_ne(dns_soa_getserial(&tp->rdata), serial)
+			    == ISC_TRUE) {
+				serial_autoincrement = ISC_FALSE;
+			}
+		}
+	}
+
 	CHECK(dns_diff_apply(&diff, rbtdb, version));
+	if (serial_autoincrement == ISC_TRUE) {
+		CHECK(update_soa_serial(inst->mctx, dns_updatemethod_unixtime,
+					ldapdb, version, &soa_diff));
+#if RBTDB_DEBUG == 2
+		CHECK(dns_diff_print(&soa_diff, stdout));
+#endif
+		CHECK(dns_diff_apply(&soa_diff, ldapdb, version));
+	}
+
 	dns_db_closeversion(rbtdb, &version, ISC_TRUE);
 
 	CHECK(dns_zone_getserial2(zone, &serial));
@@ -1585,14 +1617,17 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 
 cleanup:
 	dns_diff_clear(&diff);
+	dns_diff_clear(&soa_diff);
 	if (rbt_rds_iterator != NULL)
 		dns_rdatasetiter_destroy(&rbt_rds_iterator);
 	if (node != NULL)
 		dns_db_detachnode(rbtdb, &node);
 	if (rbtdb != NULL && version != NULL)
-		dns_db_closeversion(rbtdb, &version, ISC_FALSE);
+		dns_db_closeversion(rbtdb, &version, ISC_FALSE); /* rollback */
 	if (rbtdb != NULL)
 		dns_db_detach(&rbtdb);
+	if (ldapdb != NULL)
+		dns_db_detach(&ldapdb);
 	if (publish && !published) { /* Failure in ACL parsing or so. */
 		log_error_r("zone '%s': publishing failed, rolling back due to",
 			    entry->dn);
@@ -3470,6 +3505,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 	isc_result_t result;
 	ldap_instance_t *inst = NULL;
 	ldap_cache_t *cache = NULL;
+	isc_boolean_t serial_autoincrement;
 	isc_mem_t *mctx;
 	dns_zone_t *zone_ptr = NULL;
 	isc_boolean_t zone_found = ISC_FALSE;
@@ -3479,13 +3515,16 @@ update_record(isc_task_t *task, isc_event_t *event)
 	const char *fake_mname = NULL;
 
 	dns_db_t *rbtdb;
+	dns_db_t *ldapdb;
 	dns_diff_t diff;
+	dns_diff_t soa_diff;
 	dns_dbversion_t *version = NULL; /* version is shared between rbtdb and ldapdb */
 	dns_dbnode_t *node = NULL; /* node is shared between rbtdb and ldapdb */
 	dns_rdatasetiter_t *rbt_rds_iterator = NULL;
 
 	mctx = pevent->mctx;
 	dns_diff_init(mctx, &diff);
+	dns_diff_init(mctx, &soa_diff);
 
 	UNUSED(task);
 #ifdef RBTDB_DEBUG
@@ -3512,8 +3551,9 @@ update_record(isc_task_t *task, isc_event_t *event)
 
 update_restart:
 	rbtdb = NULL;
+	ldapdb = NULL;
 	ldapdb_rdatalist_destroy(mctx, &rdatalist);
-	CHECK(zr_get_zone_dbs(inst->zone_register, &name, NULL, &rbtdb));
+	CHECK(zr_get_zone_dbs(inst->zone_register, &name, &ldapdb, &rbtdb));
 
 	/* This code is disabled because we don't have UUID->DN database yet.
 	    || SYNCREPL_MODDN(pevent->chgtype)) { */
@@ -3584,7 +3624,20 @@ update_restart:
 #if RBTDB_DEBUG >= 2
 		dns_diff_print(&diff, stdout);
 #endif
+		/* No real change in RR data -> do not increment SOA serial. */
+		if (HEAD(diff.tuples) == NULL)
+			serial_autoincrement = ISC_FALSE;
+
 		CHECK(dns_diff_apply(&diff, rbtdb, version));
+		if (serial_autoincrement == ISC_TRUE) {
+			CHECK(update_soa_serial(mctx, dns_updatemethod_unixtime,
+						ldapdb, version, &soa_diff));
+#if RBTDB_DEBUG == 2
+			CHECK(dns_diff_print(&soa_diff, stdout));
+#endif
+			CHECK(dns_diff_apply(&soa_diff, ldapdb, version));
+		}
+
 		dns_db_closeversion(rbtdb, &version, ISC_TRUE);
 
 		/*
@@ -3604,6 +3657,7 @@ cleanup:
 			 count, isc_mem_inuse(mctx));
 #endif
 	dns_diff_clear(&diff);
+	dns_diff_clear(&soa_diff);
 	if (rbt_rds_iterator != NULL)
 		dns_rdatasetiter_destroy(&rbt_rds_iterator);
 	if (node != NULL)
@@ -3612,6 +3666,8 @@ cleanup:
 		dns_db_closeversion(rbtdb, &version, ISC_FALSE); /* rollback */
 	if (rbtdb != NULL)
 		dns_db_detach(&rbtdb);
+	if (ldapdb != NULL)
+		dns_db_detach(&ldapdb);
 	if (result != ISC_R_SUCCESS && zone_found && !zone_reloaded &&
 	   (result == DNS_R_NOTLOADED || result == DNS_R_BADZONE)) {
 		log_debug(1, "reloading invalid zone after a change; "
