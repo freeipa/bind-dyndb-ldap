@@ -26,4 +26,7 @@
 isc_result_t ATTR_NONNULLS
 fs_dir_create(const char *dir_name);
 
+isc_result_t ATTR_NONNULLS
+fs_file_remove(const char *file_name);
+
 #endif /* FS_H_ */

@@ -22,6 +22,7 @@
 
 #include <dns/dynamic_db.h>
 #include <dns/diff.h>
+#include <dns/journal.h>
 #include <dns/rbt.h>
 #include <dns/rdata.h>
 #include <dns/rdataclass.h>
@@ -45,7 +46,6 @@
 #include <isc/mutex.h>
 #include <isc/region.h>
 #include <isc/rwlock.h>
-#include <isc/serial.h>
 #include <isc/task.h>
 #include <isc/thread.h>
 #include <isc/time.h>
@@ -53,6 +53,7 @@
 #include <isc/netaddr.h>
 #include <isc/parseint.h>
 #include <isc/timer.h>
+#include <isc/serial.h>
 #include <isc/string.h>
 
 #include <alloca.h>
@@ -255,7 +256,7 @@ static const setting_t settings_local_default[] = {
 	{ "ldap_hostname",		no_default_string	},
 	{ "sync_ptr",			no_default_boolean	},
 	{ "dyn_update",			no_default_boolean	},
-	{ "serial_autoincrement",	no_default_string	},
+	{ "serial_autoincrement",	no_default_string	}, /* No longer supported */
 	{ "verbose_checks",		no_default_boolean	},
 	{ "directory",			no_default_string	},
 	end_of_settings
@@ -1431,6 +1432,24 @@ cleanup:
 	return result;
 }
 
+static isc_result_t ATTR_NONNULLS
+configure_paths(isc_mem_t *mctx, ldap_instance_t *inst, dns_zone_t *zone,
+		isc_boolean_t issecure) {
+	isc_result_t result;
+	ld_string_t *file_name = NULL;
+
+	CHECK(zr_get_zone_path(mctx, ldap_instance_getsettings_local(inst),
+			       dns_zone_getorigin(zone),
+			       (issecure ? "signed" : "raw"), &file_name));
+	CHECK(dns_zone_setfile(zone, str_buf(file_name)));
+	CHECK(fs_file_remove(dns_zone_getfile(zone)));
+	CHECK(fs_file_remove(dns_zone_getjournal(zone)));
+
+cleanup:
+	str_destroy(&file_name);
+	return result;
+}
+
 /**
  * Process strictly minimal diff and detect if data were changed
  * and return latest SOA RR.
@@ -1585,6 +1604,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	ldap_valuelist_t values;
 	dns_name_t name;
 	dns_zone_t *zone = NULL;
+	dns_zone_t *zone_raw = NULL;
 	isc_result_t result;
 	isc_boolean_t unlock = ISC_FALSE;
 	isc_boolean_t publish = ISC_FALSE;
@@ -1608,6 +1628,9 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	dns_rdatasetiter_t *rbt_rds_iterator = NULL;
 	dns_difftuple_t *soa_tuple = NULL;
 	isc_boolean_t soa_tuple_alloc = ISC_FALSE;
+
+	dns_journal_t *journal = NULL;
+	char *journal_filename = NULL;
 
 	dns_diff_init(inst->mctx, &diff);
 
@@ -1650,6 +1673,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	result = zr_get_zone_ptr(inst->zone_register, &name, &zone);
 	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
 		CHECK(create_zone(inst, &name, &zone));
+		CHECK(configure_paths(inst->mctx, inst, zone, ISC_FALSE));
 		CHECK(zr_add_zone(inst->zone_register, zone, dn));
 		publish = ISC_TRUE;
 		log_debug(2, "created zone %p: %s", zone, dn);
@@ -1811,9 +1835,22 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 				     "serial (%u) write back to LDAP failed",
 				     new_serial);
 	}
-	CHECK(dns_diff_apply(&diff, rbtdb, version));
 
-	dns_db_closeversion(rbtdb, &version, ISC_TRUE);
+	if (!EMPTY(diff.tuples)) {
+		/* write the transaction to journal */
+		dns_zone_getraw(zone, &zone_raw);
+		if (zone_raw == NULL)
+			journal_filename = dns_zone_getjournal(zone);
+		else
+			journal_filename = dns_zone_getjournal(zone_raw);
+		CHECK(dns_journal_open(inst->mctx, journal_filename,
+				       DNS_JOURNAL_CREATE, &journal));
+		CHECK(dns_journal_write_transaction(journal, &diff));
+
+		/* commit */
+		CHECK(dns_diff_apply(&diff, rbtdb, version));
+		dns_db_closeversion(rbtdb, &version, ISC_TRUE);
+	}
 
 	CHECK(dns_zone_getserial2(zone, &curr_serial));
 	if (publish)
@@ -1833,6 +1870,8 @@ cleanup:
 		dns_db_closeversion(rbtdb, &version, ISC_FALSE); /* rollback */
 	if (rbtdb != NULL)
 		dns_db_detach(&rbtdb);
+	if (journal != NULL)
+		dns_journal_destroy(&journal);
 	if (ldapdb != NULL)
 		dns_db_detach(&ldapdb);
 	if (publish && !published) { /* Failure in ACL parsing or so. */
@@ -3753,6 +3792,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 	ldap_instance_t *inst = NULL;
 	isc_mem_t *mctx;
 	dns_zone_t *zone_ptr = NULL;
+	dns_zone_t *zone_raw = NULL;
 	isc_boolean_t zone_found = ISC_FALSE;
 	isc_boolean_t zone_reloaded = ISC_FALSE;
 	isc_uint32_t serial;
@@ -3767,6 +3807,9 @@ update_record(isc_task_t *task, isc_event_t *event)
 	dns_dbversion_t *version = NULL; /* version is shared between rbtdb and ldapdb */
 	dns_dbnode_t *node = NULL; /* node is shared between rbtdb and ldapdb */
 	dns_rdatasetiter_t *rbt_rds_iterator = NULL;
+
+	dns_journal_t *journal = NULL;
+	char *journal_filename = NULL;
 
 	mctx = pevent->mctx;
 	dns_diff_init(mctx, &diff);
@@ -3801,6 +3844,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 update_restart:
 	rbtdb = NULL;
 	ldapdb = NULL;
+	journal = NULL;
 	ldapdb_rdatalist_destroy(mctx, &rdatalist);
 	CHECK(zr_get_zone_dbs(inst->zone_register, &name, &ldapdb, &rbtdb));
 	CHECK(dns_db_newversion(rbtdb, &version));
@@ -3888,6 +3932,17 @@ update_restart:
 #else
 		dns_diff_print(&diff, NULL);
 #endif
+		/* write the transaction to journal */
+		dns_zone_getraw(zone_ptr, &zone_raw);
+		if (zone_raw == NULL)
+			journal_filename = dns_zone_getjournal(zone_ptr);
+		else
+			journal_filename = dns_zone_getjournal(zone_raw);
+		CHECK(dns_journal_open(mctx, journal_filename,
+				       DNS_JOURNAL_CREATE, &journal));
+		CHECK(dns_journal_write_transaction(journal, &diff));
+
+		/* commit */
 		CHECK(dns_diff_apply(&diff, rbtdb, version));
 		dns_db_closeversion(rbtdb, &version, ISC_TRUE);
 	}
@@ -3909,10 +3964,13 @@ cleanup:
 		dns_rdatasetiter_destroy(&rbt_rds_iterator);
 	if (node != NULL)
 		dns_db_detachnode(rbtdb, &node);
+	/* rollback */
 	if (rbtdb != NULL && version != NULL)
-		dns_db_closeversion(rbtdb, &version, ISC_FALSE); /* rollback */
+		dns_db_closeversion(rbtdb, &version, ISC_FALSE);
 	if (rbtdb != NULL)
 		dns_db_detach(&rbtdb);
+	if (journal != NULL)
+		dns_journal_destroy(&journal);
 	if (ldapdb != NULL)
 		dns_db_detach(&ldapdb);
 	if (result != ISC_R_SUCCESS && zone_found && !zone_reloaded &&

@@ -25,11 +25,14 @@
 #include <sys/stat.h>
 
 #include <isc/dir.h>
+#include <isc/file.h>
 #include <isc/errno2result.h>
 #include <isc/result.h>
 #include <isc/util.h>
 
 #include "log.h"
+
+static const char msg_getcwd_failed[PATH_MAX] = "<getcwd() failed>";
 
 isc_result_t
 fs_dir_create(const char *dir_name)
@@ -41,7 +44,7 @@ fs_dir_create(const char *dir_name)
 
 	REQUIRE(dir_name != NULL);
 
-	strncpy(dir_curr, "<getcwd() failed>", sizeof(dir_curr));
+	strncpy(dir_curr, msg_getcwd_failed, sizeof(dir_curr));
 	getcwd(dir_curr, sizeof(dir_curr));
 	ret = mkdir(dir_name, 0700);
 	if (ret == 0)
@@ -63,6 +66,24 @@ fs_dir_create(const char *dir_name)
 	else
 		log_error_r("unable to open directory '%s', working directory "
 			    "is '%s'", dir_name, dir_curr);
+
+	return result;
+}
+
+isc_result_t
+fs_file_remove(const char *file_name) {
+	isc_result_t result;
+	char dir_curr[PATH_MAX];
+
+	result = isc_file_remove(file_name);
+	if (result == ISC_R_FILENOTFOUND)
+		result = ISC_R_SUCCESS;
+	else if (result != ISC_R_SUCCESS) {
+		strncpy(dir_curr, msg_getcwd_failed, sizeof(dir_curr));
+		getcwd(dir_curr, sizeof(dir_curr));
+		log_error_r("unable to delete file '%s', working directory "
+			    "is '%s'", file_name, dir_curr);
+	}
 
 	return result;
 }

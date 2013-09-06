@@ -120,19 +120,29 @@ static void ATTR_NONNULLS
 free_ldapdb(ldapdb_t *ldapdb)
 {
 #ifdef RBTDB_DEBUG
-#define PATH "/var/named/dump/"
 	isc_result_t result;
 	dns_dbversion_t *version = NULL;
-	char filename[DNS_NAME_FORMATSIZE + sizeof(PATH)] = PATH;
+	dns_name_t *zone_name = dns_db_origin(&ldapdb->common);
+	ld_string_t *file_name = NULL;
 
-	dns_name_format(&ldapdb->common.origin, filename + sizeof(PATH) - 1,
-			DNS_NAME_FORMATSIZE);
+	CHECK(zr_get_zone_path(ldapdb->common.mctx,
+			       ldap_instance_getsettings_local(ldapdb->ldap_inst),
+			       zone_name, "ldapdb.dump", &file_name));
 	dns_db_currentversion(ldapdb->rbtdb, &version);
-	log_error("dump to '%s' started", filename);
-	result = dns_db_dump2(ldapdb->rbtdb, version, filename, dns_masterformat_text);
-	log_error_r("dump to '%s' finished", filename);
+	log_info("dump to '%s' started", str_buf(file_name));
+	result = dns_db_dump2(ldapdb->rbtdb, version, str_buf(file_name),
+			      dns_masterformat_text);
+	log_info("dump to '%s' finished: %s", str_buf(file_name),
+		 isc_result_totext(result));
 	dns_db_closeversion(ldapdb->rbtdb, &version, ISC_FALSE);
-#undef PATH
+
+cleanup:
+	if (result != ISC_R_SUCCESS) {
+		log_error_r("dump to '%s' failed",
+				(file_name && str_buf(file_name)) ?
+				str_buf(file_name) : "<NULL>");
+	}
+	str_destroy(&file_name);
 #endif
 	dns_db_detach(&ldapdb->rbtdb);
 	dns_name_free(&ldapdb->common.origin, ldapdb->common.mctx);

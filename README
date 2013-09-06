@@ -19,6 +19,7 @@ is required.
 * SASL authentication
 * SyncRepl (RFC 4533) for run-time synchronization with LDAP server
 * read-query performance nearly same as with plain BIND
+* AXFR and IXFR zone transfers are supported
 
 
 3. Installation
@@ -151,6 +152,8 @@ this string is the name of the setting and the rest is the value.
 -------------------------
 List of configuration options follows:
 
+5.1.1 LDAP connection
+---------------------
 uri
 	The Uniform Resource Identifier pointing to the LDAP server we
 	wish to connect to. This string is directly passed to the
@@ -213,12 +216,6 @@ timeout (default 10)
 	server don't respond before this timeout then lookup is aborted and
 	BIND returns SERVFAIL. Value "0" means infinite timeout (no timeout).
 
-fake_mname (default "")
-	Ignore value of the idnsSOAmName (primary master DNS name) attribute
-	and use this value instead. This allows multiple BIND processes to share
-	one LDAP database and every BIND reports itself as a primary master in
-	SOA record, for example.
-
 reconnect_interval (default 60)
 	Time (in seconds) after that the plugin should try to connect to LDAP 
 	server again in case connection is lost and immediate reconnection 
@@ -230,6 +227,15 @@ ldap_hostname (default "")
 	used only in special cases, for example when GSSAPI authentication
 	is used and named service has Kerberos principal different from
 	/bin/hostname output.
+
+
+5.1.2 Special DNS features
+--------------------------
+fake_mname (default "")
+	Ignore value of the idnsSOAmName (primary master DNS name) attribute
+	and use this value instead. This allows multiple BIND processes to share
+	one LDAP database and every BIND reports itself as a primary master in
+	SOA record, for example.
 
 sync_ptr (default no)
 	Set this option to "yes" if you would like to keep PTR record 
@@ -244,15 +250,29 @@ dyn_update (default no)
 	This setting can be overridden for each zone individually
 	by idnsAllowDynUpdate attribute.
 
+
+5.1.3 Plumbing
+--------------
 verbose_checks (default no)
 	Set this option to "yes" if you would like to log all failures
 	in internal CHECK() macros. This option is recommended only for
 	debugging purposes. It could produce huge amount of log messages
 	on a loaded system!
 
+directory (default is current instance name from dynamic-db directive)
+	Specifies working directory for plug-in. The path has to be writeable
+	by named because plug-in will create sub-directory for each zone.
+	These sub-directories will contain temporary files like zone dump, zone
+	journal, zone keys etc.
+	The path is relative to "directory" specified in BIND options.
+
 5.2 Sample configuration
 ------------------------
 Let's take a look at a sample configuration:
+
+options {
+	directory "/var/named/";
+};
 
 dynamic-db "my_db_name" {
 	library "ldap.so";
@@ -268,6 +288,9 @@ base for entries with object class idnsZone, for which the
 idnsZoneActive attribute is set to True. For each entry it will find, it
 will register a new zone with BIND. The LDAP back-end will keep each
 record it gets from LDAP in its memory.
+Working directory for the plug-in will be "/var/named/my_db_name/",
+so hypothetical zone "example.com" will use sub-directory
+"/var/named/my_db_name/example.com/".
 
 5.3 Configuration in LDAP
 -------------------------
