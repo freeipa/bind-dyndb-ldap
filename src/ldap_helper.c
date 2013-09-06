@@ -1389,6 +1389,8 @@ diff_ldap_rbtdb(isc_mem_t *mctx, dns_name_t *name, ldapdb_rdatalist_t *ldap_rdat
 		if (result != ISC_R_SUCCESS && result != ISC_R_NOMORE)
 			goto cleanup;
 	}
+	if (result == ISC_R_NOMORE)
+		result = ISC_R_SUCCESS;
 
 cleanup:
 	return result;
@@ -3421,8 +3423,6 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	ldap_valuelist_t values;
 	isc_boolean_t zone_active = ISC_FALSE;
 
-	UNUSED(task);
-
 	mctx = pevent->mctx;
 	dns_name_init(&currname, NULL);
 	dns_name_init(&prevname, NULL);
@@ -3491,6 +3491,7 @@ cleanup:
 	ldap_entry_destroy(mctx, &entry);
 	isc_mem_detach(&mctx);
 	isc_event_free(&event);
+	isc_task_detach(&task);
 }
 
 static void
@@ -3501,8 +3502,6 @@ update_config(isc_task_t *task, isc_event_t *event)
 	ldap_instance_t *inst = NULL;
 	ldap_entry_t *entry = pevent->entry;
 	isc_mem_t *mctx;
-
-	UNUSED(task);
 
 	mctx = pevent->mctx;
 
@@ -3520,6 +3519,7 @@ cleanup:
 	isc_mem_free(mctx, pevent->dn);
 	isc_mem_detach(&mctx);
 	isc_event_free(&event);
+	isc_task_detach(&task);
 }
 
 /**
@@ -3546,8 +3546,8 @@ update_record(isc_task_t *task, isc_event_t *event)
 	ldap_entry_t *entry = pevent->entry;
 	const char *fake_mname = NULL;
 
-	dns_db_t *rbtdb;
-	dns_db_t *ldapdb;
+	dns_db_t *rbtdb = NULL;
+	dns_db_t *ldapdb = NULL;
 	dns_diff_t diff;
 	dns_diff_t soa_diff;
 	dns_dbversion_t *version = NULL; /* version is shared between rbtdb and ldapdb */
@@ -3558,7 +3558,6 @@ update_record(isc_task_t *task, isc_event_t *event)
 	dns_diff_init(mctx, &diff);
 	dns_diff_init(mctx, &soa_diff);
 
-	UNUSED(task);
 #ifdef RBTDB_DEBUG
 	static unsigned int count = 0;
 #endif
@@ -3586,12 +3585,21 @@ update_restart:
 	ldapdb = NULL;
 	ldapdb_rdatalist_destroy(mctx, &rdatalist);
 	CHECK(zr_get_zone_dbs(inst->zone_register, &name, &ldapdb, &rbtdb));
+	CHECK(dns_db_newversion(rbtdb, &version));
+
+	CHECK(dns_db_findnode(rbtdb, &name, ISC_TRUE, &node));
+	result = dns_db_allrdatasets(rbtdb, node, version, 0, &rbt_rds_iterator);
+	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
+		goto cleanup;
+
 
 	/* This code is disabled because we don't have UUID->DN database yet.
 	    || SYNCREPL_MODDN(pevent->chgtype)) { */
 	if (SYNCREPL_DEL(pevent->chgtype)) {
-		log_debug(5, "syncrepl_update: removing name from cache, dn: '%s'",
-		          pevent->dn);
+		log_debug(5, "syncrepl_update: removing name from rbtdb, dn: '%s'",
+			  pevent->dn);
+		/* Do nothing. rdatalist is initialized to empty list,
+		 * so resulting diff will remove all the data from node. */
 	}
 
 	/* TODO: double check correctness before replacing ldap_query() with
@@ -3624,35 +3632,26 @@ update_restart:
 	*/
 
 	if (SYNCREPL_ADD(pevent->chgtype) || SYNCREPL_MOD(pevent->chgtype)) {
-		/* 
-		 * Parse new data from LDAP.
-		 */
-		log_debug(5, "syncrepl_update: updating name in cache, dn: '%s'",
+		/* Parse new data from LDAP. */
+		log_debug(5, "syncrepl_update: updating name in rbtdb, dn: '%s'",
 		          pevent->dn);
 		CHECK(setting_get_str("fake_mname", inst->local_settings,
 				      &fake_mname));
 		CHECK(ldap_parse_rrentry(mctx, entry, &origin, fake_mname,
 					 &rdatalist));
+	}
 
-		CHECK(dns_db_newversion(rbtdb, &version));
-		CHECK(dns_db_findnode(rbtdb, &name, ISC_TRUE, &node));
-		result = dns_db_allrdatasets(rbtdb, node, version, 0,
-					     &rbt_rds_iterator);
-		if (result == ISC_R_SUCCESS) {
-			CHECK(diff_ldap_rbtdb(mctx, &name, &rdatalist,
-					      rbt_rds_iterator, &diff));
-			dns_rdatasetiter_destroy(&rbt_rds_iterator);
-		} else if (result != ISC_R_NOTFOUND)
-			goto cleanup;
+	if (rbt_rds_iterator != NULL) {
+		CHECK(diff_ldap_rbtdb(mctx, &name, &rdatalist,
+				      rbt_rds_iterator, &diff));
+		dns_rdatasetiter_destroy(&rbt_rds_iterator);
+	}
 
-		dns_db_detachnode(rbtdb, &node);
-#if RBTDB_DEBUG >= 2
-		dns_diff_print(&diff, stdout);
+	/* No real change in RR data -> do not increment SOA serial. */
+	if (HEAD(diff.tuples) != NULL) {
+#if RBTDB_DEBUG == 2
+		CHECK(dns_diff_print(&diff, stdout));
 #endif
-		/* No real change in RR data -> do not increment SOA serial. */
-		if (HEAD(diff.tuples) == NULL)
-			serial_autoincrement = ISC_FALSE;
-
 		CHECK(dns_diff_apply(&diff, rbtdb, version));
 		if (serial_autoincrement == ISC_TRUE) {
 			CHECK(update_soa_serial(mctx, dns_updatemethod_unixtime,
@@ -3745,31 +3744,129 @@ cleanup:
 	isc_mem_free(mctx, pevent->dn);
 	isc_mem_detach(&mctx);
 	isc_event_free(&event);
+	isc_task_detach(&task);
+}
+
+isc_result_t
+ldap_dn_compare(const char *dn1_instr, const char *dn2_instr,
+		isc_boolean_t *isequal) {
+	int ret;
+	isc_result_t result;
+	LDAPDN dn1_ldap = NULL;
+	LDAPDN dn2_ldap = NULL;
+	char *dn1_outstr = NULL;
+	char *dn2_outstr = NULL;
+
+	ret = ldap_str2dn(dn1_instr, &dn1_ldap, LDAP_DN_FORMAT_LDAPV3);
+	if (ret != LDAP_SUCCESS)
+		CLEANUP_WITH(ISC_R_FAILURE);
+
+	ret = ldap_str2dn(dn2_instr, &dn2_ldap, LDAP_DN_FORMAT_LDAPV3);
+	if (ret != LDAP_SUCCESS)
+		CLEANUP_WITH(ISC_R_FAILURE);
+
+	ret = ldap_dn2str(dn1_ldap, &dn1_outstr, LDAP_DN_FORMAT_LDAPV3 | LDAP_DN_PEDANTIC);
+	if (ret != LDAP_SUCCESS)
+		CLEANUP_WITH(ISC_R_FAILURE);
+
+	ret = ldap_dn2str(dn2_ldap, &dn2_outstr, LDAP_DN_FORMAT_LDAPV3 | LDAP_DN_PEDANTIC);
+	if (ret != LDAP_SUCCESS)
+		CLEANUP_WITH(ISC_R_FAILURE);
+
+	*isequal = ISC_TF(strcasecmp(dn1_outstr, dn2_outstr) == 0);
+	result = ISC_R_SUCCESS;
+
+cleanup:
+	if (dn1_ldap != NULL)
+		ldap_dnfree(dn1_ldap);
+	if (dn2_ldap != NULL)
+		ldap_dnfree(dn2_ldap);
+	if (dn1_outstr != NULL)
+		ldap_memfree(dn1_outstr);
+	if (dn1_outstr != NULL)
+		ldap_memfree(dn2_outstr);
+
+	return result;
 }
 
 static void
 syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 {
-	ldap_entryclass_t class;
+	ldap_entryclass_t class = LDAP_ENTRYCLASS_NONE;
 	isc_result_t result = ISC_R_SUCCESS;
 	ldap_syncreplevent_t *pevent = NULL;
+	dns_name_t entry_name;
+	dns_name_t zone_name;
+	dns_zone_t *zone_ptr = NULL;
 	char *dn = NULL;
 	char *prevdn_ldap = NULL;
 	char *prevdn = NULL;
 	char *dbname = NULL;
+	const char *ldap_base = NULL;
+	isc_boolean_t isbase;
 	isc_mem_t *mctx = NULL;
 	isc_taskaction_t action = NULL;
-
-	CHECK(ldap_entry_getclass(entry, &class));
+	isc_task_t *task = NULL;
 
 	log_debug(20, "syncrepl change type: " /*"none%d,"*/ "add%d, del%d, mod%d", /* moddn%d", */
 		  /* !SYNCREPL_ANY(chgtype), */ SYNCREPL_ADD(chgtype),
 		  SYNCREPL_DEL(chgtype), SYNCREPL_MOD(chgtype)/*, SYNCREPL_MODDN(chgtype) */ );
 
 	isc_mem_attach(inst->mctx, &mctx);
+	dns_name_init(&entry_name, NULL);
+	dns_name_init(&zone_name, NULL);
 
 	CHECKED_MEM_STRDUP(mctx, entry->dn, dn);
 	CHECKED_MEM_STRDUP(mctx, inst->db_name, dbname);
+
+	/* TODO: handle config objects properly - via UUID database */
+	CHECK(setting_get_str("base", inst->local_settings, &ldap_base));
+	CHECK(ldap_dn_compare(ldap_base, entry->dn, &isbase));
+	if (isbase == ISC_TRUE) {
+		class = LDAP_ENTRYCLASS_CONFIG;
+	} else {
+		CHECK(dn_to_dnsname(inst->mctx, dn, &entry_name, &zone_name));
+		switch (chgtype) {
+		case LDAP_SYNC_CAPI_ADD:
+		case LDAP_SYNC_CAPI_MODIFY:
+			CHECK(ldap_entry_getclass(entry, &class));
+			break;
+
+		default:
+			/* deleted entry doesn't contain objectClass, so
+			 * we need to find if the entry is zone or not
+			 * in other way */
+			result = fwdr_zone_ispresent(inst->fwd_register,
+						     &entry_name);
+			if (result == ISC_R_SUCCESS) {
+				class = LDAP_ENTRYCLASS_FORWARD;
+			} else if (dns_name_equal(&zone_name, dns_rootname)
+						  == ISC_TRUE)
+				class = LDAP_ENTRYCLASS_MASTER;
+			else
+				class = LDAP_ENTRYCLASS_RR;
+			break;
+		}
+	}
+	REQUIRE(class != LDAP_ENTRYCLASS_NONE);
+
+	if (class == LDAP_ENTRYCLASS_MASTER || class == LDAP_ENTRYCLASS_RR) {
+		result = zr_get_zone_ptr(inst->zone_register, &zone_name,
+					 &zone_ptr);
+		if (result == ISC_R_SUCCESS && dns_zone_getmgr(zone_ptr) != NULL)
+			dns_zone_gettask(zone_ptr, &task);
+		else {
+			/* TODO: Fix race condition:
+			 * zone is not (yet) present in zone register */
+			log_debug(1, "TODO: DN '%s': task fallback", entry->dn);
+			isc_task_attach(inst->task, &task);
+			result = ISC_R_SUCCESS;
+		}
+	} else {
+		isc_task_attach(inst->task, &task);
+	}
+	REQUIRE(task != NULL);
+
 
 	/* This code is disabled because we don't have UUID->DN database yet.
 	if (SYNCREPL_MODDN(chgtype)) {
@@ -3807,9 +3904,15 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	pevent->prevdn = prevdn;
 	pevent->chgtype = chgtype;
 	pevent->entry = entry;
-	isc_task_send(inst->task, (isc_event_t **)&pevent);
+	isc_task_send(task, (isc_event_t **)&pevent);
 
 cleanup:
+	if (dns_name_dynamic(&entry_name))
+		dns_name_free(&entry_name, inst->mctx);
+	if (dns_name_dynamic(&zone_name))
+		dns_name_free(&zone_name, inst->mctx);
+	if (zone_ptr != NULL)
+		dns_zone_detach(&zone_ptr);
 	if (result != ISC_R_SUCCESS) {
 		log_error_r("syncrepl_update failed for object '%s'",
 			    entry->dn);
@@ -3825,6 +3928,8 @@ cleanup:
 		if (prevdn_ldap != NULL)
 			ldap_memfree(prevdn);
 		ldap_entry_destroy(inst->mctx, &entry);
+		if (task != NULL)
+			isc_task_detach(&task);
 	}
 }
 
