@@ -411,7 +411,8 @@ ldap_entry_getclass(ldap_entry_t *entry, ldap_entryclass_t *class)
 	 * objectClass attribute. */
 	if (ldap_entry_getvalues(entry, "objectClass", &values)
 	    != ISC_R_SUCCESS) {
-		log_bug("entry without objectClass");
+		log_error("entry without supported objectClass: DN '%s'",
+			  (entry->dn != NULL) ? entry->dn : "<NULL>");
 		return ISC_R_UNEXPECTED;
 	}
 
