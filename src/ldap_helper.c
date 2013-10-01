@@ -346,7 +346,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	isc_uint32_t cache_ttl_seconds;
 	setting_t ldap_settings[] = {
 		{ "uri",	 no_default_string		},
-		{ "connections", default_uint(2)		},
+		{ "connections", default_uint(4)		},
 		{ "reconnect_interval", default_uint(60)	},
 		{ "timeout",	 default_uint(10)		},
 		{ "base",	 no_default_string		},
@@ -433,10 +433,9 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 
 	/* Validate and check settings. */
 	str_toupper(ldap_inst->sasl_mech);
-	if (ldap_inst->connections < 1) {
-		log_error("at least one connection is required");
-		result = ISC_R_FAILURE;
-		goto cleanup;
+	if (ldap_inst->connections < 4) {
+		log_error("at least 4 connections are required, increasing limit");
+		ldap_inst->connections = 4;
 	}
 	/* Select authentication method. */
 	ldap_inst->auth_method = AUTH_INVALID;

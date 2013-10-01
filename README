@@ -139,7 +139,7 @@ uri
 	ldap_initialize(3) function. This option is mandatory.
 	Example: ldap://ldap.example.com
 
-connections (default 2)
+connections (minimum 4, default 4)
 	Number of connections the LDAP driver should try to establish to
 	the LDAP server. It's best if this matches the number of threads
 	BIND creates, for performance reasons. However, your LDAP server
