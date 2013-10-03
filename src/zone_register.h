@@ -55,6 +55,11 @@ isc_result_t
 zr_get_zone_settings(zone_register_t *zr, dns_name_t *name, settings_set_t **set) ATTR_NONNULLS;
 
 isc_result_t
+zr_get_zone_path(isc_mem_t *mctx, settings_set_t *settings,
+		 dns_name_t *zone_name, const char *last_component,
+		 ld_string_t **path);
+
+isc_result_t
 zr_rbt_iter_init(zone_register_t *zr, rbt_iterator_t **iter,
 		 dns_name_t *nodename) ATTR_NONNULLS;
 

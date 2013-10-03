@@ -22,18 +22,18 @@
 #include <isc/rwlock.h>
 #include <isc/util.h>
 #include <isc/md5.h>
+#include <isc/string.h>
 
 #include <dns/db.h>
 #include <dns/rbt.h>
 #include <dns/result.h>
 #include <dns/zone.h>
 
-#include <isc/string.h>
-#include <string.h>
-
+#include "fs.h"
 #include "ldap_driver.h"
 #include "log.h"
 #include "util.h"
+#include "str.h"
 #include "zone_register.h"
 #include "rdlist.h"
 #include "settings.h"
@@ -185,6 +185,46 @@ zr_destroy(zone_register_t **zrp)
 	*zrp = NULL;
 }
 
+/**
+ * Get path associated with particular zone.
+ *
+ * @param[in]	settings	Set of settings with working "directory".
+ * @param[in]	last_component	String to append to the zone's directory.
+ * 				Nothing will be appended if it is NULL.
+ * @param[out]	path	Newly allocated string with path terminated
+ * 			by 'last_component'.
+ * 			Caller is responsible for string deallocation.
+ */
+isc_result_t
+zr_get_zone_path(isc_mem_t *mctx, settings_set_t *settings,
+		 dns_name_t *zone_name, const char *last_component,
+		 ld_string_t **path) {
+	const char *inst_dir = NULL;
+	char zone_name_char[DNS_NAME_FORMATSIZE];
+	ld_string_t *zone_path = NULL;
+	isc_result_t result;
+
+	REQUIRE(path != NULL && *path == NULL);
+
+	CHECK(str_new(mctx, &zone_path));
+	dns_name_format(zone_name, zone_name_char, sizeof(zone_name_char));
+
+	CHECK(setting_get_str("directory", settings, &inst_dir));
+	CHECK(str_cat_char(zone_path, inst_dir));
+	CHECK(str_cat_char(zone_path, zone_name_char));
+	CHECK(str_cat_char(zone_path, "/"));
+	if (last_component != NULL)
+		CHECK(str_cat_char(zone_path, last_component));
+
+cleanup:
+	if (result == ISC_R_SUCCESS)
+		*path = zone_path;
+	else
+		str_destroy(&zone_path);
+
+	return result;
+}
+
 /*
  * Create a new zone info structure.
  */
@@ -196,6 +236,7 @@ create_zone_info(isc_mem_t *mctx, dns_zone_t *zone, const char *dn,
 	isc_result_t result;
 	zone_info_t *zinfo;
 	char settings_name[PRINT_BUFF_SIZE];
+	ld_string_t *zone_dir = NULL;
 
 	REQUIRE(zone != NULL);
 	REQUIRE(dn != NULL);
@@ -213,11 +254,18 @@ create_zone_info(isc_mem_t *mctx, dns_zone_t *zone, const char *dn,
 				  settings_name, global_settings,
 				  &zinfo->settings));
 
-	*zinfop = zinfo;
-	return ISC_R_SUCCESS;
+	/* Prepate a directory for this zone */
+	CHECK(zr_get_zone_path(mctx, global_settings, dns_zone_getorigin(zone),
+			       NULL, &zone_dir));
+	CHECK(fs_dir_create(str_buf(zone_dir)));
 
 cleanup:
-	delete_zone_info(zinfo, mctx);
+	if (result == ISC_R_SUCCESS)
+		*zinfop = zinfo;
+	else
+		delete_zone_info(zinfo, mctx);
+
+	str_destroy(&zone_dir);
 	return result;
 }
 
@@ -434,7 +482,7 @@ zr_get_zone_ptr(zone_register_t *zr, dns_name_t *name, dns_zone_t **zonep)
 	return result;
 }
 
-/*
+/**
  * Find a zone with origin 'name' within in the zone register 'zr'. If an
  * exact match is found, the pointer to the zone's settings is returned through
  * 'set'.

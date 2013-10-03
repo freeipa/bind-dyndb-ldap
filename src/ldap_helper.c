@@ -3889,7 +3889,6 @@ update_restart:
 		dns_diff_print(&diff, NULL);
 #endif
 		CHECK(dns_diff_apply(&diff, rbtdb, version));
-
 		dns_db_closeversion(rbtdb, &version, ISC_TRUE);
 	}
 
