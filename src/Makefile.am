@@ -4,6 +4,7 @@ bindplugindir=$(libdir)/bind
 HDRS =				\
 	acl.h			\
 	compat.h		\
+	fs.h			\
 	fwd_register.h		\
 	krb5_helper.h		\
 	ldap_convert.h		\
@@ -25,6 +26,7 @@ ldap_la_SOURCES =		\
 	$(HDRS)			\
 	acl.c			\
 	fwd_register.c		\
+	fs.c			\
 	krb5_helper.c		\
 	ldap_convert.c		\
 	ldap_driver.c		\

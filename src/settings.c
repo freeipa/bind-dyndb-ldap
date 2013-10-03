@@ -76,6 +76,7 @@ static const setting_t settings_default[] = {
 	{ "update_policy",		default_string("")		},
 	{ "serial_autoincrement",	default_string("")		},
 	{ "verbose_checks",		default_boolean(ISC_FALSE)	},
+	{ "directory",			default_string("")		},
 	end_of_settings
 };
 

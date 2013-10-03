@@ -40,6 +40,7 @@
 #include <dns/update.h>
 
 #include <isc/buffer.h>
+#include <isc/dir.h>
 #include <isc/mem.h>
 #include <isc/mutex.h>
 #include <isc/region.h>
@@ -68,6 +69,7 @@
 #include <netdb.h>
 
 #include "acl.h"
+#include "fs.h"
 #include "krb5_helper.h"
 #include "ldap_convert.h"
 #include "ldap_driver.h"
@@ -255,6 +257,7 @@ static const setting_t settings_local_default[] = {
 	{ "dyn_update",			no_default_boolean	},
 	{ "serial_autoincrement",	no_default_string	},
 	{ "verbose_checks",		no_default_boolean	},
+	{ "directory",			no_default_string	},
 	end_of_settings
 };
 
@@ -342,6 +345,8 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 	const char *krb5_principal = NULL;
 	const char *bind_dn = NULL;
 	const char *password = NULL;
+	const char *dir_name = NULL;
+	isc_boolean_t dir_default;
 	ld_string_t *buff = NULL;
 
 	/* handle cache_ttl, psearch, serial_autoincrement, and zone_refresh
@@ -359,6 +364,28 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 		log_error("LDAP instance name cannot be empty");
 		CLEANUP_WITH(ISC_R_UNEXPECTEDEND);
 	}
+
+	/* Use instance name as default working directory */
+	CHECK(str_new(inst->mctx, &buff));
+	CHECK(setting_get_str("directory", inst->local_settings, &dir_name));
+	dir_default = (strcmp(dir_name, "") == 0);
+	if (dir_default == ISC_TRUE)
+		CHECK(str_cat_char(buff, inst->db_name));
+	else
+		CHECK(str_cat_char(buff, dir_name));
+
+	if (str_buf(buff)[str_len(buff) - 1] != '/')
+		CHECK(str_cat_char(buff, "/"));
+
+	if (strcmp(dir_name, str_buf(buff)) != 0)
+		CHECK(setting_set("directory", inst->local_settings,
+				  str_buf(buff), inst->task));
+	str_destroy(&buff);
+	dir_name = NULL;
+	CHECK(setting_get_str("directory", inst->local_settings, &dir_name));
+
+	/* Make sure that working directory exists */
+	CHECK(fs_dir_create(dir_name));
 
 	/* Set timer for deadlock detection inside semaphore_wait_timed . */
 	CHECK(setting_get_uint("timeout", set, &uint));
