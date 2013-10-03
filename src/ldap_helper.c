@@ -352,6 +352,11 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 	const char *auth_method_str = NULL;
 	ldap_auth_t auth_method_enum = AUTH_INVALID;
 
+	if (strlen(inst->db_name) <= 0) {
+		log_error("LDAP instance name cannot be empty");
+		CLEANUP_WITH(ISC_R_UNEXPECTEDEND);
+	}
+
 	/* Set timer for deadlock detection inside semaphore_wait_timed . */
 	CHECK(setting_get_uint("timeout", set, &uint));
 	if (semaphore_wait_timeout.seconds < uint*SEM_WAIT_TIMEOUT_MUL)
