@@ -27,8 +27,4 @@
 
 dns_db_t * ldapdb_get_rbtdb(dns_db_t *db) ATTR_NONNULLS;
 
-isc_result_t
-update_soa_serial(isc_mem_t *mctx, dns_updatemethod_t method, dns_db_t *db,
-		  dns_dbversion_t *ver, dns_diff_t *diff) ATTR_NONNULLS;
-
 #endif /* LDAP_DRIVER_H_ */

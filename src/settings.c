@@ -74,7 +74,7 @@ static const setting_t settings_default[] = {
 	 * SSU table defined by empty string contains no rules =>
 	 * dns_ssutable_checkrules() will return deny. */
 	{ "update_policy",		default_string("")		},
-	{ "serial_autoincrement",	default_boolean(ISC_FALSE)	},
+	{ "serial_autoincrement",	default_string("")		},
 	{ "verbose_checks",		default_boolean(ISC_FALSE)	},
 	end_of_settings
 };

@@ -43,7 +43,6 @@
 #include <dns/result.h>
 #include <dns/soa.h>
 #include <dns/types.h>
-#include <dns/update.h>
 
 #include <string.h> /* For memcpy */
 
@@ -250,41 +249,6 @@ attachversion(dns_db_t *db, dns_dbversion_t *source,
 	REQUIRE(VALID_LDAPDB(ldapdb));
 
 	dns_db_attachversion(ldapdb->rbtdb, source, targetp);
-}
-
-isc_result_t
-update_soa_serial(isc_mem_t *mctx, dns_updatemethod_t method, dns_db_t *db,
-		  dns_dbversion_t *ver, dns_diff_t *diff) {
-	dns_difftuple_t *deltuple = NULL;
-	dns_difftuple_t *addtuple = NULL;
-	isc_uint32_t serial;
-	isc_result_t result;
-	dns_name_t *name = NULL;
-	char buff[DNS_NAME_FORMATSIZE];
-
-	CHECK(dns_db_createsoatuple(db, ver, mctx, DNS_DIFFOP_DEL, &deltuple));
-	CHECK(dns_difftuple_copy(deltuple, &addtuple));
-	addtuple->op = DNS_DIFFOP_ADD;
-
-	serial = dns_soa_getserial(&addtuple->rdata);
-	serial = dns_update_soaserial(serial, method);
-	dns_soa_setserial(serial, &addtuple->rdata);
-	dns_diff_append(diff, &deltuple);
-	dns_diff_append(diff, &addtuple);
-	result = ISC_R_SUCCESS;
-
-cleanup:
-	if (addtuple != NULL)
-		dns_difftuple_free(&addtuple);
-	if (deltuple != NULL)
-		dns_difftuple_free(&deltuple);
-	if (result != ISC_R_SUCCESS) {
-		name = dns_db_origin(db);
-		dns_name_format(name, buff, DNS_NAME_FORMATSIZE);
-		log_error_r("cannot prepare SOA serial incrementation "
-			    "for zone '%s'", buff);
-	}
-	return result;
 }
 
 static void

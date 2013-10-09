@@ -112,6 +112,23 @@ example zone ldif is available in the doc directory.
 	than "none" are considered as "forward" zones. All records in LDAP
 	belonging to those zones are ignored and all queries are forwarded.
 
+* idnsSOAserial
+	SOA serial number. It is automatically incremented after each change
+	in LDAP. External changes done by other LDAP clients are detected via
+	RFC 4533 (so-called syncrepl).
+
+	If serial number is lower than current UNIX timestamp, then
+	it is set to the timestamp value. If SOA serial is greater or equal
+	to current timestamp, then the serial is incremented by one.
+	(This is equivalent to BIND option 'serial-update-method unix'.)
+
+	In multi-master LDAP environments it is recommended to make
+	idnsSOAserial attribute non-replicated (locally significant).
+	It is recommended not to use multiple masters for single slave zone
+	if SOA serial is locally significant because serial numbers between
+	masters	aren't synchronized. It will cause problems with zone
+	transfers from multiple masters to single slave.
+
 
 5. Configuration
 ================
@@ -213,24 +230,6 @@ ldap_hostname (default "")
 	used only in special cases, for example when GSSAPI authentication
 	is used and named service has Kerberos principal different from
 	/bin/hostname output.
-
-serial_autoincrement (default no)
-	Automatically increment SOA serial number after each change in LDAP.
-	External changes done by other LDAP clients are detected with
-	persistent search.
-
-	If serial number is lower than current UNIX timestamp, then
-	it is set to the timestamp value. If SOA serial is greater or equal
-	to current timestamp, then the serial is incremented by one.
-
-	In multi-master LDAP environments it is recommended to make
-	idnsSOAserial attribute non-replicated (locally significant).
-	It is recommended to not use multiple masters for single slave zone
-	if SOA serial is locally significant. Serial numbers between masters
-	aren't synchronized. It will cause problems with zone transfers from
-	multiple masters.
-
-	This function requires persistent search and 4 connections at least.
 
 sync_ptr (default no)
 	Set this option to "yes" if you would like to keep PTR record 

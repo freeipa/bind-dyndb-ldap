@@ -37,13 +37,14 @@
 #include <dns/byaddr.h>
 #include <dns/forward.h>
 #include <dns/soa.h>
-#include <isc/serial.h>
+#include <dns/update.h>
 
 #include <isc/buffer.h>
 #include <isc/mem.h>
 #include <isc/mutex.h>
 #include <isc/region.h>
 #include <isc/rwlock.h>
+#include <isc/serial.h>
 #include <isc/task.h>
 #include <isc/thread.h>
 #include <isc/time.h>
@@ -252,7 +253,7 @@ static const setting_t settings_local_default[] = {
 	{ "ldap_hostname",		no_default_string	},
 	{ "sync_ptr",			no_default_boolean	},
 	{ "dyn_update",			no_default_boolean	},
-	{ "serial_autoincrement",	no_default_boolean	},
+	{ "serial_autoincrement",	no_default_string	},
 	{ "verbose_checks",		no_default_boolean	},
 	end_of_settings
 };
@@ -343,9 +344,11 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 	const char *password = NULL;
 	ld_string_t *buff = NULL;
 
-	/* handle cache_ttl, psearch and zone_refresh in special way */
+	/* handle cache_ttl, psearch, serial_autoincrement, and zone_refresh
+	 * in special way */
 	const char *obsolete_value = NULL;
-	char *obsolete_options[] = {"cache_ttl", "psearch", "zone_refresh",
+	char *obsolete_options[] = {"cache_ttl", "psearch",
+				    "serial_autoincrement", "zone_refresh",
 				    NULL};
 
 	char print_buff[PRINT_BUFF_SIZE];
@@ -1401,6 +1404,152 @@ cleanup:
 	return result;
 }
 
+/**
+ * Process strictly minimal diff and detect if data were changed
+ * and return latest SOA RR.
+ *
+ * @pre Input diff has to be minimal, i.e. it can't contain DEL & ADD operation
+ *      for the same data under the same name and TTL.
+ *
+ * @pre If the tuple list contains SOA RR, then exactly one SOA RR deletion
+ *      has to precede exactly one SOA RR addition.
+ *      (Each SOA RR deletion has to have matching addition.)
+ *
+ * @param[in]	diff		Input diff. List of tuples can be empty.
+ * @param[out]	soa_latest	Pointer to last added SOA RR from tuple list.
+ *				Result can be NULL if there is no added SOA RR
+ *				in the tuple list.
+ * @param[out]	data_changed	ISC_TRUE if any data other than SOA serial were
+ * 				changed. ISC_FALSE if nothing (except SOA
+ * 				serial) was changed.
+ *
+ */
+static isc_result_t ATTR_NONNULLS
+diff_analyze_serial(dns_diff_t *diff, dns_difftuple_t **soa_latest,
+		    isc_boolean_t *data_changed) {
+	dns_difftuple_t *t = NULL;
+	dns_rdata_t *del_soa = NULL; /* last seen SOA with op == DEL */
+	dns_difftuple_t *tmp_tuple = NULL; /* tuple used for SOA comparison */
+	isc_result_t result = ISC_R_SUCCESS;
+	int ret;
+
+	REQUIRE(DNS_DIFF_VALID(diff));
+	REQUIRE(soa_latest != NULL && *soa_latest == NULL);
+	REQUIRE(data_changed != NULL);
+
+	*data_changed = ISC_FALSE;
+	for (t = HEAD(diff->tuples);
+	     t != NULL;
+	     t = NEXT(t, link)) {
+		INSIST(tmp_tuple == NULL);
+		if (t->rdata.type != dns_rdatatype_soa)
+			*data_changed = ISC_TRUE;
+		else { /* SOA is always special case */
+			if (t->op == DNS_DIFFOP_DEL ||
+			    t->op == DNS_DIFFOP_DELRESIGN) {
+				/* delete operation has to precede add */
+				INSIST(del_soa == NULL);
+				del_soa = &t->rdata;
+			} else if (t->op == DNS_DIFFOP_ADD ||
+				   t->op == DNS_DIFFOP_ADDRESIGN) {
+				/* add operation has to follow a delete */
+				INSIST(del_soa != NULL);
+				*soa_latest = t;
+
+				/* detect if fields other than serial
+				 * were changed (compute only if necessary) */
+				if (*data_changed == ISC_FALSE) {
+					CHECK(dns_difftuple_copy(t, &tmp_tuple));
+					dns_soa_setserial(dns_soa_getserial(del_soa),
+							  &tmp_tuple->rdata);
+					ret = dns_rdata_compare(del_soa,
+								&tmp_tuple->rdata);
+					*data_changed = ISC_TF(ret != 0);
+				}
+				if (tmp_tuple != NULL)
+					dns_difftuple_free(&tmp_tuple);
+				/* re-start the SOA delete-add search cycle */
+				del_soa = NULL;
+			} else {
+				INSIST("unexpected diff: op != ADD || DEL"
+				       == NULL);
+			}
+		}
+	}
+	/* SOA deletions & additions has to create self-contained couples */
+	INSIST(del_soa == NULL && tmp_tuple == NULL);
+
+cleanup:
+	if (tmp_tuple != NULL)
+		dns_difftuple_free(&tmp_tuple);
+	return result;
+}
+
+/**
+ * Increment SOA serial in given diff tuple and return new numeric value.
+ *
+ * @pre Soa_tuple operation is ADD or ADDRESIGN and RR type is SOA.
+ *
+ * @param[in]		method
+ * @param[in,out]	soa_tuple	Latest SOA RR in diff.
+ * @param[out]		new_serial	SOA serial after incrementation.
+ */
+static isc_result_t
+update_soa_serial(dns_updatemethod_t method, dns_difftuple_t *soa_tuple,
+		  isc_uint32_t *new_serial) {
+	isc_uint32_t serial;
+
+	REQUIRE(DNS_DIFFTUPLE_VALID(soa_tuple));
+	REQUIRE(soa_tuple->op == DNS_DIFFOP_ADD ||
+		soa_tuple->op == DNS_DIFFOP_ADDRESIGN);
+	REQUIRE(soa_tuple->rdata.type == dns_rdatatype_soa);
+	REQUIRE(new_serial != NULL);
+
+	serial = dns_soa_getserial(&soa_tuple->rdata);
+	serial = dns_update_soaserial(serial, method);
+	dns_soa_setserial(serial, &soa_tuple->rdata);
+	*new_serial = serial;
+
+	return ISC_R_SUCCESS;
+}
+
+/**
+ * Replace SOA serial in LDAP for given zone.
+ *
+ * @param[in]	inst
+ * @param[in]	zone	Zone name.
+ * @param[in]	serial	New serial.
+ *
+ */
+static isc_result_t ATTR_NONNULLS
+ldap_replace_serial(ldap_instance_t *inst, dns_name_t *zone,
+		    isc_uint32_t serial) {
+	isc_result_t result;
+#define MAX_SERIAL_LENGTH sizeof("4294967295") /* SOA serial is isc_uint32_t */
+	char serial_char[MAX_SERIAL_LENGTH];
+	char *values[2] = { serial_char, NULL };
+	LDAPMod change;
+	LDAPMod *changep[2] = { &change, NULL };
+	ld_string_t *dn = NULL;
+
+	REQUIRE(inst != NULL);
+
+	str_new(inst->mctx, &dn);
+	CHECK(dnsname_to_dn(inst->zone_register, zone, dn));
+
+	change.mod_op = LDAP_MOD_REPLACE;
+	change.mod_type = "idnsSOAserial";
+	change.mod_values = values;
+	CHECK(isc_string_printf(serial_char, MAX_SERIAL_LENGTH, "%u", serial));
+
+	CHECK(ldap_modify_do(inst, str_buf(dn), changep, ISC_FALSE));
+
+cleanup:
+	str_destroy(&dn);
+	return result;
+#undef MAX_SERIAL_LENGTH
+}
+
 /* Parse the master zone entry */
 static isc_result_t ATTR_NONNULLS
 ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
@@ -1419,19 +1568,21 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	isc_boolean_t zone_dynamic = ISC_FALSE;
 	settings_set_t *zone_settings = NULL;
 	const char *fake_mname = NULL;
-	isc_boolean_t serial_autoincrement;
-	isc_uint32_t serial;
+	isc_boolean_t data_changed;
+	isc_boolean_t ldap_writeback;
+	isc_uint32_t curr_serial;
+	isc_uint32_t new_serial;
 
 	dns_db_t *rbtdb = NULL;
 	dns_db_t *ldapdb = NULL;
 	dns_diff_t diff;
-	dns_diff_t soa_diff;
 	dns_dbversion_t *version = NULL;
 	dns_dbnode_t *node = NULL;
 	dns_rdatasetiter_t *rbt_rds_iterator = NULL;
+	dns_difftuple_t *soa_tuple = NULL;
+	isc_boolean_t soa_tuple_alloc = ISC_FALSE;
 
 	dns_diff_init(inst->mctx, &diff);
-	dns_diff_init(inst->mctx, &soa_diff);
 
 	REQUIRE(entry != NULL);
 	REQUIRE(inst != NULL);
@@ -1559,6 +1710,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 			      &fake_mname));
 	CHECK(ldap_parse_rrentry(inst->mctx, entry, &name, fake_mname,
 				 &rdatalist));
+	CHECK(dns_zone_getserial2(zone, &curr_serial));
 
 	CHECK(zr_get_zone_dbs(inst->zone_register, &name, &ldapdb, &rbtdb));
 	CHECK(dns_db_newversion(rbtdb, &version));
@@ -1573,49 +1725,79 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 		goto cleanup;
 
 	dns_db_detachnode(rbtdb, &node);
-#if RBTDB_DEBUG >= 2
-	dns_diff_print(&diff, stdout);
-#endif
-	CHECK(setting_get_bool("serial_autoincrement", inst->local_settings,
-			       &serial_autoincrement));
-	/* No real change in RR data -> do not increment SOA serial. */
-	if (HEAD(diff.tuples) == NULL)
-		serial_autoincrement = ISC_FALSE;
 
 	/* Detect if SOA serial is affected by the update or not. */
-	CHECK(dns_zone_getserial2(zone, &serial));
-	for (dns_difftuple_t *tp = HEAD(diff.tuples);
-			      tp != NULL && serial_autoincrement == ISC_TRUE;
-			      tp = NEXT(tp, link)) {
-		if (tp->rdata.type == dns_rdatatype_soa) {
-			if (isc_serial_ne(dns_soa_getserial(&tp->rdata), serial)
-			    == ISC_TRUE) {
-				serial_autoincrement = ISC_FALSE;
-			}
+	CHECK(diff_analyze_serial(&diff, &soa_tuple, &data_changed));
+	if (data_changed == ISC_TRUE) {
+		if (soa_tuple == NULL) {
+			/* The diff doesn't contain new SOA serial
+			 * => generate new serial and write it back to LDAP. */
+			ldap_writeback = ISC_TRUE;
+			soa_tuple_alloc = ISC_TRUE;
+			CHECK(dns_db_createsoatuple(ldapdb, version, inst->mctx,
+						    DNS_DIFFOP_DEL, &soa_tuple));
+			dns_diff_appendminimal(&diff, &soa_tuple);
+			CHECK(dns_db_createsoatuple(ldapdb, version, inst->mctx,
+						    DNS_DIFFOP_ADD, &soa_tuple));
+			CHECK(update_soa_serial(dns_updatemethod_unixtime,
+						soa_tuple, &new_serial));
+			dns_diff_appendminimal(&diff, &soa_tuple);
+		} else if (isc_serial_le(dns_soa_getserial(&soa_tuple->rdata),
+					 curr_serial)) {
+			/* The diff tries to send SOA serial back!
+			 * => generate new serial and write it back to LDAP. */
+			ldap_writeback = ISC_TRUE;
+			CHECK(update_soa_serial(dns_updatemethod_unixtime,
+						soa_tuple, &new_serial));
+		} else {
+			/* The diff contains new serial already
+			 * => do nothing. */
+			ldap_writeback = ISC_FALSE;
 		}
+
+	} else {/* if (data_changed == ISC_FALSE) */
+		ldap_writeback = ISC_FALSE;
+		if (soa_tuple == NULL) {
+			/* The diff is empty => do nothing. */
+			INSIST(EMPTY(diff.tuples));
+		} else if (isc_serial_le(dns_soa_getserial(&soa_tuple->rdata),
+				       curr_serial)) {
+			/* Attempt to move serial backwards without any data
+			 * => ignore it. */
+			dns_diff_clear(&diff);
+		}/* else:
+		  * The diff contains new serial already
+		  * => do nothing. */
 	}
 
-	CHECK(dns_diff_apply(&diff, rbtdb, version));
-	if (serial_autoincrement == ISC_TRUE) {
-		CHECK(update_soa_serial(inst->mctx, dns_updatemethod_unixtime,
-					ldapdb, version, &soa_diff));
-#if RBTDB_DEBUG == 2
-		CHECK(dns_diff_print(&soa_diff, stdout));
+#if RBTDB_DEBUG >= 2
+	dns_diff_print(&diff, stdout);
+#else
+	dns_diff_print(&diff, NULL);
 #endif
-		CHECK(dns_diff_apply(&soa_diff, ldapdb, version));
+	if (ldap_writeback == ISC_TRUE) {
+		dns_zone_log(zone, ISC_LOG_DEBUG(5), "writing new zone serial "
+			     "%u to LDAP", new_serial);
+		result = ldap_replace_serial(inst, &name, new_serial);
+		if (result != ISC_R_SUCCESS)
+			dns_zone_log(zone, ISC_LOG_ERROR,
+				     "serial (%u) write back to LDAP failed",
+				     new_serial);
 	}
+	CHECK(dns_diff_apply(&diff, rbtdb, version));
 
 	dns_db_closeversion(rbtdb, &version, ISC_TRUE);
 
-	CHECK(dns_zone_getserial2(zone, &serial));
+	CHECK(dns_zone_getserial2(zone, &curr_serial));
 	if (publish)
-		dns_zone_log(zone, ISC_LOG_INFO, "loaded serial %u", serial);
+		dns_zone_log(zone, ISC_LOG_INFO, "loaded serial %u", curr_serial);
 	if (zone_dynamic)
 		dns_zone_notify(zone);
 
 cleanup:
 	dns_diff_clear(&diff);
-	dns_diff_clear(&soa_diff);
+	if (soa_tuple_alloc == ISC_TRUE && soa_tuple != NULL)
+		dns_difftuple_free(&soa_tuple);
 	if (rbt_rds_iterator != NULL)
 		dns_rdatasetiter_destroy(&rbt_rds_iterator);
 	if (node != NULL)
@@ -3542,7 +3724,6 @@ update_record(isc_task_t *task, isc_event_t *event)
 	ldap_syncreplevent_t *pevent = (ldap_syncreplevent_t *)event;
 	isc_result_t result;
 	ldap_instance_t *inst = NULL;
-	isc_boolean_t serial_autoincrement;
 	isc_mem_t *mctx;
 	dns_zone_t *zone_ptr = NULL;
 	isc_boolean_t zone_found = ISC_FALSE;
@@ -3554,14 +3735,14 @@ update_record(isc_task_t *task, isc_event_t *event)
 	dns_db_t *rbtdb = NULL;
 	dns_db_t *ldapdb = NULL;
 	dns_diff_t diff;
-	dns_diff_t soa_diff;
+	dns_difftuple_t *soa_tuple = NULL;
+
 	dns_dbversion_t *version = NULL; /* version is shared between rbtdb and ldapdb */
 	dns_dbnode_t *node = NULL; /* node is shared between rbtdb and ldapdb */
 	dns_rdatasetiter_t *rbt_rds_iterator = NULL;
 
 	mctx = pevent->mctx;
 	dns_diff_init(mctx, &diff);
-	dns_diff_init(mctx, &soa_diff);
 
 #ifdef RBTDB_DEBUG
 	static unsigned int count = 0;
@@ -3584,6 +3765,11 @@ update_record(isc_task_t *task, isc_event_t *event)
 	CHECK(dn_to_dnsname(mctx, pevent->dn, &name, &origin));
 	CHECK(zr_get_zone_ptr(inst->zone_register, &origin, &zone_ptr));
 	zone_found = ISC_TRUE;
+
+	/* TODO: Do not bump serial during initial database dump. */
+	/* This optimization is disabled because we don't have reliable
+	 * detection if the initial database dump is finished.
+	 * if (!SYNCREPL_ANY(pevent->chgtype)) ... */
 
 update_restart:
 	rbtdb = NULL;
@@ -3654,18 +3840,28 @@ update_restart:
 
 	/* No real change in RR data -> do not increment SOA serial. */
 	if (HEAD(diff.tuples) != NULL) {
-#if RBTDB_DEBUG == 2
-		CHECK(dns_diff_print(&diff, stdout));
+		CHECK(dns_db_createsoatuple(ldapdb, version, mctx,
+					    DNS_DIFFOP_DEL, &soa_tuple));
+		dns_diff_append(&diff, &soa_tuple);
+		CHECK(dns_db_createsoatuple(ldapdb, version, mctx,
+					    DNS_DIFFOP_ADD, &soa_tuple));
+		CHECK(update_soa_serial(dns_updatemethod_unixtime,
+					soa_tuple, &serial));
+		dns_zone_log(zone_ptr, ISC_LOG_DEBUG(5),
+			     "writing new zone serial %u to LDAP", serial);
+		result = ldap_replace_serial(inst, &origin, serial);
+		if (result != ISC_R_SUCCESS)
+			dns_zone_log(zone_ptr, ISC_LOG_ERROR,
+				     "serial (%u) write back to LDAP failed",
+				     serial);
+		dns_diff_append(&diff, &soa_tuple);
+
+#if RBTDB_DEBUG >= 2
+		dns_diff_print(&diff, stdout);
+#else
+		dns_diff_print(&diff, NULL);
 #endif
 		CHECK(dns_diff_apply(&diff, rbtdb, version));
-		if (serial_autoincrement == ISC_TRUE) {
-			CHECK(update_soa_serial(mctx, dns_updatemethod_unixtime,
-						ldapdb, version, &soa_diff));
-#if RBTDB_DEBUG == 2
-			CHECK(dns_diff_print(&soa_diff, stdout));
-#endif
-			CHECK(dns_diff_apply(&soa_diff, ldapdb, version));
-		}
 
 		dns_db_closeversion(rbtdb, &version, ISC_TRUE);
 	}
@@ -3681,7 +3877,8 @@ cleanup:
 			 count, isc_mem_inuse(mctx));
 #endif
 	dns_diff_clear(&diff);
-	dns_diff_clear(&soa_diff);
+	if (soa_tuple != NULL)
+		dns_difftuple_free(&soa_tuple);
 	if (rbt_rds_iterator != NULL)
 		dns_rdatasetiter_destroy(&rbt_rds_iterator);
 	if (node != NULL)
@@ -3700,7 +3897,6 @@ cleanup:
 
 		if (zone_ptr != NULL)
 			result = dns_zone_load(zone_ptr);
-
 		if (result == ISC_R_SUCCESS || result == DNS_R_UPTODATE ||
 		    result == DNS_R_DYNAMIC || result == DNS_R_CONTINUE) {
 			/* zone reload succeeded, fire current event again */
