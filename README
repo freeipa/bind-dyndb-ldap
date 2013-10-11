@@ -274,17 +274,14 @@ record it gets from LDAP in its memory.
 Some options can be configured in LDAP as idnsConfigObject attributes.
 Value configured in LDAP has priority over value in configuration file.
 (This behavior will change in future versions!)
-Configuration is updated at same time as zone refresh.
 
 Following options are supported (option = attribute equivalent):
 
 forwarders = idnsForwarders (BIND native option)
 forward = idnsForwardPolicy (BIND native option)
 sync_ptr = idnsAllowSyncPTR
-zone_refresh = idnsZoneRefresh
 
 Forward policy option cannot be set without setting forwarders at the same time.
-Zone refresh interval is ignored on target server if psearch is enabled.
 
 
 6. License
