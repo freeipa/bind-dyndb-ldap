@@ -1,3 +1,46 @@
+4.0
+====
+[1] Persistent search and zone refresh were replaced by RFC 4533 (SyncRepl).
+    Options zone_refresh, cache_ttl and psearch were removed.
+    Also LDAP attributes idnsZoneRefresh and idnsPersistentSearch were removed.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/120
+
+[2] Internal database was re-factored and replaced by RBT DB from BIND 9.
+    As a result, read-query performance is nearly same as with plain BIND.
+    Wildcard records are supported and queries for non-existing records
+    do not impose additional load on LDAP server.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/95
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/6
+
+[3] Plug-in creates journal file for each DNS zone in LDAP. This allows us
+    to support IXFR. Working directory has to be writable by named,
+    please see README - configuration option "directory".
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/64
+
+[4] SOA serial auto-increment feature is now mandatory. The plugin has to have
+    write access to LDAP.
+    (Proper SOA serial maintenance is required for journaling.)
+
+[5] Data are not served to clients until initial synchronization with LDAP
+    is finished. All queries are answered with NXDOMAIN during synchronization.
+
+[6] Crash caused by invalid SOA record was fixed.
+
+[7] Empty instance names (specified by "dynamic-db" directive) were disallowed.
+
+[8] Typo in LDAP schema was fixed.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/121
+
+Known problems and limitations
+[1] LDAP MODRDN (rename) is not supported at the moment.
+
+[2] Zones enabled at run-time are not loaded properly.
+    You have to restart BIND after changing idnsZoneActive attribute to TRUE.
+
+[3] Zones and records deleted when connection to LDAP is down are not
+    refreshed properly after re-connection.
+    You have to restart BIND to restore consistency.
+
 3.6
 =====
 [1] Crash triggered by invalid SOA record was fixed.
