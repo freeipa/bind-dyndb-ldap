@@ -346,7 +346,7 @@ objectclass ( 2.16.840.1.113730.3.8.6.2
 	    idnsZoneRefresh $ idnsPersistentSearch
 	) )
 
-objectClasses: ( 2.16.840.1.113730.3.8.6.3
+objectClass ( 2.16.840.1.113730.3.8.6.3
 	NAME 'idnsForwardZone'
 	DESC 'Forward Zone class'
 	SUP top
