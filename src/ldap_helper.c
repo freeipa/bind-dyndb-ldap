@@ -4474,6 +4474,7 @@ ldap_syncrepl_watcher(isc_threadarg_t arg)
 	isc_result_t result;
 	sigset_t sigset;
 	ldap_sync_t *ldap_sync = NULL;
+	const char *err_hint = "";
 
 	log_debug(1, "Entering ldap_syncrepl_watcher");
 
@@ -4508,6 +4509,17 @@ ldap_syncrepl_watcher(isc_threadarg_t arg)
 		log_debug(1, "Sending initial syncrepl lookup");
 		ret = ldap_sync_init(ldap_sync, LDAP_SYNC_REFRESH_AND_PERSIST);
 		/* TODO: error handling, set tainted flag & do full reload? */
+		if (ret != LDAP_SUCCESS) {
+			if (ret == LDAP_UNAVAILABLE_CRITICAL_EXTENSION)
+				err_hint = ": is RFC 4533 supported by LDAP server?";
+			else
+				err_hint = "";
+
+			log_ldap_error(ldap_sync->ls_ld, "unable to start SyncRepl "
+					"session%s", err_hint);
+			conn->handle = NULL;
+			continue;
+		}
 
 		while (!inst->exiting && ret == LDAP_SUCCESS) {
 			ret = ldap_sync_poll(ldap_sync);
