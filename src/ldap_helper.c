@@ -234,7 +234,7 @@ struct ldap_psearchevent {
 	int chgtype;
 };
 
-extern const settings_set_t const settings_default_set;
+extern const settings_set_t settings_default_set;
 
 /** Local configuration file */
 static const setting_t settings_local_default[] = {

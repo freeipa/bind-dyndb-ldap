@@ -80,7 +80,7 @@ static const setting_t settings_default[] = {
 };
 
 /** Settings set for built-in defaults. */
-const settings_set_t const settings_default_set = {
+const settings_set_t settings_default_set = {
 	NULL,
 	"built-in defaults",
 	NULL,
