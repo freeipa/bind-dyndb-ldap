@@ -1764,7 +1764,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	CHECK(dns_zone_getserial2(zone, &curr_serial));
 
 	CHECK(zr_get_zone_dbs(inst->zone_register, &name, &ldapdb, &rbtdb));
-	CHECK(dns_db_newversion(rbtdb, &version));
+	CHECK(dns_db_newversion(ldapdb, &version));
 	CHECK(dns_db_getoriginnode(rbtdb, &node));
 	result = dns_db_allrdatasets(rbtdb, node, version, 0,
 				     &rbt_rds_iterator);
@@ -1849,7 +1849,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 
 		/* commit */
 		CHECK(dns_diff_apply(&diff, rbtdb, version));
-		dns_db_closeversion(rbtdb, &version, ISC_TRUE);
+		dns_db_closeversion(ldapdb, &version, ISC_TRUE);
 	}
 
 	CHECK(dns_zone_getserial2(zone, &curr_serial));
@@ -1867,7 +1867,7 @@ cleanup:
 	if (node != NULL)
 		dns_db_detachnode(rbtdb, &node);
 	if (rbtdb != NULL && version != NULL)
-		dns_db_closeversion(rbtdb, &version, ISC_FALSE); /* rollback */
+		dns_db_closeversion(ldapdb, &version, ISC_FALSE); /* rollback */
 	if (rbtdb != NULL)
 		dns_db_detach(&rbtdb);
 	if (journal != NULL)
@@ -3831,6 +3831,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 	dns_name_init(&origin, NULL);
 	dns_name_init(&prevname, NULL);
 	dns_name_init(&prevorigin, NULL);
+
 	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
 	CHECK(dn_to_dnsname(mctx, pevent->dn, &name, &origin));
 	CHECK(zr_get_zone_ptr(inst->zone_register, &origin, &zone_ptr));
@@ -3847,7 +3848,7 @@ update_restart:
 	journal = NULL;
 	ldapdb_rdatalist_destroy(mctx, &rdatalist);
 	CHECK(zr_get_zone_dbs(inst->zone_register, &name, &ldapdb, &rbtdb));
-	CHECK(dns_db_newversion(rbtdb, &version));
+	CHECK(dns_db_newversion(ldapdb, &version));
 
 	CHECK(dns_db_findnode(rbtdb, &name, ISC_TRUE, &node));
 	result = dns_db_allrdatasets(rbtdb, node, version, 0, &rbt_rds_iterator);
@@ -3944,7 +3945,7 @@ update_restart:
 
 		/* commit */
 		CHECK(dns_diff_apply(&diff, rbtdb, version));
-		dns_db_closeversion(rbtdb, &version, ISC_TRUE);
+		dns_db_closeversion(ldapdb, &version, ISC_TRUE);
 	}
 
 	/* Check if the zone is loaded or not.
@@ -3966,7 +3967,7 @@ cleanup:
 		dns_db_detachnode(rbtdb, &node);
 	/* rollback */
 	if (rbtdb != NULL && version != NULL)
-		dns_db_closeversion(rbtdb, &version, ISC_FALSE);
+		dns_db_closeversion(ldapdb, &version, ISC_FALSE);
 	if (rbtdb != NULL)
 		dns_db_detach(&rbtdb);
 	if (journal != NULL)

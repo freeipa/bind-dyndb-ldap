@@ -69,7 +69,28 @@ typedef struct {
 	dns_db_t			common;
 	isc_refcount_t			refs;
 	ldap_instance_t			*ldap_inst;
+
+	/**
+	 * Internal RBT database implementation provided by BIND 9.
+	 * Most of read only dns_db_*  calls (find(), createiterator(), etc.)
+	 * are blindly forwarded to this RBTDB.
+	 * Data modification calls (like addrdataset() etc.) are intercepted
+	 * by this driver, data manipulation is done in LDAP
+	 * and then the same modification is done in internal RBTDB. */
 	dns_db_t			*rbtdb;
+
+	/**
+	 * Guard for newversion. Only one new version can be open at any time.
+	 * newversion(ldapdb, newver) locks the lock
+	 * and closeversion(ldapdb, newver) unlocks the lock. */
+	isc_mutex_t			newversion_lock;
+
+	/**
+	 * Upcoming RBTDB version. It is automatically updated
+	 * by newversion(ldapdb) and closeversion(ldapdb).
+	 * The purpose is to detect moment when the new version is closed.
+	 * That is the right time for unlocking newversion_lock. */
+	dns_dbversion_t			*newversion;
 } ldapdb_t;
 
 dns_db_t * ATTR_NONNULLS
@@ -146,6 +167,8 @@ cleanup:
 #endif
 	dns_db_detach(&ldapdb->rbtdb);
 	dns_name_free(&ldapdb->common.origin, ldapdb->common.mctx);
+	RUNTIME_CHECK(isc_mutex_destroy(&ldapdb->newversion_lock)
+		      == ISC_R_SUCCESS);
 	isc_mem_putanddetach(&ldapdb->common.mctx, ldapdb, sizeof(*ldapdb));
 }
 
@@ -240,14 +263,46 @@ currentversion(dns_db_t *db, dns_dbversion_t **versionp)
 	dns_db_currentversion(ldapdb->rbtdb, versionp);
 }
 
+/**
+ * @brief Allocate and open new RBTDB version.
+ *
+ * New version is compatible with LDAPDB and RBTDB.
+ * Only one new version can be open at any time. This limitation is enforced
+ * by ldapdb->newversion_lock.
+ *
+ * @warning This function has to be used for all newversion() calls for LDAPDB
+ *          AND also internal RBTDB (ldapdb->rbtdb). This ensures proper
+ *          serialization and prevents assertion failures in newversion().
+ *
+ * How to work with internal RBTDB versions in safe way (note ldapdb vs. rbtdb):
+ * @verbatim
+	CHECK(dns_db_newversion(ldapdb, &newversion));
+	// do whatevent you need with the newversion, e.g.:
+	CHECK(dns_diff_apply(diff, rbtdb, newversion));
+
+cleanup:
+	if (newversion != NULL)
+		dns_db_closeversion(ldapdb, &newversion, ISC_TRUE);
+   @endverbatim
+ */
 static isc_result_t
 newversion(dns_db_t *db, dns_dbversion_t **versionp)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *)db;
+	isc_result_t result;
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
 
-	return dns_db_newversion(ldapdb->rbtdb, versionp);
+	LOCK(&ldapdb->newversion_lock);
+	result = dns_db_newversion(ldapdb->rbtdb, versionp);
+	if (result == ISC_R_SUCCESS) {
+		INSIST(*versionp != NULL);
+		ldapdb->newversion = *versionp;
+	} else {
+		INSIST(*versionp == NULL);
+		UNLOCK(&ldapdb->newversion_lock);
+	}
+	return result;
 }
 
 static void
@@ -261,13 +316,24 @@ attachversion(dns_db_t *db, dns_dbversion_t *source,
 	dns_db_attachversion(ldapdb->rbtdb, source, targetp);
 }
 
+/**
+ * @brief Close LDAPDB and internal RBTDB version.
+ *
+ * @see newversion for related warnings and examples.
+ */
 static void
 closeversion(dns_db_t *db, dns_dbversion_t **versionp, isc_boolean_t commit)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *)db;
+	dns_dbversion_t *closed_version = *versionp;
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
+
 	dns_db_closeversion(ldapdb->rbtdb, versionp, commit);
+	if (closed_version == ldapdb->newversion) {
+		ldapdb->newversion = NULL;
+		UNLOCK(&ldapdb->newversion_lock);
+	}
 }
 
 static isc_result_t
@@ -925,6 +991,7 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 {
 	ldapdb_t *ldapdb = NULL;
 	isc_result_t result;
+	isc_boolean_t lock_ready = ISC_FALSE;
 
 	UNUSED(driverarg); /* Currently we don't need any data */
 
@@ -939,7 +1006,8 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 	ZERO_PTR(ldapdb);
 
 	isc_mem_attach(mctx, &ldapdb->common.mctx);
-
+	CHECK(isc_mutex_init(&ldapdb->newversion_lock));
+	lock_ready = ISC_TRUE;
 	dns_name_init(&ldapdb->common.origin, NULL);
 	isc_ondestroy_init(&ldapdb->common.ondest);
 
@@ -965,6 +1033,9 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 
 cleanup:
 	if (ldapdb != NULL) {
+		if (lock_ready == ISC_TRUE)
+			RUNTIME_CHECK(isc_mutex_destroy(&ldapdb->newversion_lock)
+				      == ISC_R_SUCCESS);
 		if (dns_name_dynamic(&ldapdb->common.origin))
 			dns_name_free(&ldapdb->common.origin, mctx);
 
