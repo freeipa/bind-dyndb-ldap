@@ -763,6 +763,8 @@ delete_bind_zone(dns_zt_t *zt, dns_zone_t **zonep) {
 	}
 
 	result = dns_zt_unmount(zt, zone);
+	if (result == ISC_R_NOTFOUND) /* zone wasn't part of a view */
+		result = ISC_R_SUCCESS;
 	zmgr = dns_zone_getmgr(zone);
 	if (zmgr != NULL)
 		dns_zonemgr_releasezone(zmgr, zone);
@@ -872,6 +874,40 @@ cleanup:
 
 	return result;
 }
+
+isc_result_t
+publish_zones(ldap_instance_t *inst) {
+	isc_result_t result;
+	rbt_iterator_t *iter = NULL;
+	dns_zone_t *zone = NULL;
+	DECLARE_BUFFERED_NAME(name);
+	unsigned int published_cnt = 0;
+	unsigned int total_cnt = 0;
+
+	INIT_BUFFERED_NAME(name);
+	CHECK(zr_rbt_iter_init(inst->zone_register, &iter, &name));
+	do {
+		++total_cnt;
+		CHECK(zr_get_zone_ptr(inst->zone_register, &name, &zone));
+		result = publish_zone(inst, zone);
+		if (result != ISC_R_SUCCESS)
+			dns_zone_log(zone, ISC_LOG_ERROR,
+				     "cannot add zone to view: %s",
+				     dns_result_totext(result));
+		else
+			++published_cnt;
+		dns_zone_detach(&zone);
+
+		INIT_BUFFERED_NAME(name);
+		CHECK(rbt_iter_next(&iter, &name));
+	} while (result == ISC_R_SUCCESS);
+
+cleanup:
+	log_info("%u zones from LDAP instance '%s' loaded (%u zones defined)",
+		 published_cnt, inst->db_name, total_cnt);
+	return result;
+}
+
 
 static isc_result_t ATTR_NONNULLS
 configure_zone_acl(isc_mem_t *mctx, dns_zone_t *zone,
@@ -1011,15 +1047,17 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 	} else if (result != ISC_R_SUCCESS)
 		goto cleanup;
 
-	CHECK(dns_view_findzone(inst->view, name, &foundzone));
-	/* foundzone != zone indicates a bug */
-	RUNTIME_CHECK(foundzone == zone);
-	dns_zone_detach(&foundzone);
+	result = dns_view_findzone(inst->view, name, &foundzone);
+	if (result == ISC_R_SUCCESS) {
+		/* foundzone != zone indicates a bug */
+		RUNTIME_CHECK(foundzone == zone);
+		dns_zone_detach(&foundzone);
 
-	if (lock) {
-		dns_view_thaw(inst->view);
-		freeze = ISC_TRUE;
-	}
+		if (lock) {
+			dns_view_thaw(inst->view);
+			freeze = ISC_TRUE;
+		}
+	} /* else: zone wasn't in a view */
 
 	CHECK(delete_bind_zone(inst->view->zonetable, &zone));
 	CHECK(zr_del_zone(inst->zone_register, name));
@@ -1620,7 +1658,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	isc_result_t result;
 	isc_boolean_t unlock = ISC_FALSE;
 	isc_boolean_t publish = ISC_FALSE;
-	isc_boolean_t published = ISC_FALSE;
+	isc_boolean_t configured = ISC_FALSE;
 	isc_boolean_t ssu_changed;
 	isc_task_t *task = inst->task;
 	ldapdb_rdatalist_t rdatalist;
@@ -1750,11 +1788,10 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 		dns_zone_clearxfracl(zone);
 	}
 
-	if (publish) {
-		/* Everything is set correctly, publish zone */
+	sync_state_get(inst->sctx, &sync_state);
+	if (publish == ISC_TRUE && sync_state == sync_finished)
 		CHECK(publish_zone(inst, zone));
-		published = ISC_TRUE;
-	}
+	configured = ISC_TRUE;
 
 	/*
 	 * Don't bother if load fails, server will return
@@ -1893,7 +1930,7 @@ cleanup:
 		dns_journal_destroy(&journal);
 	if (ldapdb != NULL)
 		dns_db_detach(&ldapdb);
-	if (publish && !published) { /* Failure in ACL parsing or so. */
+	if (publish && !configured) { /* Failure in ACL parsing or so. */
 		log_error_r("zone '%s': publishing failed, rolling back due to",
 			    entry->dn);
 		result = delete_forwarding_table(inst, &name, "zone", entry->dn);
@@ -4403,9 +4440,6 @@ int ldap_sync_intermediate (
 		if (result != ISC_R_SUCCESS)
 			log_error_r("sync_barrier_wait() failed for instance '%s'",
 				    inst->db_name);
-		else
-			log_info("all zones from LDAP instance '%s' loaded",
-				 inst->db_name);
 	}
 	return LDAP_SUCCESS;
 }

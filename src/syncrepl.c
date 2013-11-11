@@ -126,6 +126,7 @@ barrier_decrement(isc_task_t *task, isc_event_t *event) {
 		bev->sctx->state = sync_finished;
 		isc_condition_broadcast(&bev->sctx->cond);
 		UNLOCK(&bev->sctx->mutex);
+		publish_zones(inst);
 	}
 
 cleanup:

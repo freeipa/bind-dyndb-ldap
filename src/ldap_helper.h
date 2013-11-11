@@ -100,4 +100,6 @@ remove_entry_from_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst) ATTR_NONNU
 
 settings_set_t * ldap_instance_getsettings_local(ldap_instance_t *ldap_inst) ATTR_NONNULLS;
 
+isc_result_t publish_zones(ldap_instance_t *inst);
+
 #endif /* !_LD_LDAP_HELPER_H_ */
