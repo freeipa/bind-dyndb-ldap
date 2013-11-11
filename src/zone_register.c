@@ -99,12 +99,6 @@ zr_rbt_iter_init(zone_register_t *zr, rbt_iterator_t **iter,
 	return rbt_iter_first(zr->mctx, zr->rbt, &zr->rwlock, iter, nodename);
 }
 
-dns_rbt_t *
-zr_get_rbt(zone_register_t *zr)
-{
-	return zr->rbt;
-}
-
 isc_mem_t *
 zr_get_mctx(zone_register_t *zr) {
 	REQUIRE(zr);
