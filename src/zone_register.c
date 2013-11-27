@@ -60,6 +60,7 @@ typedef struct {
 	dns_zone_t	*zone;
 	char		*dn;
 	settings_set_t	*settings;
+	dns_db_t	*ldapdb;
 } zone_info_t;
 
 /* Callback for dns_rbt_create(). */
@@ -231,12 +232,14 @@ cleanup:
 #define PRINT_BUFF_SIZE 255
 static isc_result_t ATTR_NONNULLS
 create_zone_info(isc_mem_t *mctx, dns_zone_t *zone, const char *dn,
-		settings_set_t *global_settings, zone_info_t **zinfop)
+		 settings_set_t *global_settings, const char *db_name,
+		 zone_info_t **zinfop)
 {
 	isc_result_t result;
 	zone_info_t *zinfo;
 	char settings_name[PRINT_BUFF_SIZE];
 	ld_string_t *zone_dir = NULL;
+	char *argv[1];
 
 	REQUIRE(zone != NULL);
 	REQUIRE(dn != NULL);
@@ -258,6 +261,11 @@ create_zone_info(isc_mem_t *mctx, dns_zone_t *zone, const char *dn,
 	CHECK(zr_get_zone_path(mctx, global_settings, dns_zone_getorigin(zone),
 			       NULL, &zone_dir));
 	CHECK(fs_dir_create(str_buf(zone_dir)));
+
+	DE_CONST(db_name, argv[0]);
+	CHECK(ldapdb_create(mctx, dns_zone_getorigin(zone), LDAP_DB_TYPE,
+			    LDAP_DB_RDATACLASS, sizeof(argv)/sizeof(argv[0]),
+			    argv, NULL, &zinfo->ldapdb));
 
 cleanup:
 	if (result == ISC_R_SUCCESS)
@@ -285,6 +293,7 @@ delete_zone_info(void *arg1, void *arg2)
 	settings_set_free(&zinfo->settings);
 	isc_mem_free(mctx, zinfo->dn);
 	dns_zone_detach(&zinfo->zone);
+	dns_db_detach(&zinfo->ldapdb);
 	SAFE_MEM_PUT_PTR(mctx, zinfo);
 }
 
@@ -325,6 +334,7 @@ zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn)
 	}
 
 	CHECK(create_zone_info(zr->mctx, zone, dn, zr->global_settings,
+			       ldap_instance_getdbname(zr->ldap_inst),
 			       &new_zinfo));
 	CHECK(dns_rbt_addname(zr->rbt, name, new_zinfo));
 
@@ -397,14 +407,13 @@ zr_get_zone_dbs(zone_register_t *zr, dns_name_t *name, dns_db_t **ldapdbp,
 	if (result == DNS_R_PARTIALMATCH)
 		result = ISC_R_SUCCESS;
 	if (result == ISC_R_SUCCESS) {
-		CHECK(dns_zone_getdb(((zone_info_t *)zinfo)->zone, &ldapdb));
+		dns_db_attach(((zone_info_t *)zinfo)->ldapdb, &ldapdb);
 		if (ldapdbp != NULL)
 			dns_db_attach(ldapdb, ldapdbp);
 		if (rbtdbp != NULL)
 			dns_db_attach(ldapdb_get_rbtdb(ldapdb), rbtdbp);
 	}
 
-cleanup:
 	RWUNLOCK(&zr->rwlock, isc_rwlocktype_read);
 	if (ldapdb)
 		dns_db_detach(&ldapdb);

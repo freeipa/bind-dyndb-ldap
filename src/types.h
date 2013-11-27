@@ -46,4 +46,7 @@ typedef struct enum_txt_assoc {
 	const char	*description;
 } enum_txt_assoc_t;
 
+typedef struct ldap_instance	ldap_instance_t;
+typedef struct zone_register	zone_register_t;
+
 #endif /* !_LD_TYPES_H_ */

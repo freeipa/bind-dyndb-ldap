@@ -24,12 +24,11 @@
 
 #include "settings.h"
 #include "types.h"
+#include "zone_register.h"
 
 #include <isc/util.h>
 
 #define LDAPDB_EVENTCLASS 		ISC_EVENTCLASS(0xDDDD)
-
-typedef struct ldap_instance	ldap_instance_t;
 
 isc_result_t ldapdb_rdatalist_findrdatatype(ldapdb_rdatalist_t *rdatalist,
 					    dns_rdatatype_t rdtype,
@@ -100,6 +99,10 @@ remove_entry_from_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst) ATTR_NONNU
 
 settings_set_t * ldap_instance_getsettings_local(ldap_instance_t *ldap_inst) ATTR_NONNULLS;
 
-isc_result_t publish_zones(ldap_instance_t *inst);
+const char * ldap_instance_getdbname(ldap_instance_t *ldap_inst) ATTR_NONNULLS;
+
+zone_register_t * ldap_instance_getzr(ldap_instance_t *ldap_inst) ATTR_NONNULLS;
+
+isc_result_t activate_zones(isc_task_t *task, ldap_instance_t *inst);
 
 #endif /* !_LD_LDAP_HELPER_H_ */

@@ -25,8 +25,6 @@
 #include "rbt_helper.h"
 #include "ldap_helper.h"
 
-typedef struct zone_register zone_register_t;
-
 isc_result_t
 zr_create(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
 	  settings_set_t *glob_settings, zone_register_t **zrp) ATTR_NONNULLS;

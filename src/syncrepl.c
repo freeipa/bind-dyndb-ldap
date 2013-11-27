@@ -113,7 +113,7 @@ barrier_decrement(isc_task_t *task, isc_event_t *event) {
 	sync_barrierev_t *bev = NULL;
 	isc_uint32_t cnt;
 
-	UNUSED(task);
+	REQUIRE(ISCAPI_TASK_VALID(task));
 	REQUIRE(event != NULL);
 
 	bev = (sync_barrierev_t *)event;
@@ -126,7 +126,7 @@ barrier_decrement(isc_task_t *task, isc_event_t *event) {
 		bev->sctx->state = sync_finished;
 		isc_condition_broadcast(&bev->sctx->cond);
 		UNLOCK(&bev->sctx->mutex);
-		publish_zones(inst);
+		activate_zones(task, inst);
 	}
 
 cleanup:

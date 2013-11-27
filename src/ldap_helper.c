@@ -852,13 +852,71 @@ cleanup:
 }
 
 static isc_result_t ATTR_NONNULLS
-publish_zone(ldap_instance_t *inst, dns_zone_t *zone)
+load_zone(dns_zone_t *zone) {
+	isc_result_t result;
+	isc_boolean_t zone_dynamic;
+	isc_uint32_t serial;
+
+	result = dns_zone_load(zone);
+	if (result != ISC_R_SUCCESS && result != DNS_R_UPTODATE
+	    && result != DNS_R_DYNAMIC && result != DNS_R_CONTINUE)
+		goto cleanup;
+	zone_dynamic = (result == DNS_R_DYNAMIC);
+
+	CHECK(dns_zone_getserial2(zone, &serial));
+	dns_zone_log(zone, ISC_LOG_INFO, "loaded serial %u", serial);
+
+	if (zone_dynamic)
+		dns_zone_notify(zone);
+
+cleanup:
+	return result;
+}
+
+/**
+ * Add zone to the view defined in inst->view.
+ */
+static isc_result_t ATTR_NONNULLS
+publish_zone(isc_task_t *task, ldap_instance_t *inst, dns_zone_t *zone)
 {
 	isc_result_t result;
 	isc_boolean_t freeze = ISC_FALSE;
+	dns_zone_t *zone_in_view = NULL;
+	dns_view_t *view_in_zone = NULL;
+	isc_boolean_t unlock = ISC_FALSE;
 
+	REQUIRE(ISCAPI_TASK_VALID(task));
 	REQUIRE(inst != NULL);
 	REQUIRE(zone != NULL);
+
+	/* Return success if the zone is already in the view as expected. */
+	result = dns_view_findzone(inst->view, dns_zone_getorigin(zone),
+				   &zone_in_view);
+	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
+		goto cleanup;
+
+	view_in_zone = dns_zone_getview(zone);
+	if (view_in_zone != NULL) {
+		/* Zone has a view set -> view should contain the same zone. */
+		if (zone_in_view == zone) {
+			/* Zone is already published in the right view. */
+			CLEANUP_WITH(ISC_R_SUCCESS);
+		} else {
+			dns_zone_log(zone, ISC_LOG_ERROR, "zone->view doesn't "
+				     "match data in the view");
+			CLEANUP_WITH(ISC_R_UNEXPECTED);
+		}
+	} else if (zone_in_view != NULL) {
+		dns_zone_log(zone, ISC_LOG_ERROR, "cannot publish zone: view "
+			     "already contains another zone with this name");
+		CLEANUP_WITH(ISC_R_UNEXPECTED);
+	} /* else if (zone_in_view == NULL && view_in_zone == NULL)
+	     Publish the zone. */
+
+	result = isc_task_beginexclusive(task);
+	RUNTIME_CHECK(result == ISC_R_SUCCESS ||
+		      result == ISC_R_LOCKBUSY);
+	unlock = (result == ISC_R_SUCCESS);
 
 	if (inst->view->frozen) {
 		freeze = ISC_TRUE;
@@ -869,15 +927,24 @@ publish_zone(ldap_instance_t *inst, dns_zone_t *zone)
 	CHECK(dns_view_addzone(inst->view, zone));
 
 cleanup:
+	if (zone_in_view != NULL)
+		dns_zone_detach(&zone_in_view);
 	if (freeze)
 		dns_view_freeze(inst->view);
+	if (unlock)
+		isc_task_endexclusive(task);
 
 	return result;
 }
 
+/**
+ * Add all zones in zone register to DNS view specified in inst->view
+ * and load zones.
+ */
 isc_result_t
-publish_zones(ldap_instance_t *inst) {
+activate_zones(isc_task_t *task, ldap_instance_t *inst) {
 	isc_result_t result;
+	isc_boolean_t loaded;
 	rbt_iterator_t *iter = NULL;
 	dns_zone_t *zone = NULL;
 	DECLARE_BUFFERED_NAME(name);
@@ -889,12 +956,24 @@ publish_zones(ldap_instance_t *inst) {
 	do {
 		++total_cnt;
 		CHECK(zr_get_zone_ptr(inst->zone_register, &name, &zone));
-		result = publish_zone(inst, zone);
+		/*
+		 * Don't bother if load fails, server will return
+		 * SERVFAIL for queries beneath this zone. This is
+		 * admin's problem.
+		 */
+		result = load_zone(zone);
+		loaded = (result == ISC_R_SUCCESS);
+		if (loaded == ISC_FALSE)
+			dns_zone_log(zone, ISC_LOG_ERROR,
+				     "unable to load zone: %s",
+				     dns_result_totext(result));
+
+		result = publish_zone(task, inst, zone);
 		if (result != ISC_R_SUCCESS)
 			dns_zone_log(zone, ISC_LOG_ERROR,
 				     "cannot add zone to view: %s",
 				     dns_result_totext(result));
-		else
+		else if (loaded == ISC_TRUE)
 			++published_cnt;
 		dns_zone_detach(&zone);
 
@@ -1549,12 +1628,15 @@ diff_analyze_serial(dns_diff_t *diff, dns_difftuple_t **soa_latest,
 			} else if (t->op == DNS_DIFFOP_ADD ||
 				   t->op == DNS_DIFFOP_ADDRESIGN) {
 				/* add operation has to follow a delete */
-				INSIST(del_soa != NULL);
 				*soa_latest = t;
 
-				/* detect if fields other than serial
-				 * were changed (compute only if necessary) */
-				if (*data_changed == ISC_FALSE) {
+				/* we are adding SOA without preceding delete
+				 * -> we are initializing new empty zone */
+				if (del_soa == NULL) {
+					*data_changed = ISC_TRUE;
+				} else if (*data_changed == ISC_FALSE) {
+					/* detect if fields other than serial
+					 * were changed (compute only if necessary) */
 					CHECK(dns_difftuple_copy(t, &tmp_tuple));
 					dns_soa_setserial(dns_soa_getserial(del_soa),
 							  &tmp_tuple->rdata);
@@ -1648,7 +1730,8 @@ cleanup:
 
 /* Parse the master zone entry */
 static isc_result_t ATTR_NONNULLS
-ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
+ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
+			    isc_task_t *task)
 {
 	const char *dn;
 	ldap_valuelist_t values;
@@ -1657,12 +1740,10 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	dns_zone_t *zone_raw = NULL;
 	isc_result_t result;
 	isc_boolean_t unlock = ISC_FALSE;
-	isc_boolean_t publish = ISC_FALSE;
+	isc_boolean_t new_zone = ISC_FALSE;
 	isc_boolean_t configured = ISC_FALSE;
 	isc_boolean_t ssu_changed;
-	isc_task_t *task = inst->task;
 	ldapdb_rdatalist_t rdatalist;
-	isc_boolean_t zone_dynamic = ISC_FALSE;
 	settings_set_t *zone_settings = NULL;
 	const char *fake_mname = NULL;
 	isc_boolean_t data_changed;
@@ -1674,6 +1755,8 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	dns_db_t *ldapdb = NULL;
 	dns_diff_t diff;
 	dns_dbversion_t *version = NULL;
+	/* RBTDB's origin node cannot be detached until the node is non-empty.
+	 * This is workaround for possible bug in bind-9.9.3-P2. */
 	dns_dbnode_t *node = NULL;
 	dns_rdatasetiter_t *rbt_rds_iterator = NULL;
 	dns_difftuple_t *soa_tuple = NULL;
@@ -1726,7 +1809,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 		CHECK(create_zone(inst, &name, &zone));
 		CHECK(configure_paths(inst->mctx, inst, zone, ISC_FALSE));
 		CHECK(zr_add_zone(inst->zone_register, zone, dn));
-		publish = ISC_TRUE;
+		new_zone = ISC_TRUE;
 		log_debug(2, "created zone %p: %s", zone, dn);
 	} else if (result != ISC_R_SUCCESS)
 		goto cleanup;
@@ -1789,29 +1872,14 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	}
 
 	sync_state_get(inst->sctx, &sync_state);
-	if (publish == ISC_TRUE && sync_state == sync_finished)
-		CHECK(publish_zone(inst, zone));
-	configured = ISC_TRUE;
-
-	/*
-	 * Don't bother if load fails, server will return
-	 * SERVFAIL for queries beneath this zone. This is
-	 * admin's problem.
-	 */
-
-	/* !!! We should parse existing zone records before dns_zone_load(). */
-	result = dns_zone_load(zone);
-	if (result != ISC_R_SUCCESS && result != DNS_R_UPTODATE
-		&& result != DNS_R_DYNAMIC && result != DNS_R_CONTINUE)
-		goto cleanup;
-	zone_dynamic = (result == DNS_R_DYNAMIC);
+	if (new_zone == ISC_TRUE && sync_state == sync_finished)
+		CHECK(publish_zone(task, inst, zone));
 
 	/* synchronize zone origin with LDAP */
 	CHECK(setting_get_str("fake_mname", inst->local_settings,
 			      &fake_mname));
 	CHECK(ldap_parse_rrentry(inst->mctx, entry, &name, fake_mname,
 				 &rdatalist));
-	CHECK(dns_zone_getserial2(zone, &curr_serial));
 
 	CHECK(zr_get_zone_dbs(inst->zone_register, &name, &ldapdb, &rbtdb));
 	CHECK(dns_db_newversion(ldapdb, &version));
@@ -1825,11 +1893,12 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	} else if (result != ISC_R_NOTFOUND)
 		goto cleanup;
 
-	dns_db_detachnode(rbtdb, &node);
+	/* New zone doesn't have serial defined yet. */
+	if (new_zone == ISC_FALSE)
+		CHECK(dns_db_getsoaserial(rbtdb, version, &curr_serial));
 
 	/* Detect if SOA serial is affected by the update or not.
 	 * Always bump serial in case of re-synchronization. */
-	sync_state_get(inst->sctx, &sync_state);
 	CHECK(diff_analyze_serial(&diff, &soa_tuple, &data_changed));
 	if (data_changed == ISC_TRUE || sync_state != sync_finished) {
 		if (soa_tuple == NULL) {
@@ -1845,9 +1914,9 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 			CHECK(update_soa_serial(dns_updatemethod_unixtime,
 						soa_tuple, &new_serial));
 			dns_diff_appendminimal(&diff, &soa_tuple);
-		} else if (sync_state != sync_finished ||
+		} else if (new_zone == ISC_TRUE || sync_state != sync_finished ||
 			   isc_serial_le(dns_soa_getserial(&soa_tuple->rdata),
-					 curr_serial) || publish == ISC_TRUE) {
+					 curr_serial)) {
 			/* The diff tries to send SOA serial back!
 			 * => generate new serial and write it back to LDAP.
 			 * Force serial update if we are adding a new zone. */
@@ -1866,7 +1935,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 			/* The diff is empty => do nothing. */
 			INSIST(EMPTY(diff.tuples));
 		} else if (isc_serial_le(dns_soa_getserial(&soa_tuple->rdata),
-				       curr_serial)) {
+					 curr_serial)) {
 			/* Attempt to move serial backwards without any data
 			 * => ignore it. */
 			dns_diff_clear(&diff);
@@ -1891,7 +1960,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	}
 
 	if (!EMPTY(diff.tuples)) {
-		if (sync_state == sync_finished) {
+		if (sync_state == sync_finished && new_zone == ISC_FALSE) {
 			/* write the transaction to journal */
 			dns_zone_getraw(zone, &zone_raw);
 			if (zone_raw == NULL)
@@ -1908,11 +1977,14 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 		dns_db_closeversion(ldapdb, &version, ISC_TRUE);
 	}
 
-	CHECK(dns_zone_getserial2(zone, &curr_serial));
-	if (publish)
-		dns_zone_log(zone, ISC_LOG_INFO, "loaded serial %u", curr_serial);
-	if (zone_dynamic)
-		dns_zone_notify(zone);
+	/* Make sure that zone has at least SOA record. */
+	if (new_zone == ISC_FALSE
+	    || (data_changed == ISC_TRUE && soa_tuple != NULL))
+		configured = ISC_TRUE;
+
+	/* Do zone load only if the initial LDAP synchronization is done. */
+	if (sync_state == sync_finished && data_changed == ISC_TRUE)
+		CHECK(load_zone(zone));
 
 cleanup:
 	dns_diff_clear(&diff);
@@ -1930,17 +2002,12 @@ cleanup:
 		dns_journal_destroy(&journal);
 	if (ldapdb != NULL)
 		dns_db_detach(&ldapdb);
-	if (publish && !configured) { /* Failure in ACL parsing or so. */
+	if (new_zone && !configured) { /* Failure in ACL parsing or so. */
 		log_error_r("zone '%s': publishing failed, rolling back due to",
 			    entry->dn);
-		result = delete_forwarding_table(inst, &name, "zone", entry->dn);
+		result = ldap_delete_zone2(inst, &name, ISC_TRUE, ISC_FALSE);
 		if (result != ISC_R_SUCCESS)
-			log_error_r("zone '%s': rollback failed: forwarding",
-				    entry->dn);
-		result = zr_del_zone(inst->zone_register, &name);
-		if (result != ISC_R_SUCCESS)
-			log_error_r("zone '%s': rollback failed: zone register",
-				    entry->dn);
+			log_error_r("zone '%s': rollback failed: ", entry->dn);
 	}
 	if (unlock)
 		isc_task_endexclusive(task);
@@ -3749,7 +3816,7 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	if (zone_active) {
 		CHECK(ldap_entry_getclass(entry, &objclass));
 		if (objclass & LDAP_ENTRYCLASS_MASTER)
-			CHECK(ldap_parse_master_zoneentry(entry, inst));
+			CHECK(ldap_parse_master_zoneentry(entry, inst, task));
 		else if (objclass & LDAP_ENTRYCLASS_FORWARD)
 			CHECK(ldap_parse_fwd_zoneentry(entry, inst));
 
@@ -4630,4 +4697,16 @@ settings_set_t *
 ldap_instance_getsettings_local(ldap_instance_t *ldap_inst)
 {
 	return ldap_inst->local_settings;
+}
+
+const char *
+ldap_instance_getdbname(ldap_instance_t *ldap_inst)
+{
+	return ldap_inst->db_name;
+}
+
+zone_register_t *
+ldap_instance_getzr(ldap_instance_t *ldap_inst)
+{
+	return ldap_inst->zone_register;
 }

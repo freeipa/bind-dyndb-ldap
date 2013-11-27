@@ -65,7 +65,7 @@
 #define VALID_LDAPDB(ldapdb) \
 	((ldapdb) != NULL && (ldapdb)->common.impmagic == LDAPDB_MAGIC)
 
-typedef struct {
+struct ldapdb {
 	dns_db_t			common;
 	isc_refcount_t			refs;
 	ldap_instance_t			*ldap_inst;
@@ -91,7 +91,7 @@ typedef struct {
 	 * The purpose is to detect moment when the new version is closed.
 	 * That is the right time for unlocking newversion_lock. */
 	dns_dbversion_t			*newversion;
-} ldapdb_t;
+};
 
 dns_db_t * ATTR_NONNULLS
 ldapdb_get_rbtdb(dns_db_t *db) {
@@ -908,83 +908,57 @@ dns_ns_buildrdata(dns_name_t *origin, dns_name_t *ns_name,
 				      &ns, &rdatabuf));
 }
 
-/*
- * Create an SOA record for a newly-created zone
+/**
+ * Associate a pre-existing LDAP DB instance with a new DNS zone.
+ *
+ * @warning This is a hack.
+ *
+ * Normally, an empty database is created by dns_db_create() call during
+ * dns_zone_load().
+ *
+ * In our case, we need to create and populate databases on-the-fly
+ * as we process data from LDAP.
+ * We create an empty LDAP DB (which encapsulates internal RBT DB)
+ * for each zone when the zone is being added to zone_register.
+ *
+ * The database in zone register is modified on-the-fly and subsequent
+ * dns_db_create() call associates this populated database with the DNS zone.
+ *
+ * This allows us to call dns_zone_load() later when all the data are in place,
+ * so dns_zone_load() can be postponed until synchronization state sync_finish
+ * is reached.
+ *
+ * @param[in] argv [0] is database instance name
  */
-static isc_result_t ATTR_NONNULLS
-add_soa(isc_mem_t *mctx, dns_name_t *origin, dns_db_t *db) {
+isc_result_t
+ldapdb_associate(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
+		 dns_rdataclass_t rdclass, unsigned int argc, char *argv[],
+		 void *driverarg, dns_db_t **dbp) {
+
 	isc_result_t result;
-	dns_rdata_t rdata_soa = DNS_RDATA_INIT;
-	dns_rdata_t rdata_ns = DNS_RDATA_INIT;
-	unsigned char buf_soa[DNS_SOA_BUFFERSIZE];
-	unsigned char buf_ns[DNS_SOA_BUFFERSIZE];
-	dns_fixedname_t ns_name;
-	dns_fixedname_t m_name;
-	dns_dbversion_t *ver = NULL;
-	dns_difftuple_t *tp_soa = NULL;
-	dns_difftuple_t *tp_ns = NULL;
-	dns_diff_t diff;
+	ldap_instance_t *ldap_inst = NULL;
+	zone_register_t *zr = NULL;
 
-	dns_diff_init(mctx, &diff);
-	result = dns_db_newversion(db, &ver);
-	if (result != ISC_R_SUCCESS) {
-		log_error_r("add_soa:dns_db_newversion");
-		goto failure;
-	}
+	UNUSED(driverarg); /* Currently we don't need any data */
 
-	/* Build SOA record */
-	dns_fixedname_init(&m_name);
-	dns_name_fromstring(dns_fixedname_name(&m_name), "pspacek.brq.redhat.com.", 0, mctx);
-	result = dns_soa_buildrdata(dns_fixedname_name(&m_name), dns_rootname, dns_rdataclass_in,
-				    0, 0, 0, 0, 0, buf_soa, &rdata_soa);
-	if (result != ISC_R_SUCCESS) {
-		log_error_r("add_soa:dns_soa_buildrdata");
-		goto failure;
-	}
+	REQUIRE(ISCAPI_MCTX_VALID(mctx));
+	REQUIRE(argc == LDAP_DB_ARGC);
+	REQUIRE(type == LDAP_DB_TYPE);
+	REQUIRE(rdclass == LDAP_DB_RDATACLASS);
+	REQUIRE(dbp != NULL && *dbp == NULL);
 
-	result = dns_difftuple_create(mctx, DNS_DIFFOP_ADD, origin, 3600,
-				      &rdata_soa, &tp_soa);
-	if (result != ISC_R_SUCCESS) {
-			log_error_r("add_soa:dns_difftuple_create");
-			goto failure;
-	}
-	dns_diff_append(&diff, &tp_soa);
+	CHECK(manager_get_ldap_instance(argv[0], &ldap_inst));
+	zr = ldap_instance_getzr(ldap_inst);
+	if (zr == NULL)
+		CLEANUP_WITH(ISC_R_NOTFOUND);
 
-	/* Build NS record */
-	dns_fixedname_init(&ns_name);
-	dns_name_fromstring(dns_fixedname_name(&ns_name), "localhost.", 0, mctx);
+	CHECK(zr_get_zone_dbs(zr, name, dbp, NULL));
 
-	result = dns_ns_buildrdata(origin, dns_fixedname_name(&ns_name),
-			dns_rdataclass_in,
-			buf_ns,
-			&rdata_ns);
-	if (result != ISC_R_SUCCESS) {
-			log_error_r("add_soa:dns_ns_buildrdata");
-			goto failure;
-	}
-	result = dns_difftuple_create(mctx, DNS_DIFFOP_ADD, origin, 3600,
-				      &rdata_ns, &tp_ns);
-	if (result != ISC_R_SUCCESS) {
-			log_error_r("add_soa:dns_difftuple_create");
-			goto failure;
-	}
-	dns_diff_append(&diff, &tp_ns);
-
-	result = dns_diff_apply(&diff, db, ver);
-	if (result != ISC_R_SUCCESS) {
-			log_error_r("add_soa:dns_difftuple_create");
-			goto failure;
-	}
-
-failure:
-	dns_diff_clear(&diff);
-	if (ver != NULL)
-		dns_db_closeversion(db, &ver, ISC_TF(result == ISC_R_SUCCESS));
-
-	return (result);
+cleanup:
+	return result;
 }
 
-static isc_result_t
+isc_result_t
 ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 	      dns_rdataclass_t rdclass, unsigned int argc, char *argv[],
 	      void *driverarg, dns_db_t **dbp)
@@ -996,10 +970,9 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 	UNUSED(driverarg); /* Currently we don't need any data */
 
 	/* Database instance name. */
-	REQUIRE(argc > 0);
-
-	REQUIRE(type == dns_dbtype_zone);
-	REQUIRE(rdclass == dns_rdataclass_in);
+	REQUIRE(argc == LDAP_DB_ARGC);
+	REQUIRE(type == LDAP_DB_TYPE);
+	REQUIRE(rdclass == LDAP_DB_RDATACLASS);
 	REQUIRE(dbp != NULL && *dbp == NULL);
 
 	CHECKED_MEM_GET_PTR(mctx, ldapdb);
@@ -1025,7 +998,6 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 
 	CHECK(dns_db_create(mctx, "rbt", name, dns_dbtype_zone,
 			    dns_rdataclass_in, 0, NULL, &ldapdb->rbtdb));
-	CHECK(add_soa(mctx, name, ldapdb->rbtdb));
 
 	*dbp = (dns_db_t *)ldapdb;
 
@@ -1071,7 +1043,7 @@ dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
 	 */
 
 	/* Register new DNS DB implementation. */
-	result = dns_db_register(ldapdb_impname, &ldapdb_create, NULL, mctx,
+	result = dns_db_register(ldapdb_impname, &ldapdb_associate, NULL, mctx,
 				 &ldapdb_imp_new);
 	if (result != ISC_R_SUCCESS && result != ISC_R_EXISTS)
 		return result;
