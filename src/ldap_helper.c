@@ -1957,7 +1957,7 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
 cleanup:
 	if (entry != NULL)
 		dn = entry->dn;
-	if (data_buf != NULL && str_buf(data_buf) != NULL)
+	if (data_buf != NULL && str_len(data_buf) != 0)
 		data_str = str_buf(data_buf);
 	log_error_r("failed to parse RR entry: dn '%s': data '%s'", dn, data_str);
 	str_destroy(&data_buf);
