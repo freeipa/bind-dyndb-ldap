@@ -183,6 +183,10 @@ setting_get(const char *const name, const setting_type_t type,
 	case ST_BOOLEAN:
 		*(isc_boolean_t *)target = setting->value.value_boolean;
 		break;
+	default:
+		UNEXPECTED_ERROR(__FILE__, __LINE__,
+				 "invalid setting_type_t value %u", type);
+		break;
 	}
 
 	return ISC_R_SUCCESS;
@@ -277,6 +281,10 @@ set_value(isc_mem_t *mctx, setting_t *setting, const char *value,
 		    setting->value.value_boolean == ISC_TF(numeric_value))
 			CLEANUP_WITH(ISC_R_IGNORE);
 		break;
+	default:
+		UNEXPECTED_ERROR(__FILE__, __LINE__,
+				 "invalid setting_type_t value %u", setting->type);
+		break;
 	}
 
 	/* Switch to single thread mode and write new value. */
@@ -299,6 +307,10 @@ set_value(isc_mem_t *mctx, setting_t *setting, const char *value,
 
 	case ST_BOOLEAN:
 		setting->value.value_boolean = ISC_TF(numeric_value);
+		break;
+	default:
+		UNEXPECTED_ERROR(__FILE__, __LINE__,
+				 "invalid setting_type_t value %u", setting->type);
 		break;
 	}
 	setting->filled = 1;
@@ -386,6 +398,10 @@ setting_unset(const char *const name, const settings_set_t *set,
 
 	case ST_UNSIGNED_INTEGER:
 	case ST_BOOLEAN:
+		break;
+	default:
+		UNEXPECTED_ERROR(__FILE__, __LINE__,
+				 "invalid setting_type_t value %u", setting->type);
 		break;
 	}
 	setting->filled = 0;

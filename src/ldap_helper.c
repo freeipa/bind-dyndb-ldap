@@ -2582,6 +2582,12 @@ force_reconnect:
 						   ldap_sasl_interact,
 						   ldap_inst);
 		break;
+	case AUTH_INVALID:
+		UNEXPECTED_ERROR(__FILE__, __LINE__,
+				"invalid auth_method_enum value %u",
+				 auth_method_enum);
+		break;
+
 	default:
 		log_bug("unsupported authentication mechanism");
 		ret = LDAP_OTHER;
