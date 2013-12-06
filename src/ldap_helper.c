@@ -3025,6 +3025,7 @@ ldap_find_ptr(ldap_instance_t *ldap_inst, const int af, const char *ip_str,
 	      dns_name_t *ptr_name, ld_string_t *ptr_dn,
 	      dns_name_t *zone_name) {
 	isc_result_t result;
+	const char *owner_zone_dn_ptr;
 	isc_mem_t *mctx = ldap_inst->mctx;
 
 	union {
@@ -3073,7 +3074,7 @@ ldap_find_ptr(ldap_instance_t *ldap_inst, const int af, const char *ip_str,
 	 * owner_dn_ptr = "idnsName=100.0.168, idnsname=192.in-addr.arpa,cn=dns,$SUFFIX"
 	 * owner_zone_dn_ptr = "idnsname=192.in-addr.arpa,cn=dns,$SUFFIX"
 	 */
-	char *owner_zone_dn_ptr = strstr(str_buf(ptr_dn),", ") + 1;
+	owner_zone_dn_ptr = strstr(str_buf(ptr_dn),", ") + 1;
 
 	/* Get attribute "idnsAllowDynUpdate" for reverse zone or use default. */
 	CHECK(dn_to_dnsname(mctx, owner_zone_dn_ptr, zone_name, NULL));
