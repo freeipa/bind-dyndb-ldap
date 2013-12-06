@@ -2515,7 +2515,6 @@ ldap_reconnect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 	if (ldap_conn->tries > 0) {
 		isc_time_t now;
 		int time_cmp;
-		isc_result_t result;
 
 		result = isc_time_now(&now);
 		time_cmp = isc_time_compare(&now, &ldap_conn->next_reconnect);
@@ -2560,7 +2559,6 @@ force_reconnect:
 		CHECK(setting_get_str("sasl_mech", ldap_inst->local_settings,
 				      &sasl_mech));
 		if (strcmp(sasl_mech, "GSSAPI") == 0) {
-			isc_result_t result;
 			CHECK(setting_get_str("krb5_principal",
 					      ldap_inst->local_settings,
 					      &krb5_principal));
