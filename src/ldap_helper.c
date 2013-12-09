@@ -81,6 +81,7 @@
 #include "semaphore.h"
 #include "settings.h"
 #include "str.h"
+#include "syncrepl.h"
 #include "util.h"
 #include "zone_manager.h"
 #include "zone_register.h"
@@ -168,6 +169,8 @@ struct ldap_instance {
 	settings_set_t		*local_settings;
 	settings_set_t		*global_settings;
 	dns_forwarders_t	orig_global_forwarders; /* from named.conf */
+
+	sync_ctx_t		*sctx;
 };
 
 struct ldap_pool {
@@ -215,8 +218,7 @@ const ldap_auth_pair_t supported_ldap_auth[] = {
 	{ AUTH_INVALID, NULL		},
 };
 
-#define LDAPDB_EVENTCLASS 	ISC_EVENTCLASS(0xDDDD)
-#define LDAPDB_EVENT_SYNCREPL	(LDAPDB_EVENTCLASS + 0)
+#define LDAPDB_EVENT_SYNCREPL_UPDATE	(LDAPDB_EVENTCLASS + 1)
 
 typedef struct ldap_syncreplevent ldap_syncreplevent_t;
 struct ldap_syncreplevent {
@@ -529,6 +531,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	ISC_LIST_INIT(ldap_inst->orig_global_forwarders.addrs);
 	ldap_inst->task = task;
 	ldap_inst->watcher = 0;
+	CHECK(sync_ctx_init(ldap_inst->mctx, task, &ldap_inst->sctx));
 
 	isc_string_printf_truncate(settings_name, PRINT_BUFF_SIZE,
 				   SETTING_SET_NAME_LOCAL " for database %s",
@@ -653,6 +656,8 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	settings_set_free(&ldap_inst->global_settings);
 	settings_set_free(&ldap_inst->local_settings);
 
+	sync_ctx_free(&ldap_inst->sctx);
+
 	MEM_PUT_AND_DETACH(ldap_inst);
 
 	*ldap_instp = NULL;
@@ -776,6 +781,8 @@ create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, dns_zone_t **zonep)
 	isc_result_t result;
 	dns_zone_t *zone = NULL;
 	const char *argv[2];
+	sync_state_t sync_state;
+	isc_task_t *task = NULL;
 
 	REQUIRE(ldap_inst != NULL);
 	REQUIRE(name != NULL);
@@ -820,13 +827,24 @@ create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, dns_zone_t **zonep)
 	dns_zone_setclass(zone, dns_rdataclass_in);
 	dns_zone_settype(zone, dns_zone_master);
 	CHECK(dns_zone_setdbtype(zone, 2, argv));
+	CHECK(dns_zonemgr_managezone(ldap_inst->zmgr, zone));
+	sync_state_get(ldap_inst->sctx, &sync_state);
+	if (sync_state == sync_init) {
+		dns_zone_gettask(zone, &task);
+		CHECK(sync_task_add(ldap_inst->sctx, task));
+		isc_task_detach(&task);
+	}
 
 	*zonep = zone;
 	return ISC_R_SUCCESS;
 
 cleanup:
+	if (dns_zone_getmgr(zone) != NULL)
+		dns_zonemgr_releasezone(ldap_inst->zmgr, zone);
 	if (zone != NULL)
 		dns_zone_detach(&zone);
+	if (task != NULL)
+		isc_task_detach(&task);
 
 	return result;
 }
@@ -846,15 +864,9 @@ publish_zone(ldap_instance_t *inst, dns_zone_t *zone)
 	}
 
 	dns_zone_setview(zone, inst->view);
-	result = dns_zonemgr_managezone(inst->zmgr, zone);
-	if (result != ISC_R_SUCCESS)
-		return result;
 	CHECK(dns_view_addzone(inst->view, zone));
 
 cleanup:
-	if (result != ISC_R_SUCCESS)
-		dns_zonemgr_releasezone(inst->zmgr, zone);
-
 	if (freeze)
 		dns_view_freeze(inst->view);
 
@@ -4093,6 +4105,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	isc_mem_t *mctx = NULL;
 	isc_taskaction_t action = NULL;
 	isc_task_t *task = NULL;
+	sync_state_t sync_state;
 
 	log_debug(20, "syncrepl change type: " /*"none%d,"*/ "add%d, del%d, mod%d", /* moddn%d", */
 		  /* !SYNCREPL_ANY(chgtype), */ SYNCREPL_ADD(chgtype),
@@ -4174,8 +4187,16 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 		goto cleanup;
 	}
 
+	/* All events for single zone are handled by one task, so we don't
+	 * need to spend time with normal records. */
+	if (action == update_zone || action == update_config) {
+		sync_state_get(inst->sctx, &sync_state);
+		if (sync_state == sync_init)
+			CHECK(sync_task_add(inst->sctx, task));
+	}
+
 	pevent = (ldap_syncreplevent_t *)isc_event_allocate(inst->mctx,
-				inst, LDAPDB_EVENT_SYNCREPL,
+				inst, LDAPDB_EVENT_SYNCREPL_UPDATE,
 				action, NULL,
 				sizeof(ldap_syncreplevent_t));
 
@@ -4313,6 +4334,9 @@ int ldap_sync_search_entry (
 	/* TODO: Use this for UUID->DN mapping and MODDN detection. */
 	UNUSED(entryUUID);
 
+	if (inst->exiting)
+		return LDAP_SUCCESS;
+
 
 	CHECK(ldap_entry_create(inst->mctx, ls->ls_ld, msg, &entry));
 	syncrepl_update(inst, entry, phase);
@@ -4333,7 +4357,7 @@ cleanup:
 	return LDAP_SUCCESS;
 }
 
-/*
+/**
  * Called when specific intermediate/final messages are returned
  * by ldap_sync_init()/ldap_sync_poll().
  * If phase is LDAP_SYNC_CAPI_PRESENTS or LDAP_SYNC_CAPI_DELETES,
@@ -4346,6 +4370,8 @@ cleanup:
  * If phase is LDAP_SYNC_CAPI_PRESENTS_IDSET or
  * LDAP_SYNC_CAPI_DELETES_IDSET, syncUUIDs is an array of UUIDs
  * that are either present or have been deleted.
+ *
+ * @see Section @ref syncrepl-theory in syncrepl.c for the background.
  */
 int ldap_sync_intermediate (
 	ldap_sync_t			*ls,
@@ -4353,12 +4379,26 @@ int ldap_sync_intermediate (
 	BerVarray			syncUUIDs,
 	ldap_sync_refresh_t		phase ) {
 
-	UNUSED(ls);
+	isc_result_t	result;
+	ldap_instance_t *inst = ls->ls_private;
+
 	UNUSED(msg);
 	UNUSED(syncUUIDs);
 	UNUSED(phase);
 
-	log_error("ldap_sync_intermediate is not yet handled");
+	if (inst->exiting)
+		return LDAP_SUCCESS;
+
+	if (phase == LDAP_SYNC_CAPI_DONE) {
+		log_debug(1, "ldap_sync_intermediate RECEIVED");
+		result = sync_barrier_wait(inst->sctx, inst->db_name);
+		if (result != ISC_R_SUCCESS)
+			log_error_r("sync_barrier_wait() failed for instance '%s'",
+				    inst->db_name);
+		else
+			log_info("all zones from LDAP instance '%s' loaded",
+				 inst->db_name);
+	}
 	return LDAP_SUCCESS;
 }
 
@@ -4405,7 +4445,10 @@ ldap_sync_prepare(ldap_instance_t *inst, settings_set_t *settings,
 	isc_uint32_t reconnect_interval;
 	ldap_sync_t *ldap_sync = NULL;
 
+	REQUIRE(inst != NULL);
 	REQUIRE(ldap_syncp != NULL && *ldap_syncp == NULL);
+
+	sync_state_reset(inst->sctx);
 
 	/* Try to connect. */
 	while (conn->handle == NULL) {

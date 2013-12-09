@@ -27,6 +27,8 @@
 
 #include <isc/util.h>
 
+#define LDAPDB_EVENTCLASS 		ISC_EVENTCLASS(0xDDDD)
+
 typedef struct ldap_instance	ldap_instance_t;
 
 isc_result_t ldapdb_rdatalist_findrdatatype(ldapdb_rdatalist_t *rdatalist,

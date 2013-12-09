@@ -16,6 +16,7 @@ HDRS =				\
 	rdlist.h		\
 	semaphore.h		\
 	settings.h		\
+	syncrepl.h		\
 	str.h			\
 	types.h			\
 	util.h			\
@@ -37,6 +38,7 @@ ldap_la_SOURCES =		\
 	rdlist.c		\
 	semaphore.c		\
 	settings.c		\
+	syncrepl.c		\
 	str.c			\
 	zone_manager.c		\
 	zone_register.c
