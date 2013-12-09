@@ -1641,6 +1641,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	dns_difftuple_t *soa_tuple = NULL;
 	isc_boolean_t soa_tuple_alloc = ISC_FALSE;
 
+	sync_state_t sync_state;
 	dns_journal_t *journal = NULL;
 	char *journal_filename = NULL;
 
@@ -1789,9 +1790,11 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 
 	dns_db_detachnode(rbtdb, &node);
 
-	/* Detect if SOA serial is affected by the update or not. */
+	/* Detect if SOA serial is affected by the update or not.
+	 * Always bump serial in case of re-synchronization. */
+	sync_state_get(inst->sctx, &sync_state);
 	CHECK(diff_analyze_serial(&diff, &soa_tuple, &data_changed));
-	if (data_changed == ISC_TRUE) {
+	if (data_changed == ISC_TRUE || sync_state != sync_finished) {
 		if (soa_tuple == NULL) {
 			/* The diff doesn't contain new SOA serial
 			 * => generate new serial and write it back to LDAP. */
@@ -1805,10 +1808,12 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 			CHECK(update_soa_serial(dns_updatemethod_unixtime,
 						soa_tuple, &new_serial));
 			dns_diff_appendminimal(&diff, &soa_tuple);
-		} else if (isc_serial_le(dns_soa_getserial(&soa_tuple->rdata),
-					 curr_serial)) {
+		} else if (sync_state != sync_finished ||
+			   isc_serial_le(dns_soa_getserial(&soa_tuple->rdata),
+					 curr_serial) || publish == ISC_TRUE) {
 			/* The diff tries to send SOA serial back!
-			 * => generate new serial and write it back to LDAP. */
+			 * => generate new serial and write it back to LDAP.
+			 * Force serial update if we are adding a new zone. */
 			ldap_writeback = ISC_TRUE;
 			CHECK(update_soa_serial(dns_updatemethod_unixtime,
 						soa_tuple, &new_serial));
@@ -1849,15 +1854,17 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	}
 
 	if (!EMPTY(diff.tuples)) {
-		/* write the transaction to journal */
-		dns_zone_getraw(zone, &zone_raw);
-		if (zone_raw == NULL)
-			journal_filename = dns_zone_getjournal(zone);
-		else
-			journal_filename = dns_zone_getjournal(zone_raw);
-		CHECK(dns_journal_open(inst->mctx, journal_filename,
-				       DNS_JOURNAL_CREATE, &journal));
-		CHECK(dns_journal_write_transaction(journal, &diff));
+		if (sync_state == sync_finished) {
+			/* write the transaction to journal */
+			dns_zone_getraw(zone, &zone_raw);
+			if (zone_raw == NULL)
+				journal_filename = dns_zone_getjournal(zone);
+			else
+				journal_filename = dns_zone_getjournal(zone_raw);
+			CHECK(dns_journal_open(inst->mctx, journal_filename,
+					       DNS_JOURNAL_CREATE, &journal));
+			CHECK(dns_journal_write_transaction(journal, &diff));
+		}
 
 		/* commit */
 		CHECK(dns_diff_apply(&diff, rbtdb, version));
@@ -3822,6 +3829,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 
 	dns_journal_t *journal = NULL;
 	char *journal_filename = NULL;
+	sync_state_t sync_state;
 
 	mctx = pevent->mctx;
 	dns_diff_init(mctx, &diff);
@@ -3848,11 +3856,6 @@ update_record(isc_task_t *task, isc_event_t *event)
 	CHECK(dn_to_dnsname(mctx, pevent->dn, &name, &origin));
 	CHECK(zr_get_zone_ptr(inst->zone_register, &origin, &zone_ptr));
 	zone_found = ISC_TRUE;
-
-	/* TODO: Do not bump serial during initial database dump. */
-	/* This optimization is disabled because we don't have reliable
-	 * detection if the initial database dump is finished.
-	 * if (!SYNCREPL_ANY(pevent->chgtype)) ... */
 
 update_restart:
 	rbtdb = NULL;
@@ -3922,39 +3925,43 @@ update_restart:
 		dns_rdatasetiter_destroy(&rbt_rds_iterator);
 	}
 
+	sync_state_get(inst->sctx, &sync_state);
 	/* No real change in RR data -> do not increment SOA serial. */
 	if (HEAD(diff.tuples) != NULL) {
-		CHECK(dns_db_createsoatuple(ldapdb, version, mctx,
-					    DNS_DIFFOP_DEL, &soa_tuple));
-		dns_diff_append(&diff, &soa_tuple);
-		CHECK(dns_db_createsoatuple(ldapdb, version, mctx,
-					    DNS_DIFFOP_ADD, &soa_tuple));
-		CHECK(update_soa_serial(dns_updatemethod_unixtime,
-					soa_tuple, &serial));
-		dns_zone_log(zone_ptr, ISC_LOG_DEBUG(5),
-			     "writing new zone serial %u to LDAP", serial);
-		result = ldap_replace_serial(inst, &origin, serial);
-		if (result != ISC_R_SUCCESS)
-			dns_zone_log(zone_ptr, ISC_LOG_ERROR,
-				     "serial (%u) write back to LDAP failed",
-				     serial);
-		dns_diff_append(&diff, &soa_tuple);
+		if (sync_state == sync_finished) {
+			CHECK(dns_db_createsoatuple(ldapdb, version, mctx,
+						    DNS_DIFFOP_DEL, &soa_tuple));
+			dns_diff_append(&diff, &soa_tuple);
+			CHECK(dns_db_createsoatuple(ldapdb, version, mctx,
+						    DNS_DIFFOP_ADD, &soa_tuple));
+			CHECK(update_soa_serial(dns_updatemethod_unixtime,
+						soa_tuple, &serial));
+			dns_zone_log(zone_ptr, ISC_LOG_DEBUG(5),
+				     "writing new zone serial %u to LDAP", serial);
+			result = ldap_replace_serial(inst, &origin, serial);
+			if (result != ISC_R_SUCCESS)
+				dns_zone_log(zone_ptr, ISC_LOG_ERROR,
+					     "serial (%u) write back to LDAP failed",
+					     serial);
+			dns_diff_append(&diff, &soa_tuple);
+		}
 
 #if RBTDB_DEBUG >= 2
 		dns_diff_print(&diff, stdout);
 #else
 		dns_diff_print(&diff, NULL);
 #endif
-		/* write the transaction to journal */
-		dns_zone_getraw(zone_ptr, &zone_raw);
-		if (zone_raw == NULL)
-			journal_filename = dns_zone_getjournal(zone_ptr);
-		else
-			journal_filename = dns_zone_getjournal(zone_raw);
-		CHECK(dns_journal_open(mctx, journal_filename,
-				       DNS_JOURNAL_CREATE, &journal));
-		CHECK(dns_journal_write_transaction(journal, &diff));
-
+		if (sync_state == sync_finished) {
+			/* write the transaction to journal */
+			dns_zone_getraw(zone_ptr, &zone_raw);
+			if (zone_raw == NULL)
+				journal_filename = dns_zone_getjournal(zone_ptr);
+			else
+				journal_filename = dns_zone_getjournal(zone_raw);
+			CHECK(dns_journal_open(mctx, journal_filename,
+					       DNS_JOURNAL_CREATE, &journal));
+			CHECK(dns_journal_write_transaction(journal, &diff));
+		}
 		/* commit */
 		CHECK(dns_diff_apply(&diff, rbtdb, version));
 		dns_db_closeversion(ldapdb, &version, ISC_TRUE);
@@ -3962,7 +3969,8 @@ update_restart:
 
 	/* Check if the zone is loaded or not.
 	 * No other function above returns DNS_R_NOTLOADED. */
-	result = dns_zone_getserial2(zone_ptr, &serial);
+	if (sync_state == sync_finished)
+		result = dns_zone_getserial2(zone_ptr, &serial);
 
 cleanup:
 #ifdef RBTDB_DEBUG
