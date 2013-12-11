@@ -2666,7 +2666,7 @@ handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn
 		/* Try to reconnect on other errors. */
 		log_ldap_error(ldap_conn->handle, "connection error");
 reconnect:
-		if (ldap_conn->tries == 0)
+		if (ldap_conn->handle == NULL)
 			log_error("connection to the LDAP server was lost");
 		result = ldap_connect(ldap_inst, ldap_conn, force);
 		if (result == ISC_R_SUCCESS)
@@ -2684,6 +2684,7 @@ ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn, LDAPMod **mods,
 	int ret;
 	int err_code;
 	const char *operation_str;
+	isc_boolean_t once = ISC_FALSE;
 	isc_result_t result;
 	ldap_connection_t *ldap_conn = NULL;
 
@@ -2711,7 +2712,9 @@ ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn, LDAPMod **mods,
 		 * successful
 		 * TODO: handle this case inside ldap_pool_getconnection()?
 		 */
-		CHECK(ldap_connect(ldap_inst, ldap_conn, ISC_FALSE));
+retry:
+		once = ISC_TRUE;
+		CHECK(handle_connection_error(ldap_inst, ldap_conn, ISC_FALSE));
 	}
 
 	if (delete_node) {
@@ -2770,7 +2773,13 @@ ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn, LDAPMod **mods,
 	if ((mods[0]->mod_op & ~LDAP_MOD_BVALUES) != LDAP_MOD_DELETE ||
 	    err_code != LDAP_NO_SUCH_ATTRIBUTE) {
 		result = ISC_R_FAILURE;
+		if (once == ISC_FALSE) {
+			log_error("retrying LDAP operation (%s) on entry '%s'",
+				  operation_str, dn);
+			goto retry;
+		}
 	}
+
 cleanup:
 	ldap_pool_putconnection(ldap_inst->pool, &ldap_conn);
 
