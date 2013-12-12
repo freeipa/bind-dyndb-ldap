@@ -1,7 +1,7 @@
 %define VERSION %{version}
 
 Name:           bind-dyndb-ldap
-Version:        3.5
+Version:        3.6
 Release:        0%{?dist}
 Summary:        LDAP back-end plug-in for BIND
 
@@ -11,11 +11,11 @@ URL:            https://fedorahosted.org/bind-dyndb-ldap
 Source0:        https://fedorahosted.org/released/%{name}/%{name}-%{VERSION}.tar.bz2
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 
-BuildRequires:  bind-devel >= 32:9.7.0-0.7.b2.el6
+BuildRequires:  bind-devel >= 32:9.9.0-1
 BuildRequires:  krb5-devel
 BuildRequires:  openldap-devel
 
-Requires:       bind >= 32:9.7.0-0.7.b2.el6
+Requires:       bind >= 32:9.9.0-1
 
 %description
 This package provides an LDAP back-end plug-in for BIND. It features
