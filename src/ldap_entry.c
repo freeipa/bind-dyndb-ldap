@@ -290,19 +290,8 @@ ldap_entry_getrdclass(const ldap_entry_t *entry)
 	return dns_rdataclass_in;
 }
 
-static isc_boolean_t ATTR_NONNULLS
-array_contains_nocase(const char **haystack, const char *needle)
-{
-	for (unsigned int i = 0; haystack[i] != NULL; i++) {
-		if (strcasecmp(needle, haystack[i]) == 0)
-			return ISC_TRUE;
-	}
-
-	return ISC_FALSE;
-}
-
 ldap_attribute_t*
-ldap_entry_nextattr(ldap_entry_t *entry, const char **attrlist)
+ldap_entry_nextattr(ldap_entry_t *entry)
 {
 	ldap_attribute_t *attr;
 
@@ -312,11 +301,6 @@ ldap_entry_nextattr(ldap_entry_t *entry, const char **attrlist)
 		attr = HEAD(entry->attrs);
 	else
 		attr = NEXT(entry->lastattr, link);
-
-	if (attrlist != NULL) {
-		while (attr != NULL && !array_contains_nocase(attrlist, attr->name))
-			attr = NEXT(attr, link);
-	}
 
 	if (attr != NULL)
 		entry->lastattr = attr;
@@ -333,7 +317,7 @@ ldap_entry_nextrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
 
 	result = ISC_R_NOTFOUND;
 
-	while ((attr = ldap_entry_nextattr(entry, NULL)) != NULL) {
+	while ((attr = ldap_entry_nextattr(entry)) != NULL) {
 		result = ldap_attribute_to_rdatatype(attr->name, rdtype);
 		/* FIXME: Emit warning in case of unknown rdtype? */
 		if (result == ISC_R_SUCCESS)

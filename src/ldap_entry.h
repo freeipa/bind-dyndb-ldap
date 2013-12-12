@@ -101,7 +101,7 @@ dns_rdataclass_t
 ldap_entry_getrdclass(const ldap_entry_t *entry) ATTR_NONNULLS;
 
 ldap_attribute_t*
-ldap_entry_nextattr(ldap_entry_t *entry, const char **attrlist) ATTR_NONNULL(1);
+ldap_entry_nextattr(ldap_entry_t *entry) ATTR_NONNULLS;
 
 isc_result_t
 ldap_entry_nextrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
