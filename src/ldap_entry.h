@@ -115,6 +115,10 @@ ldap_attribute_t*
 ldap_entry_nextattr(ldap_entry_t *entry) ATTR_NONNULLS;
 
 isc_result_t
+ldap_entry_firstrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
+		       dns_rdatatype_t *rdtype);
+
+isc_result_t
 ldap_entry_nextrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
 		      dns_rdatatype_t *rdtype) ATTR_NONNULLS;
 
@@ -131,13 +135,16 @@ ldap_entry_getfakesoa(ldap_entry_t *entry, const char *fake_mname,
 isc_result_t
 ldap_entry_getclass(ldap_entry_t *entry, ldap_entryclass_t *class) ATTR_NONNULLS;
 
+isc_result_t
+ldap_attr_firstvalue(ldap_attribute_t *attr, ld_string_t *str) ATTR_NONNULLS;
+
 /*
  * ldap_attr_nextvalue
  *
  * Returns pointer to value in case of success, NULL if no other val is
  * available
  */
-ld_string_t*
+isc_result_t
 ldap_attr_nextvalue(ldap_attribute_t *attr, ld_string_t *value) ATTR_NONNULLS;
 
 dns_ttl_t

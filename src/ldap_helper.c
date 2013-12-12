@@ -1935,23 +1935,29 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
 	rdclass = ldap_entry_getrdclass(entry);
 	ttl = ldap_entry_getttl(entry);
 
-	for (result = ldap_entry_nextrdtype(entry, &attr, &rdtype);
+	for (result = ldap_entry_firstrdtype(entry, &attr, &rdtype);
 	     result == ISC_R_SUCCESS;
 	     result = ldap_entry_nextrdtype(entry, &attr, &rdtype)) {
 
 		CHECK(findrdatatype_or_create(mctx, rdatalist, rdclass,
 					      rdtype, ttl, &rdlist));
-		while (ldap_attr_nextvalue(attr, data_buf) != NULL) {
+		for (result = ldap_attr_firstvalue(attr, data_buf);
+		     result == ISC_R_SUCCESS;
+		     result = ldap_attr_nextvalue(attr, data_buf)) {
 			CHECK(parse_rdata(mctx, entry, rdclass,
 					  rdtype, origin,
 					  str_buf(data_buf), &rdata));
 			APPEND(rdlist->rdata, rdata, link);
 			rdata = NULL;
 		}
+		if (result != ISC_R_NOMORE)
+			goto cleanup;
 		rdlist = NULL;
 	}
-	str_destroy(&data_buf);
+	if (result != ISC_R_NOMORE)
+		goto cleanup;
 
+	str_destroy(&data_buf);
 	return ISC_R_SUCCESS;
 
 cleanup:

@@ -321,6 +321,16 @@ ldap_entry_nextattr(ldap_entry_t *entry)
 }
 
 isc_result_t
+ldap_entry_firstrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
+		       dns_rdatatype_t *rdtype)
+{
+	REQUIRE(entry != NULL);
+
+	entry->lastattr = NULL;
+	return ldap_entry_nextrdtype(entry, attrp, rdtype);
+}
+
+isc_result_t
 ldap_entry_nextrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
 		      dns_rdatatype_t *rdtype)
 {
@@ -338,8 +348,10 @@ ldap_entry_nextrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
 
 	if (result == ISC_R_SUCCESS)
 		*attrp = attr;
-	else if (result == ISC_R_NOTFOUND)
+	else {
+		result = ISC_R_NOMORE;
 		*attrp = NULL;
+	}
 
 	return result;
 }
@@ -455,9 +467,20 @@ ldap_entry_getclass(ldap_entry_t *entry, ldap_entryclass_t *class)
 #endif
 }
 
-ld_string_t*
+isc_result_t
+ldap_attr_firstvalue(ldap_attribute_t *attr, ld_string_t *str)
+{
+	REQUIRE(attr != NULL);
+	REQUIRE(str != NULL);
+
+	attr->lastval = NULL;
+	return ldap_attr_nextvalue(attr, str);
+}
+
+isc_result_t
 ldap_attr_nextvalue(ldap_attribute_t *attr, ld_string_t *str)
 {
+	isc_result_t result;
 	ldap_value_t *value;
 
 	REQUIRE(attr != NULL);
@@ -473,11 +496,12 @@ ldap_attr_nextvalue(ldap_attribute_t *attr, ld_string_t *str)
 	if (value != NULL)
 		attr->lastval = value;
 	else
-		return NULL;
+		return ISC_R_NOMORE;
 
-	str_init_char(str, value->value);
+	CHECK(str_init_char(str, value->value));
 
-	return str;
+cleanup:
+	return result;
 }
 
 #define DEFAULT_TTL 86400
