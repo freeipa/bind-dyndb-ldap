@@ -613,6 +613,7 @@ acl_parse_forwarder(const char *forwarder_str, isc_mem_t *mctx, isc_sockaddr_t *
 	ld_string_t *new_forwarder_str = NULL;
 	const cfg_obj_t *faddresses;
 	const cfg_listelt_t *element;
+	const cfg_obj_t *forwarder;
 
 	in_port_t port = 53;
 
@@ -635,7 +636,7 @@ acl_parse_forwarder(const char *forwarder_str, isc_mem_t *mctx, isc_sockaddr_t *
 		goto cleanup;
 	}
 
-	const cfg_obj_t *forwarder = cfg_listelt_value(element);
+	forwarder = cfg_listelt_value(element);
 	CHECKED_MEM_GET_PTR(mctx, *sa);
 	**sa = *cfg_obj_assockaddr(forwarder);
 	if (isc_sockaddr_getport(*sa) == 0)

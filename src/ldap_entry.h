@@ -22,6 +22,7 @@
 #ifndef _LD_LDAP_ENTRY_H_
 #define _LD_LDAP_ENTRY_H_
 
+#include <isc/lex.h>
 #include <isc/util.h>
 #include <dns/types.h>
 
@@ -51,6 +52,11 @@ struct ldap_entry {
 	ldap_attribute_t	*lastattr;
 	ldap_attributelist_t	attrs;
 	LINK(ldap_entry_t)	link;
+
+	/* Parsing. */
+	isc_lex_t		*lex;
+	isc_buffer_t		rdata_target;
+	unsigned char		*rdata_target_mem;
 };
 
 /* Represents LDAP attribute and it's values */
@@ -69,6 +75,10 @@ struct ldap_attribute {
 #define LDAP_ENTRYCLASS_FORWARD	0x8
 
 typedef unsigned char		ldap_entryclass_t;
+
+/* Max type length definitions, from lib/dns/master.c */
+#define TOKENSIZ (8*1024)
+
 
 isc_result_t
 ldap_entrylist_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *msg,
@@ -101,7 +111,11 @@ dns_rdataclass_t
 ldap_entry_getrdclass(const ldap_entry_t *entry) ATTR_NONNULLS;
 
 ldap_attribute_t*
-ldap_entry_nextattr(ldap_entry_t *entry, const char **attrlist) ATTR_NONNULL(1);
+ldap_entry_nextattr(ldap_entry_t *entry) ATTR_NONNULLS;
+
+isc_result_t
+ldap_entry_firstrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
+		       dns_rdatatype_t *rdtype);
 
 isc_result_t
 ldap_entry_nextrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
@@ -120,13 +134,16 @@ ldap_entry_getfakesoa(ldap_entry_t *entry, const char *fake_mname,
 isc_result_t
 ldap_entry_getclass(ldap_entry_t *entry, ldap_entryclass_t *class) ATTR_NONNULLS;
 
+isc_result_t
+ldap_attr_firstvalue(ldap_attribute_t *attr, ld_string_t *str) ATTR_NONNULLS;
+
 /*
  * ldap_attr_nextvalue
  *
  * Returns pointer to value in case of success, NULL if no other val is
  * available
  */
-ld_string_t*
+isc_result_t
 ldap_attr_nextvalue(ldap_attribute_t *attr, ld_string_t *value) ATTR_NONNULLS;
 
 dns_ttl_t

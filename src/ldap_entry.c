@@ -19,6 +19,7 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
+#include <dns/rdata.h>
 #include <dns/ttl.h>
 #include <dns/types.h>
 
@@ -198,8 +199,6 @@ ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 	INIT_LIST(entry->attrs);
 	INIT_LINK(entry, link);
 
-	result = ISC_R_SUCCESS;
-
 	for (attribute = ldap_first_attribute(ld, ldap_entry, &ber);
 	     attribute != NULL;
 	     attribute = ldap_next_attribute(ld, ldap_entry, ber)) {
@@ -221,14 +220,22 @@ ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 		CLEANUP_WITH(ISC_R_FAILURE);
 	}
 
+	CHECKED_MEM_GET(mctx, entry->rdata_target_mem, DNS_RDATA_MAXLENGTH);
+	CHECK(isc_lex_create(mctx, TOKENSIZ, &entry->lex));
+
 	*entryp = entry;
 
 cleanup:
 	if (ber != NULL)
 		ber_free(ber, 0);
 	if (result != ISC_R_SUCCESS) {
-		if (entry != NULL)
+		if (entry != NULL) {
 			ldap_attributelist_destroy(mctx, &entry->attrs);
+			SAFE_MEM_PUT(mctx, entry->rdata_target_mem,
+				     DNS_RDATA_MAXLENGTH);
+			if (entry->lex != NULL)
+				isc_lex_destroy(&entry->lex);
+		}
 		SAFE_MEM_PUT_PTR(mctx, entry);
 		SAFE_MEM_PUT_PTR(mctx, attr);
 	}
@@ -248,6 +255,13 @@ ldap_entry_destroy(isc_mem_t *mctx, ldap_entry_t **entryp)
 	ldap_attributelist_destroy(mctx, &entry->attrs);
 	if (entry->dn != NULL)
 		ldap_memfree(entry->dn);
+	if (entry->lex != NULL) {
+		isc_lex_close(entry->lex);
+		isc_lex_destroy(&entry->lex);
+	}
+	if (entry->rdata_target_mem != NULL)
+		isc_mem_put(mctx, entry->rdata_target_mem, DNS_RDATA_MAXLENGTH);
+
 	SAFE_MEM_PUT_PTR(mctx, entry);
 
 	*entryp = NULL;
@@ -290,19 +304,8 @@ ldap_entry_getrdclass(const ldap_entry_t *entry)
 	return dns_rdataclass_in;
 }
 
-static isc_boolean_t ATTR_NONNULLS
-array_contains_nocase(const char **haystack, const char *needle)
-{
-	for (unsigned int i = 0; haystack[i] != NULL; i++) {
-		if (strcasecmp(needle, haystack[i]) == 0)
-			return ISC_TRUE;
-	}
-
-	return ISC_FALSE;
-}
-
 ldap_attribute_t*
-ldap_entry_nextattr(ldap_entry_t *entry, const char **attrlist)
+ldap_entry_nextattr(ldap_entry_t *entry)
 {
 	ldap_attribute_t *attr;
 
@@ -313,15 +316,20 @@ ldap_entry_nextattr(ldap_entry_t *entry, const char **attrlist)
 	else
 		attr = NEXT(entry->lastattr, link);
 
-	if (attrlist != NULL) {
-		while (attr != NULL && !array_contains_nocase(attrlist, attr->name))
-			attr = NEXT(attr, link);
-	}
-
 	if (attr != NULL)
 		entry->lastattr = attr;
 
 	return attr;
+}
+
+isc_result_t
+ldap_entry_firstrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
+		       dns_rdatatype_t *rdtype)
+{
+	REQUIRE(entry != NULL);
+
+	entry->lastattr = NULL;
+	return ldap_entry_nextrdtype(entry, attrp, rdtype);
 }
 
 isc_result_t
@@ -333,7 +341,7 @@ ldap_entry_nextrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
 
 	result = ISC_R_NOTFOUND;
 
-	while ((attr = ldap_entry_nextattr(entry, NULL)) != NULL) {
+	while ((attr = ldap_entry_nextattr(entry)) != NULL) {
 		result = ldap_attribute_to_rdatatype(attr->name, rdtype);
 		/* FIXME: Emit warning in case of unknown rdtype? */
 		if (result == ISC_R_SUCCESS)
@@ -342,8 +350,10 @@ ldap_entry_nextrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
 
 	if (result == ISC_R_SUCCESS)
 		*attrp = attr;
-	else if (result == ISC_R_NOTFOUND)
+	else {
+		result = ISC_R_NOMORE;
 		*attrp = NULL;
+	}
 
 	return result;
 }
@@ -411,7 +421,8 @@ ldap_entry_getclass(ldap_entry_t *entry, ldap_entryclass_t *class)
 	 * objectClass attribute. */
 	if (ldap_entry_getvalues(entry, "objectClass", &values)
 	    != ISC_R_SUCCESS) {
-		log_bug("entry without objectClass");
+		log_error("entry without supported objectClass: DN '%s'",
+			  (entry->dn != NULL) ? entry->dn : "<NULL>");
 		return ISC_R_UNEXPECTED;
 	}
 
@@ -458,9 +469,20 @@ ldap_entry_getclass(ldap_entry_t *entry, ldap_entryclass_t *class)
 #endif
 }
 
-ld_string_t*
+isc_result_t
+ldap_attr_firstvalue(ldap_attribute_t *attr, ld_string_t *str)
+{
+	REQUIRE(attr != NULL);
+	REQUIRE(str != NULL);
+
+	attr->lastval = NULL;
+	return ldap_attr_nextvalue(attr, str);
+}
+
+isc_result_t
 ldap_attr_nextvalue(ldap_attribute_t *attr, ld_string_t *str)
 {
+	isc_result_t result;
 	ldap_value_t *value;
 
 	REQUIRE(attr != NULL);
@@ -476,11 +498,12 @@ ldap_attr_nextvalue(ldap_attribute_t *attr, ld_string_t *str)
 	if (value != NULL)
 		attr->lastval = value;
 	else
-		return NULL;
+		return ISC_R_NOMORE;
 
-	str_init_char(str, value->value);
+	CHECK(str_init_char(str, value->value));
 
-	return str;
+cleanup:
+	return result;
 }
 
 #define DEFAULT_TTL 86400

@@ -231,7 +231,7 @@ cleanup:
  * will be checked & copied to the output buffer, without any additional escaping.
  */
 isc_result_t
-dns_to_ldap_dn_escape(isc_mem_t *mctx, const char const * dns_str, char ** ldap_name) {
+dns_to_ldap_dn_escape(isc_mem_t *mctx, const char * const dns_str, char ** ldap_name) {
 	isc_result_t result = ISC_R_FAILURE;
 	char * esc_name = NULL;
 	int idx_symb_first = -1; /* index of first "nice" printable symbol in dns_str */

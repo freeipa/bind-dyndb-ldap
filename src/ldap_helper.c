@@ -38,7 +38,6 @@
 #include <isc/serial.h>
 
 #include <isc/buffer.h>
-#include <isc/lex.h>
 #include <isc/mem.h>
 #include <isc/mutex.h>
 #include <isc/region.h>
@@ -81,11 +80,6 @@
 #include "zone_register.h"
 #include "rbt_helper.h"
 #include "fwd_register.h"
-
-
-/* Max type length definitions, from lib/dns/master.c */
-#define MINTSIZ (65535 - 12 - 1 - 2 - 2 - 4 - 2)
-#define TOKENSIZ (8*1024)
 
 const enum_txt_assoc_t forwarder_policy_txts[] = {
 	{ dns_fwdpolicy_none,	"none"	},
@@ -200,11 +194,6 @@ struct ldap_qresult {
 	ld_string_t		*query_string;
 	LDAPMessage		*result;
 	ldap_entrylist_t	ldap_entries;
-
-	/* Parsing. */
-	isc_lex_t		*lex;
-	isc_buffer_t		rdata_target;
-	unsigned char		*rdata_target_mem;
 };
 
 /*
@@ -234,7 +223,7 @@ struct ldap_psearchevent {
 	int chgtype;
 };
 
-extern const settings_set_t const settings_default_set;
+extern const settings_set_t settings_default_set;
 
 /** Local configuration file */
 static const setting_t settings_local_default[] = {
@@ -285,17 +274,13 @@ static void destroy_ldap_connection(ldap_connection_t **ldap_connp) ATTR_NONNULL
 static isc_result_t findrdatatype_or_create(isc_mem_t *mctx,
 		ldapdb_rdatalist_t *rdatalist, dns_rdataclass_t rdclass,
 		dns_rdatatype_t rdtype, dns_ttl_t ttl, dns_rdatalist_t **rdlistp) ATTR_NONNULLS;
-static isc_result_t add_soa_record(isc_mem_t *mctx, ldap_qresult_t *qresult,
-		dns_name_t *origin, ldap_entry_t *entry,
-		ldapdb_rdatalist_t *rdatalist, const char *fake_mname) ATTR_NONNULLS;
-static isc_result_t parse_rdata(isc_mem_t *mctx, ldap_qresult_t *qresult,
+static isc_result_t add_soa_record(isc_mem_t *mctx, dns_name_t *origin,
+		ldap_entry_t *entry, ldapdb_rdatalist_t *rdatalist,
+		const char *fake_mname) ATTR_NONNULLS;
+static isc_result_t parse_rdata(isc_mem_t *mctx, ldap_entry_t *entry,
 		dns_rdataclass_t rdclass, dns_rdatatype_t rdtype,
 		dns_name_t *origin, const char *rdata_text,
 		dns_rdata_t **rdatap) ATTR_NONNULLS;
-static isc_result_t ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry,
-		ldap_qresult_t *qresult, dns_name_t *origin,
-		const char *fake_mname, ld_string_t *buf,
-		ldapdb_rdatalist_t *rdatalist) ATTR_NONNULLS;
 static inline isc_result_t ldap_get_zone_serial(ldap_instance_t *inst,
 		dns_name_t *zone_name, isc_uint32_t *serial) ATTR_NONNULLS;
 
@@ -1660,10 +1645,8 @@ free_rdatalist(isc_mem_t *mctx, dns_rdatalist_t *rdlist)
 }
 
 static isc_result_t
-ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry,
-		   ldap_qresult_t *qresult, dns_name_t *origin,
-		   const char *fake_mname, ld_string_t *buf,
-		   ldapdb_rdatalist_t *rdatalist)
+ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
+		   const char *fake_mname, ldapdb_rdatalist_t *rdatalist)
 {
 	isc_result_t result;
 	dns_rdataclass_t rdclass;
@@ -1674,40 +1657,49 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry,
 	dns_rdatalist_t *rdlist = NULL;
 	ldap_attribute_t *attr;
 	const char *dn = "<NULL entry>";
-	const char *data = "<NULL data>";
+	const char *data_str = "<NULL data>";
+	ld_string_t *data_buf = NULL;
 
+	CHECK(str_new(mctx, &data_buf));
 	CHECK(ldap_entry_getclass(entry, &objclass));
 	if ((objclass & LDAP_ENTRYCLASS_MASTER) != 0)
-		CHECK(add_soa_record(mctx, qresult, origin, entry,
-				     rdatalist, fake_mname));
+		CHECK(add_soa_record(mctx, origin, entry, rdatalist, fake_mname));
 
 	rdclass = ldap_entry_getrdclass(entry);
 	ttl = ldap_entry_getttl(entry);
 
-	for (result = ldap_entry_nextrdtype(entry, &attr, &rdtype);
+	for (result = ldap_entry_firstrdtype(entry, &attr, &rdtype);
 	     result == ISC_R_SUCCESS;
 	     result = ldap_entry_nextrdtype(entry, &attr, &rdtype)) {
 
 		CHECK(findrdatatype_or_create(mctx, rdatalist, rdclass,
 					      rdtype, ttl, &rdlist));
-		while (ldap_attr_nextvalue(attr, buf) != NULL) {
-			CHECK(parse_rdata(mctx, qresult, rdclass,
+		for (result = ldap_attr_firstvalue(attr, data_buf);
+		     result == ISC_R_SUCCESS;
+		     result = ldap_attr_nextvalue(attr, data_buf)) {
+			CHECK(parse_rdata(mctx, entry, rdclass,
 					  rdtype, origin,
-					  str_buf(buf), &rdata));
+					  str_buf(data_buf), &rdata));
 			APPEND(rdlist->rdata, rdata, link);
 			rdata = NULL;
 		}
+		if (result != ISC_R_NOMORE)
+			goto cleanup;
 		rdlist = NULL;
 	}
+	if (result != ISC_R_NOMORE)
+		goto cleanup;
 
+	str_destroy(&data_buf);
 	return ISC_R_SUCCESS;
 
 cleanup:
 	if (entry != NULL)
 		dn = entry->dn;
-	if (buf != NULL && str_buf(buf) != NULL)
-		data = str_buf(buf);
-	log_error_r("failed to parse RR entry: dn '%s': data '%s'", dn, data);
+	if (data_buf != NULL && str_len(data_buf) != 0)
+		data_str = str_buf(data_buf);
+	log_error_r("failed to parse RR entry: dn '%s': data '%s'", dn, data_str);
+	str_destroy(&data_buf);
 	return result;
 }
 
@@ -1755,9 +1747,9 @@ ldapdb_nodelist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *nam
 		result = ldapdbnode_create(mctx, &node_name, &node);
 		dns_name_free(&node_name, mctx);
 		if (result == ISC_R_SUCCESS) {
-			result = ldap_parse_rrentry(mctx, entry, ldap_qresult,
-		                       origin, fake_mname,
-		                       string, &node->rdatalist);
+			result = ldap_parse_rrentry(mctx, entry, origin,
+						    fake_mname,
+						    &node->rdatalist);
 		}
 		if (result != ISC_R_SUCCESS) {
 			/* node cleaning */	
@@ -1820,9 +1812,8 @@ ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *na
 	for (entry = HEAD(ldap_qresult->ldap_entries);
 		entry != NULL;
 		entry = NEXT(entry, link)) {
-		CHECK(ldap_parse_rrentry(mctx, entry, ldap_qresult,
-				   origin, fake_mname,
-				   string, rdatalist));
+		CHECK(ldap_parse_rrentry(mctx, entry, origin, fake_mname,
+					 rdatalist));
 	}
 
 	if (!EMPTY(*rdatalist)) {
@@ -1843,7 +1834,7 @@ cleanup:
 }
 
 static isc_result_t
-add_soa_record(isc_mem_t *mctx, ldap_qresult_t *qresult, dns_name_t *origin,
+add_soa_record(isc_mem_t *mctx, dns_name_t *origin,
 	       ldap_entry_t *entry, ldapdb_rdatalist_t *rdatalist,
 	       const char *fake_mname)
 {
@@ -1857,7 +1848,7 @@ add_soa_record(isc_mem_t *mctx, ldap_qresult_t *qresult, dns_name_t *origin,
 
 	CHECK(ldap_entry_getfakesoa(entry, fake_mname, string));
 	rdclass = ldap_entry_getrdclass(entry);
-	CHECK(parse_rdata(mctx, qresult, rdclass, dns_rdatatype_soa, origin,
+	CHECK(parse_rdata(mctx, entry, rdclass, dns_rdatatype_soa, origin,
 			  str_buf(string), &rdata));
 
 	CHECK(findrdatatype_or_create(mctx, rdatalist, rdclass, dns_rdatatype_soa,
@@ -1874,7 +1865,7 @@ cleanup:
 }
 
 static isc_result_t
-parse_rdata(isc_mem_t *mctx, ldap_qresult_t *qresult,
+parse_rdata(isc_mem_t *mctx, ldap_entry_t *entry,
 	    dns_rdataclass_t rdclass, dns_rdatatype_t rdtype,
 	    dns_name_t *origin, const char *rdata_text, dns_rdata_t **rdatap)
 {
@@ -1884,7 +1875,7 @@ parse_rdata(isc_mem_t *mctx, ldap_qresult_t *qresult,
 	isc_region_t rdatamem;
 	dns_rdata_t *rdata;
 
-	REQUIRE(qresult != NULL);
+	REQUIRE(entry != NULL);
 	REQUIRE(rdata_text != NULL);
 	REQUIRE(rdatap != NULL);
 
@@ -1898,30 +1889,30 @@ parse_rdata(isc_mem_t *mctx, ldap_qresult_t *qresult,
 	isc_buffer_add(&lex_buffer, text.length);
 	isc_buffer_setactive(&lex_buffer, text.length);
 
-	CHECK(isc_lex_openbuffer(qresult->lex, &lex_buffer));
+	CHECK(isc_lex_openbuffer(entry->lex, &lex_buffer));
 
-	isc_buffer_init(&qresult->rdata_target, qresult->rdata_target_mem,
-			MINTSIZ);
-	CHECK(dns_rdata_fromtext(NULL, rdclass, rdtype, qresult->lex, origin,
-				 0, mctx, &qresult->rdata_target, NULL));
+	isc_buffer_init(&entry->rdata_target, entry->rdata_target_mem,
+			DNS_RDATA_MAXLENGTH);
+	CHECK(dns_rdata_fromtext(NULL, rdclass, rdtype, entry->lex, origin,
+				 0, mctx, &entry->rdata_target, NULL));
 
 	CHECKED_MEM_GET_PTR(mctx, rdata);
 	dns_rdata_init(rdata);
 
-	rdatamem.length = isc_buffer_usedlength(&qresult->rdata_target);
+	rdatamem.length = isc_buffer_usedlength(&entry->rdata_target);
 	CHECKED_MEM_GET(mctx, rdatamem.base, rdatamem.length);
 
-	memcpy(rdatamem.base, isc_buffer_base(&qresult->rdata_target),
+	memcpy(rdatamem.base, isc_buffer_base(&entry->rdata_target),
 	       rdatamem.length);
 	dns_rdata_fromregion(rdata, rdclass, rdtype, &rdatamem);
 
-	isc_lex_close(qresult->lex);
+	isc_lex_close(entry->lex);
 
 	*rdatap = rdata;
 	return ISC_R_SUCCESS;
 
 cleanup:
-	isc_lex_close(qresult->lex);
+	isc_lex_close(entry->lex);
 	SAFE_MEM_PUT_PTR(mctx, rdata);
 	if (rdatamem.base != NULL)
 		isc_mem_put(mctx, rdatamem.base, rdatamem.length);
@@ -2037,18 +2028,12 @@ ldap_query_create(isc_mem_t *mctx, ldap_qresult_t **ldap_qresultp) {
 	INIT_LIST(ldap_qresult->ldap_entries);
 	CHECK(str_new(mctx, &ldap_qresult->query_string));
 
-	CHECKED_MEM_GET(ldap_qresult->mctx, ldap_qresult->rdata_target_mem, MINTSIZ);
-	CHECK(isc_lex_create(ldap_qresult->mctx, TOKENSIZ, &ldap_qresult->lex));
-
 	*ldap_qresultp = ldap_qresult;
 	return ISC_R_SUCCESS;
 
 cleanup:
 	if (ldap_qresult != NULL) {
 		str_destroy(&ldap_qresult->query_string);
-		SAFE_MEM_PUT(ldap_qresult->mctx, ldap_qresult->rdata_target_mem, MINTSIZ);
-		if (ldap_qresult->lex != NULL)
-			isc_lex_destroy(&ldap_qresult->lex);
 		SAFE_MEM_PUT_PTR(mctx, ldap_qresult);
 	}
 
@@ -2084,13 +2069,8 @@ ldap_query_free(isc_boolean_t prepare_reuse, ldap_qresult_t **ldap_qresultp)
 	if (prepare_reuse) {
 		str_clear(qresult->query_string);
 		INIT_LIST(qresult->ldap_entries);
-		isc_lex_close(qresult->lex);
 	} else { /* free the whole structure */
 		str_destroy(&qresult->query_string);
-		if (qresult->lex != NULL)
-			isc_lex_destroy(&qresult->lex);
-		if (qresult->rdata_target_mem != NULL)
-			isc_mem_put(qresult->mctx, qresult->rdata_target_mem, MINTSIZ);
 		SAFE_MEM_PUT_PTR(qresult->mctx, qresult);
 		*ldap_qresultp = NULL;
 	}
@@ -2248,7 +2228,6 @@ ldap_reconnect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 	if (ldap_conn->tries > 0) {
 		isc_time_t now;
 		int time_cmp;
-		isc_result_t result;
 
 		result = isc_time_now(&now);
 		time_cmp = isc_time_compare(&now, &ldap_conn->next_reconnect);
@@ -2293,7 +2272,6 @@ force_reconnect:
 		CHECK(setting_get_str("sasl_mech", ldap_inst->local_settings,
 				      &sasl_mech));
 		if (strcmp(sasl_mech, "GSSAPI") == 0) {
-			isc_result_t result;
 			CHECK(setting_get_str("krb5_principal",
 					      ldap_inst->local_settings,
 					      &krb5_principal));
@@ -2317,6 +2295,12 @@ force_reconnect:
 						   ldap_sasl_interact,
 						   ldap_inst);
 		break;
+	case AUTH_INVALID:
+		UNEXPECTED_ERROR(__FILE__, __LINE__,
+				"invalid auth_method_enum value %u",
+				 auth_method_enum);
+		break;
+
 	default:
 		log_bug("unsupported authentication mechanism");
 		ret = LDAP_OTHER;
@@ -2395,7 +2379,7 @@ handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn
 		/* Try to reconnect on other errors. */
 		log_ldap_error(ldap_conn->handle, "connection error");
 reconnect:
-		if (ldap_conn->tries == 0)
+		if (ldap_conn->handle == NULL)
 			log_error("connection to the LDAP server was lost");
 		result = ldap_connect(ldap_inst, ldap_conn, force);
 		if (result == ISC_R_SUCCESS)
@@ -2413,6 +2397,7 @@ ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn, LDAPMod **mods,
 	int ret;
 	int err_code;
 	const char *operation_str;
+	isc_boolean_t once = ISC_FALSE;
 	isc_result_t result;
 	ldap_connection_t *ldap_conn = NULL;
 
@@ -2440,7 +2425,9 @@ ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn, LDAPMod **mods,
 		 * successful
 		 * TODO: handle this case inside ldap_pool_getconnection()?
 		 */
-		CHECK(ldap_connect(ldap_inst, ldap_conn, ISC_FALSE));
+retry:
+		once = ISC_TRUE;
+		CHECK(handle_connection_error(ldap_inst, ldap_conn, ISC_FALSE));
 	}
 
 	if (delete_node) {
@@ -2499,7 +2486,13 @@ ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn, LDAPMod **mods,
 	if ((mods[0]->mod_op & ~LDAP_MOD_BVALUES) != LDAP_MOD_DELETE ||
 	    err_code != LDAP_NO_SUCH_ATTRIBUTE) {
 		result = ISC_R_FAILURE;
+		if (once == ISC_FALSE) {
+			log_error("retrying LDAP operation (%s) on entry '%s'",
+				  operation_str, dn);
+			goto retry;
+		}
 	}
+
 cleanup:
 	ldap_pool_putconnection(ldap_inst->pool, &ldap_conn);
 
@@ -2596,7 +2589,7 @@ ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
 
 	rdata = rdata_head;
 	for (i = 0; i < rdata_count && rdata != NULL; i++) {
-		DECLARE_BUFFER(buffer, MINTSIZ);
+		DECLARE_BUFFER(buffer, DNS_RDATA_MAXLENGTH);
 		isc_region_t region;
 
 		/* Convert rdata to text. */
@@ -2760,6 +2753,7 @@ ldap_find_ptr(ldap_instance_t *ldap_inst, const int af, const char *ip_str,
 	      dns_name_t *ptr_name, ld_string_t *ptr_dn,
 	      dns_name_t *zone_name) {
 	isc_result_t result;
+	const char *owner_zone_dn_ptr;
 	isc_mem_t *mctx = ldap_inst->mctx;
 
 	union {
@@ -2808,7 +2802,7 @@ ldap_find_ptr(ldap_instance_t *ldap_inst, const int af, const char *ip_str,
 	 * owner_dn_ptr = "idnsName=100.0.168, idnsname=192.in-addr.arpa,cn=dns,$SUFFIX"
 	 * owner_zone_dn_ptr = "idnsname=192.in-addr.arpa,cn=dns,$SUFFIX"
 	 */
-	char *owner_zone_dn_ptr = strstr(str_buf(ptr_dn),", ") + 1;
+	owner_zone_dn_ptr = strstr(str_buf(ptr_dn),", ") + 1;
 
 	/* Get attribute "idnsAllowDynUpdate" for reverse zone or use default. */
 	CHECK(dn_to_dnsname(mctx, owner_zone_dn_ptr, zone_name, NULL));

@@ -1,3 +1,9 @@
+3.6
+=====
+[1] Crash triggered by invalid SOA record was fixed.
+
+[2] Minor logging improvements and code clean-up.
+
 3.5
 =====
 [1] Crash triggered by zone_refresh with broken connection to LDAP was fixed.

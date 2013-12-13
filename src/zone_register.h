@@ -61,9 +61,6 @@ isc_result_t
 zr_rbt_iter_init(zone_register_t *zr, rbt_iterator_t **iter,
 		 dns_name_t *nodename) ATTR_NONNULLS;
 
-dns_rbt_t *
-zr_get_rbt(zone_register_t *zr) ATTR_NONNULLS;
-
 isc_mem_t *
 zr_get_mctx(zone_register_t *zr) ATTR_NONNULLS;
 
