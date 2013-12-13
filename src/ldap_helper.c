@@ -773,6 +773,65 @@ delete_bind_zone(dns_zt_t *zt, dns_zone_t **zonep) {
 	return result;
 }
 
+isc_result_t
+cleanup_zone_files(dns_zone_t *zone) {
+	isc_result_t result;
+	isc_boolean_t failure = ISC_FALSE;
+	const char *filename = NULL;
+	dns_zone_t *raw = NULL;
+
+	dns_zone_getraw(zone, &raw);
+	if (raw != NULL) {
+		result = cleanup_zone_files(raw);
+		dns_zone_detach(&raw);
+		failure = (result != ISC_R_SUCCESS);
+	}
+
+	filename = dns_zone_getfile(zone);
+	result = fs_file_remove(filename);
+	failure = failure || (result != ISC_R_SUCCESS);
+
+	filename = dns_zone_getjournal(zone);
+	result = fs_file_remove(filename);
+	failure = failure || (result != ISC_R_SUCCESS);
+
+	if (failure == ISC_TRUE)
+		dns_zone_log(zone, ISC_LOG_ERROR,
+			     "unable to remove files, expect problems");
+
+	if (failure == ISC_TRUE && result == ISC_R_SUCCESS)
+		result = ISC_R_FAILURE;
+
+	return result;
+}
+
+/**
+ * Remove zone files and journal files associated with all zones in ZR.
+ */
+static isc_result_t
+cleanup_files(ldap_instance_t *inst) {
+	isc_result_t result;
+	rbt_iterator_t *iter = NULL;
+	dns_zone_t *zone = NULL;
+	DECLARE_BUFFERED_NAME(name);
+
+	INIT_BUFFERED_NAME(name);
+	CHECK(zr_rbt_iter_init(inst->zone_register, &iter, &name));
+	do {
+		CHECK(zr_get_zone_ptr(inst->zone_register, &name, &zone));
+		cleanup_zone_files(zone);
+		dns_zone_detach(&zone);
+
+		INIT_BUFFERED_NAME(name);
+		CHECK(rbt_iter_next(&iter, &name));
+	} while (result == ISC_R_SUCCESS);
+
+cleanup:
+	if (result == ISC_R_NOTFOUND || result == ISC_R_NOMORE)
+		result = ISC_R_SUCCESS;
+	return result;
+}
+
 /*
  * Create a new zone with origin 'name'. The zone will be added to the
  * ldap_inst->view.
@@ -4558,6 +4617,9 @@ ldap_sync_prepare(ldap_instance_t *inst, settings_set_t *settings,
 	REQUIRE(ldap_syncp != NULL && *ldap_syncp == NULL);
 
 	sync_state_reset(inst->sctx);
+
+	/* Remove stale zone & journal files. */
+	CHECK(cleanup_files(inst));
 
 	/* Try to connect. */
 	while (conn->handle == NULL) {
