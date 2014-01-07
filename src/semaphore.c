@@ -82,7 +82,25 @@ semaphore_destroy(semaphore_t *sem)
 	RUNTIME_CHECK(isc_condition_destroy(&sem->cond) == ISC_R_SUCCESS);
 }
 
-/*
+/**
+ * Wait on semaphore. This operation will try to acquire a lock on the
+ * semaphore. If the semaphore is already acquired as many times at it allows,
+ * the function will block until someone releases the lock.
+ */
+void
+semaphore_wait(semaphore_t *sem)
+{
+	REQUIRE(sem != NULL);
+
+	LOCK(&sem->mutex);
+	while (sem->value <= 0)
+		WAIT(&sem->cond, &sem->mutex);
+	sem->value--;
+
+	UNLOCK(&sem->mutex);
+}
+
+/**
  * Wait on semaphore. This operation will try to acquire a lock on the
  * semaphore. If the semaphore is already acquired as many times at it allows,
  * the function will block until someone releases the lock OR timeout expire.

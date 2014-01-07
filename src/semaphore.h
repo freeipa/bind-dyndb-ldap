@@ -46,6 +46,7 @@ typedef struct semaphore	semaphore_t;
 /* Public functions. */
 isc_result_t	semaphore_init(semaphore_t *sem, int value) ATTR_NONNULLS;
 void		semaphore_destroy(semaphore_t *sem) ATTR_NONNULLS;
+void		semaphore_wait(semaphore_t *sem) ATTR_NONNULLS;
 isc_result_t	semaphore_wait_timed(semaphore_t *sem) ATTR_NONNULLS;
 void		semaphore_signal(semaphore_t *sem) ATTR_NONNULLS;
 

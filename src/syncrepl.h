@@ -60,4 +60,10 @@ sync_task_add(sync_ctx_t *sctx, isc_task_t *task);
 isc_result_t
 sync_barrier_wait(sync_ctx_t *sctx, const char *inst_name);
 
+void ATTR_NONNULLS
+sync_concurr_limit_wait(sync_ctx_t *sctx);
+
+void ATTR_NONNULLS
+sync_concurr_limit_signal(sync_ctx_t *sctx);
+
 #endif /* SYNCREPL_H_ */

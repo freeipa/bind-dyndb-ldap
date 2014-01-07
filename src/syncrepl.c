@@ -28,10 +28,16 @@
 
 #include "ldap_helper.h"
 #include "util.h"
+#include "semaphore.h"
 #include "syncrepl.h"
 #include "zone_manager.h"
 
 #define LDAPDB_EVENT_SYNCREPL_BARRIER	(LDAPDB_EVENTCLASS + 2)
+
+/** How many unprocessed LDAP events from syncrepl can be in event queue.
+ *  Adding new events into the queue is blocked until some events
+ *  are processed. */
+#define LDAP_CONCURRENCY_LIMIT 100
 
 typedef struct task_element task_element_t;
 struct task_element {
@@ -72,6 +78,9 @@ struct task_element {
 struct sync_ctx {
 	isc_refcount_t			task_cnt; /**< provides atomic access */
 	isc_mem_t			*mctx;
+	/** limit number of unprocessed LDAP events in queue
+	 *  (memory consumption is one of problems) */
+	semaphore_t			concurr_limit;
 
 	isc_mutex_t			mutex;	/**< guards rest of the structure */
 	isc_condition_t			cond;	/**< for signal when task_cnt == 0 */
@@ -198,6 +207,8 @@ sync_ctx_init(isc_mem_t *mctx, isc_task_t *task, sync_ctx_t **sctxp) {
 
 	sctx->state = sync_init;
 	CHECK(sync_task_add(sctx, task));
+
+	CHECK(semaphore_init(&sctx->concurr_limit, LDAP_CONCURRENCY_LIMIT));
 
 	*sctxp = sctx;
 	return ISC_R_SUCCESS;
@@ -349,4 +360,29 @@ cleanup:
 	if (ev != NULL)
 		isc_event_free(&ev);
 	return result;
+}
+
+/**
+ * Wait until there is a free slot in syncrepl 'queue' - this limits number
+ * of unprocessed ISC events to #LDAP_CONCURRENCY_LIMIT.
+ *
+ * End of syncrepl event processing has to be signalled by
+ * sync_concurr_limit_signal() call.
+ */
+void
+sync_concurr_limit_wait(sync_ctx_t *sctx) {
+	REQUIRE(sctx != NULL);
+
+	semaphore_wait(&sctx->concurr_limit);
+}
+
+/**
+ * Signal that syncrepl event was processed and the slot in concurrency limit
+ * can be freed.
+ */
+void
+sync_concurr_limit_signal(sync_ctx_t *sctx) {
+	REQUIRE(sctx != NULL);
+
+	semaphore_signal(&sctx->concurr_limit);
 }

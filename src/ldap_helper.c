@@ -3910,6 +3910,7 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	}
 
 cleanup:
+	sync_concurr_limit_signal(inst->sctx);
 	if (result != ISC_R_SUCCESS)
 		log_error_r("update_zone (syncrepl) failed for '%s'. "
 			  "Zones can be outdated, run `rndc reload`",
@@ -3944,6 +3945,7 @@ update_config(isc_task_t *task, isc_event_t *event)
 	CHECK(ldap_parse_configentry(entry, inst));
 
 cleanup:
+	sync_concurr_limit_signal(inst->sctx);
 	if (result != ISC_R_SUCCESS)
 		log_error_r("update_config (syncrepl) failed for '%s'. "
 			    "Configuration can be outdated, run `rndc reload`",
@@ -4195,6 +4197,7 @@ cleanup:
 			  pevent->dn, pevent->chgtype);
 	}
 
+	sync_concurr_limit_signal(inst->sctx);
 	if (zone_ptr != NULL)
 		dns_zone_detach(&zone_ptr);
 	if (dns_name_dynamic(&name))
@@ -4394,6 +4397,7 @@ cleanup:
 	if (result != ISC_R_SUCCESS) {
 		log_error_r("syncrepl_update failed for object '%s'",
 			    entry->dn);
+		sync_concurr_limit_signal(inst->sctx);
 
 		if (dbname != NULL)
 			isc_mem_free(mctx, dbname);
@@ -4508,7 +4512,7 @@ int ldap_sync_search_entry (
 	if (inst->exiting)
 		return LDAP_SUCCESS;
 
-
+	sync_concurr_limit_wait(inst->sctx);
 	CHECK(ldap_entry_create(inst->mctx, ls->ls_ld, msg, &entry));
 	syncrepl_update(inst, entry, phase);
 #ifdef RBTDB_DEBUG
@@ -4518,9 +4522,11 @@ int ldap_sync_search_entry (
 #endif
 
 cleanup:
-	if (result != ISC_R_SUCCESS)
+	if (result != ISC_R_SUCCESS) {
 		log_error_r("ldap_sync_search_entry failed");
+		sync_concurr_limit_signal(inst->sctx);
 		/* TODO: Add 'tainted' flag to the LDAP instance. */
+	}
 
 	/* Following return code will never reach upper layers.
 	 * It is limitation in ldap_sync_init() and ldap_sync_poll()
