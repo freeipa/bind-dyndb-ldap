@@ -32,6 +32,7 @@
 #include <isc/util.h>
 
 #include "log.h"
+#include "fs.h"
 
 static const char msg_getcwd_failed[PATH_MAX] = "<getcwd() failed>";
 

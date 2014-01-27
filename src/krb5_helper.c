@@ -24,6 +24,7 @@
 #include "util.h"
 #include "str.h"
 #include "log.h"
+#include "krb5_helper.h"
 
 #define DEFAULT_KEYTAB "FILE:/etc/named.keytab"
 #define MIN_TIME 300 /* 5 minutes */
