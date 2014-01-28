@@ -24,7 +24,7 @@
 #include "util.h"
 
 isc_result_t ATTR_NONNULLS
-fs_dir_create(const char *dir_name);
+fs_dirs_create(const char *path);
 
 isc_result_t ATTR_NONNULLS
 fs_file_remove(const char *file_name);

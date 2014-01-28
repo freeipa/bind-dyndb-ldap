@@ -35,6 +35,7 @@ make %{?_smp_mflags}
 %install
 rm -rf %{buildroot}
 make install DESTDIR=%{buildroot}
+mkdir -m 770 -p %{buildroot}/%{_localstatedir}/named/dyndb-ldap
 
 # Remove unwanted files
 rm %{buildroot}%{_libdir}/bind/ldap.la
@@ -48,9 +49,14 @@ rm -rf %{buildroot}
 %files
 %defattr(-,root,root,-)
 %doc NEWS README COPYING doc/{example.ldif,schema}
+%dir %{_localstatedir}/named/dyndb-ldap
+%attr(770, root, named) %{_localstatedir}/named/dyndb-ldap
 %{_libdir}/bind/ldap.so
 
 
 %changelog
+* Tue Jan 28 2014 Petr Spacek <pspacek redhat com>
+- package /var/named/dyndb-ldap directory
+
 * Mon Nov 14 2011 Adam Tkac <atkac redhat com>
 - specfile to build bind-dyndb-ldap

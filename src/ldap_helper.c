@@ -372,9 +372,10 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 	CHECK(str_new(inst->mctx, &buff));
 	CHECK(setting_get_str("directory", inst->local_settings, &dir_name));
 	dir_default = (strcmp(dir_name, "") == 0);
-	if (dir_default == ISC_TRUE)
+	if (dir_default == ISC_TRUE) {
+		CHECK(str_cat_char(buff, "dyndb-ldap/"));
 		CHECK(str_cat_char(buff, inst->db_name));
-	else
+	} else
 		CHECK(str_cat_char(buff, dir_name));
 
 	if (str_buf(buff)[str_len(buff) - 1] != '/')
@@ -388,7 +389,7 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 	CHECK(setting_get_str("directory", inst->local_settings, &dir_name));
 
 	/* Make sure that working directory exists */
-	CHECK(fs_dir_create(dir_name));
+	CHECK(fs_dirs_create(dir_name));
 
 	/* Set timer for deadlock detection inside semaphore_wait_timed . */
 	CHECK(setting_get_uint("timeout", set, &uint));

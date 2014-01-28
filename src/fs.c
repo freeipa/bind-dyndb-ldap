@@ -28,6 +28,7 @@
 #include <isc/file.h>
 #include <isc/errno2result.h>
 #include <isc/result.h>
+#include <isc/string.h>
 #include <isc/util.h>
 
 #include "log.h"
@@ -67,6 +68,32 @@ fs_dir_create(const char *dir_name)
 		log_error_r("unable to open directory '%s', working directory "
 			    "is '%s'", dir_name, dir_curr);
 
+	return result;
+}
+
+/**
+ * Create directories specified by path (including all parents).
+ */
+isc_result_t
+fs_dirs_create(const char *path) {
+	isc_result_t result = ISC_R_SUCCESS;
+	char curr_path[PATH_MAX + 1];
+	char *end = NULL;
+
+	CHECK(isc_string_copy(curr_path, PATH_MAX, path));
+
+	for (end = strchr(curr_path, '/');
+	     end != NULL;
+	     end = strchr(end + 1, '/')) {
+		*end = '\0';
+		if (strcmp(curr_path, "") != 0)
+			/* Absolute paths would have first component empty. */
+			CHECK(fs_dir_create(curr_path));
+		*end = '/';
+	}
+
+
+cleanup:
 	return result;
 }
 
