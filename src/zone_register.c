@@ -291,9 +291,12 @@ delete_zone_info(void *arg1, void *arg2)
 		return;
 
 	settings_set_free(&zinfo->settings);
-	isc_mem_free(mctx, zinfo->dn);
-	dns_zone_detach(&zinfo->zone);
-	dns_db_detach(&zinfo->ldapdb);
+	if (zinfo->dn != NULL)
+		isc_mem_free(mctx, zinfo->dn);
+	if (zinfo->zone != NULL)
+		dns_zone_detach(&zinfo->zone);
+	if (zinfo->ldapdb != NULL)
+		dns_db_detach(&zinfo->ldapdb);
 	SAFE_MEM_PUT_PTR(mctx, zinfo);
 }
 
