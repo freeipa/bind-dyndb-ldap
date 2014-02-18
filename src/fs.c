@@ -39,14 +39,14 @@ isc_result_t
 fs_dir_create(const char *dir_name)
 {
 	isc_result_t result;
-	char dir_curr[PATH_MAX];
+	char dir_curr[PATH_MAX + 1] = "";
 	isc_dir_t dir_handle;
 	int ret;
 
 	REQUIRE(dir_name != NULL);
 
-	strncpy(dir_curr, msg_getcwd_failed, sizeof(dir_curr));
-	getcwd(dir_curr, sizeof(dir_curr));
+	if (getcwd(dir_curr, sizeof(dir_curr) - 1) == NULL)
+		strncpy(dir_curr, msg_getcwd_failed, sizeof(dir_curr));
 	ret = mkdir(dir_name, 0700);
 	if (ret == 0)
 		result = ISC_R_SUCCESS;
@@ -100,14 +100,14 @@ cleanup:
 isc_result_t
 fs_file_remove(const char *file_name) {
 	isc_result_t result;
-	char dir_curr[PATH_MAX];
+	char dir_curr[PATH_MAX + 1] = "";
 
 	result = isc_file_remove(file_name);
 	if (result == ISC_R_FILENOTFOUND)
 		result = ISC_R_SUCCESS;
 	else if (result != ISC_R_SUCCESS) {
-		strncpy(dir_curr, msg_getcwd_failed, sizeof(dir_curr));
-		getcwd(dir_curr, sizeof(dir_curr));
+		if (getcwd(dir_curr, sizeof(dir_curr) - 1) == NULL)
+			strncpy(dir_curr, msg_getcwd_failed, sizeof(dir_curr));
 		log_error_r("unable to delete file '%s', working directory "
 			    "is '%s'", file_name, dir_curr);
 	}
