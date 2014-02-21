@@ -215,12 +215,12 @@ sync_ctx_init(isc_mem_t *mctx, isc_task_t *task, sync_ctx_t **sctxp) {
 
 cleanup:
 	if (lock_ready == ISC_TRUE)
-		isc_mutex_destroy(&(*sctxp)->mutex);
+		isc_mutex_destroy(&sctx->mutex);
 	if (cond_ready == ISC_TRUE)
-		isc_condition_init(&(*sctxp)->cond);
+		isc_condition_init(&sctx->cond);
 	if (refcount_ready == ISC_TRUE)
-		isc_refcount_destroy(&(*sctxp)->task_cnt);
-	MEM_PUT_AND_DETACH(*sctxp);
+		isc_refcount_destroy(&sctx->task_cnt);
+	MEM_PUT_AND_DETACH(sctx);
 	return result;
 }
 
