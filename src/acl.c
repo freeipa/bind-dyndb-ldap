@@ -91,7 +91,7 @@ const enum_txt_assoc_t acl_type_txts[] = {
 	{ -1,			NULL		} /* end marker */
 };
 
-static cfg_type_t * ATTR_NONNULLS
+static cfg_type_t * ATTR_NONNULLS ATTR_CHECKRESULT
 get_type_from_tuplefield(const cfg_type_t *cfg_type, const char *name)
 {
 	cfg_type_t *ret = NULL;
@@ -111,7 +111,7 @@ get_type_from_tuplefield(const cfg_type_t *cfg_type, const char *name)
 	return ret;
 }
 
-static cfg_type_t * ATTR_NONNULLS
+static cfg_type_t * ATTR_NONNULLS ATTR_CHECKRESULT
 get_type_from_clause(const cfg_clausedef_t *clause, const char *name)
 {
 	cfg_type_t *ret = NULL;
@@ -129,7 +129,7 @@ get_type_from_clause(const cfg_clausedef_t *clause, const char *name)
 	return ret;
 }
 
-static cfg_type_t * ATTR_NONNULLS
+static cfg_type_t * ATTR_NONNULLS ATTR_CHECKRESULT
 get_type_from_clause_array(const cfg_type_t *cfg_type, const char *name)
 {
 	cfg_type_t *ret = NULL;
@@ -163,7 +163,7 @@ init_cfgtypes(void)
 	forwarders = get_type_from_clause_array(zoneopts, "forwarders");
 }
 
-static isc_result_t ATTR_NONNULLS
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 parse(cfg_parser_t *parser, const char *string, cfg_type_t **type,
       cfg_obj_t **objp)
 {
@@ -203,7 +203,7 @@ parse(cfg_parser_t *parser, const char *string, cfg_type_t **type,
 		}							\
 	} while (0)
 
-static isc_result_t ATTR_NONNULLS
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 get_mode(const cfg_obj_t *obj, isc_boolean_t *value)
 {
 	const char *str;
@@ -226,7 +226,7 @@ get_mode(const cfg_obj_t *obj, isc_boolean_t *value)
 	return ISC_R_NOTIMPLEMENTED;
 }
 
-static isc_result_t ATTR_NONNULLS
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 get_match_type(const cfg_obj_t *obj, unsigned int *value)
 {
 	const char *str;
@@ -275,7 +275,7 @@ get_match_type(const cfg_obj_t *obj, unsigned int *value)
 	return ISC_R_NOTIMPLEMENTED;
 }
 
-static isc_result_t ATTR_NONNULLS
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 get_fixed_name(const cfg_obj_t *obj, const char *name, dns_fixedname_t *fname)
 {
 	isc_result_t result;
@@ -319,7 +319,7 @@ get_fixed_name(const cfg_obj_t *obj, const char *name, dns_fixedname_t *fname)
 	return result;
 }
 
-static unsigned int ATTR_NONNULLS
+static unsigned int ATTR_NONNULLS ATTR_CHECKRESULT
 count_list_elements(const cfg_obj_t *list)
 {
 	const cfg_listelt_t *el;
@@ -331,7 +331,7 @@ count_list_elements(const cfg_obj_t *list)
 	return ret;
 }
 
-static isc_result_t ATTR_NONNULLS
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 get_types(isc_mem_t *mctx, const cfg_obj_t *obj, dns_rdatatype_t **typesp,
 	  unsigned int *np)
 {
@@ -382,7 +382,7 @@ cleanup:
 	return result;
 }
 
-static isc_result_t ATTR_NONNULLS
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 bracket_str(isc_mem_t *mctx, const char *str, ld_string_t **bracket_strp)
 {
 	ld_string_t *tmp = NULL;
@@ -400,7 +400,7 @@ cleanup:
 	return result;
 }
 
-static isc_result_t ATTR_NONNULLS
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 semicolon_bracket_str(isc_mem_t *mctx, const char *str, ld_string_t **bracket_strp)
 {
 	ld_string_t *tmp = NULL;

@@ -23,10 +23,10 @@
 
 #include "util.h"
 
-isc_result_t ATTR_NONNULLS
+isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 fs_dirs_create(const char *path);
 
-isc_result_t ATTR_NONNULLS
+isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 fs_file_remove(const char *file_name);
 
 #endif /* FS_H_ */

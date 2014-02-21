@@ -30,17 +30,17 @@
 
 isc_result_t
 rdatalist_clone(isc_mem_t *mctx, dns_rdatalist_t *source,
-		dns_rdatalist_t **targetp) ATTR_NONNULLS;
+		dns_rdatalist_t **targetp) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
 ldap_rdatalist_copy(isc_mem_t *mctx, ldapdb_rdatalist_t source,
-		    ldapdb_rdatalist_t *target) ATTR_NONNULLS;
+		    ldapdb_rdatalist_t *target) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 unsigned int
-rdatalist_length(const dns_rdatalist_t *rdlist) ATTR_NONNULLS;
+rdatalist_length(const dns_rdatalist_t *rdlist) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
 rdatalist_digest(isc_mem_t *mctx, ldapdb_rdatalist_t *rdlist,
-		unsigned char *digest) ATTR_NONNULLS;
+		unsigned char *digest) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 #endif /* !_LD_RDLIST_H_ */

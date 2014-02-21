@@ -55,7 +55,7 @@ static LIST(db_instance_t) instance_list;
 
 static void initialize_manager(void);
 static void destroy_db_instance(db_instance_t **db_instp) ATTR_NONNULLS;
-static isc_result_t find_db_instance(const char *name, db_instance_t **instance) ATTR_NONNULLS;
+static isc_result_t find_db_instance(const char *name, db_instance_t **instance) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 
 static void
@@ -176,7 +176,7 @@ cleanup:
 	return result;
 }
 
-static isc_result_t ATTR_NONNULLS
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 find_db_instance(const char *name, db_instance_t **instance)
 {
 	db_instance_t *iterator;

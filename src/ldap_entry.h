@@ -82,14 +82,14 @@ typedef unsigned char		ldap_entryclass_t;
 
 isc_result_t
 ldap_entrylist_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *msg,
-		      ldap_entrylist_t *entrylist) ATTR_NONNULLS;
+		      ldap_entrylist_t *entrylist) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 void
 ldap_entrylist_destroy(isc_mem_t *mctx, ldap_entrylist_t *entrylist) ATTR_NONNULLS;
 
 isc_result_t
 ldap_entrylist_append(isc_mem_t *mctx, LDAP *ld, LDAPMessage *msg,
-		      ldap_entrylist_t *entrylist) ATTR_NONNULLS;
+		      ldap_entrylist_t *entrylist) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 /*
  * ldap_entry_create
@@ -98,32 +98,32 @@ ldap_entrylist_append(isc_mem_t *mctx, LDAP *ld, LDAPMessage *msg,
  */
 isc_result_t
 ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
-		  ldap_entry_t **entryp) ATTR_NONNULLS;
+		  ldap_entry_t **entryp) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 void
 ldap_entry_destroy(isc_mem_t *mctx, ldap_entry_t **entryp) ATTR_NONNULLS;
 
 isc_result_t
 ldap_entry_getvalues(const ldap_entry_t *entry, const char *attrname,
-		     ldap_valuelist_t *values) ATTR_NONNULLS;
+		     ldap_valuelist_t *values) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 dns_rdataclass_t
-ldap_entry_getrdclass(const ldap_entry_t *entry) ATTR_NONNULLS;
+ldap_entry_getrdclass(const ldap_entry_t *entry) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 ldap_attribute_t*
-ldap_entry_nextattr(ldap_entry_t *entry) ATTR_NONNULLS;
+ldap_entry_nextattr(ldap_entry_t *entry) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
 ldap_entry_firstrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
-		       dns_rdatatype_t *rdtype);
+		       dns_rdatatype_t *rdtype) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
 ldap_entry_nextrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
-		      dns_rdatatype_t *rdtype) ATTR_NONNULLS;
+		      dns_rdatatype_t *rdtype) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
 ldap_entry_getfakesoa(ldap_entry_t *entry, const char *fake_mname,
-		      ld_string_t *target) ATTR_NONNULLS;
+		      ld_string_t *target) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 /*
  * ldap_entry_getclass
@@ -132,10 +132,10 @@ ldap_entry_getfakesoa(ldap_entry_t *entry, const char *fake_mname,
  * you must ldap_search for objectClass attribute!
  */
 isc_result_t
-ldap_entry_getclass(ldap_entry_t *entry, ldap_entryclass_t *class) ATTR_NONNULLS;
+ldap_entry_getclass(ldap_entry_t *entry, ldap_entryclass_t *class) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
-ldap_attr_firstvalue(ldap_attribute_t *attr, ld_string_t *str) ATTR_NONNULLS;
+ldap_attr_firstvalue(ldap_attribute_t *attr, ld_string_t *str) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 /*
  * ldap_attr_nextvalue
@@ -144,9 +144,9 @@ ldap_attr_firstvalue(ldap_attribute_t *attr, ld_string_t *str) ATTR_NONNULLS;
  * available
  */
 isc_result_t
-ldap_attr_nextvalue(ldap_attribute_t *attr, ld_string_t *value) ATTR_NONNULLS;
+ldap_attr_nextvalue(ldap_attribute_t *attr, ld_string_t *value) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 dns_ttl_t
-ldap_entry_getttl(const ldap_entry_t *entry) ATTR_NONNULLS;
+ldap_entry_getttl(const ldap_entry_t *entry) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 #endif /* !_LD_LDAP_ENTRY_H_ */

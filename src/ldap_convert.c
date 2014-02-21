@@ -40,9 +40,9 @@
 #include "util.h"
 #include "zone_register.h"
 
-static isc_result_t explode_dn(const char *dn, char ***explodedp, int notypes) ATTR_NONNULLS;
+static isc_result_t explode_dn(const char *dn, char ***explodedp, int notypes) ATTR_NONNULLS ATTR_CHECKRESULT;
 static isc_result_t explode_rdn(const char *rdn, char ***explodedp,
-				int notypes) ATTR_NONNULLS;
+				int notypes) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 
 isc_result_t
@@ -309,7 +309,7 @@ cleanup:
 	return result;
 }
 
-static isc_result_t ATTR_NONNULLS
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 explode_dn(const char *dn, char ***explodedp, int notypes)
 {
 	char **exploded;
@@ -333,7 +333,7 @@ explode_dn(const char *dn, char ***explodedp, int notypes)
 	return ISC_R_SUCCESS;
 }
 
-static isc_result_t ATTR_NONNULLS
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 explode_rdn(const char *rdn, char ***explodedp, int notypes)
 {
 	char **exploded;

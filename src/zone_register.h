@@ -33,35 +33,35 @@ void
 zr_destroy(zone_register_t **zrp) ATTR_NONNULLS;
 
 isc_result_t
-zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn) ATTR_NONNULLS;
+zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
-zr_del_zone(zone_register_t *zr, dns_name_t *origin) ATTR_NONNULLS;
+zr_del_zone(zone_register_t *zr, dns_name_t *origin) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
 zr_get_zone_dbs(zone_register_t *zr, dns_name_t *name, dns_db_t **ldapdbp,
-		dns_db_t **rbtdbp);
+		dns_db_t **rbtdbp) ATTR_NONNULL(1, 2) ATTR_CHECKRESULT;
 
 isc_result_t
 zr_get_zone_dn(zone_register_t *zr, dns_name_t *name, const char **dn,
-	       dns_name_t *matched_name) ATTR_NONNULLS;
+	       dns_name_t *matched_name) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
-zr_get_zone_ptr(zone_register_t *zr, dns_name_t *name, dns_zone_t **zonep) ATTR_NONNULLS;
+zr_get_zone_ptr(zone_register_t *zr, dns_name_t *name, dns_zone_t **zonep) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
-zr_get_zone_settings(zone_register_t *zr, dns_name_t *name, settings_set_t **set) ATTR_NONNULLS;
+zr_get_zone_settings(zone_register_t *zr, dns_name_t *name, settings_set_t **set) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
 zr_get_zone_path(isc_mem_t *mctx, settings_set_t *settings,
 		 dns_name_t *zone_name, const char *last_component,
-		 ld_string_t **path);
+		 ld_string_t **path) ATTR_NONNULL(1,2,3,5) ATTR_CHECKRESULT;
 
 isc_result_t
 zr_rbt_iter_init(zone_register_t *zr, rbt_iterator_t **iter,
-		 dns_name_t *nodename) ATTR_NONNULLS;
+		 dns_name_t *nodename) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_mem_t *
-zr_get_mctx(zone_register_t *zr) ATTR_NONNULLS;
+zr_get_mctx(zone_register_t *zr) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 #endif /* !_LD_ZONE_REGISTER_H_ */

@@ -38,19 +38,19 @@
  * that DNS name is returned.
  */
 isc_result_t dn_to_dnsname(isc_mem_t *mctx, const char *dn,
-			   dns_name_t *target, dns_name_t *origin);
+			   dns_name_t *target, dns_name_t *origin) ATTR_NONNULL(1, 2, 3) ATTR_CHECKRESULT;
 
 isc_result_t dnsname_to_dn(zone_register_t *zr, dns_name_t *name,
-			   ld_string_t *target);
+			   ld_string_t *target) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t ldap_attribute_to_rdatatype(const char *ldap_record,
-				      dns_rdatatype_t *rdtype);
+				      dns_rdatatype_t *rdtype) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
 rdatatype_to_ldap_attribute(dns_rdatatype_t rdtype, char *target,
-			    unsigned int size);
+			    unsigned int size) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t dn_to_text(const char *dn, ld_string_t *target,
-			ld_string_t *origin);
+			ld_string_t *origin) ATTR_NONNULL(1, 2) ATTR_CHECKRESULT;
 
 #endif /* !_LD_LDAP_CONVERT_H_ */

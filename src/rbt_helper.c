@@ -30,7 +30,7 @@ struct rbt_iterator {
  * @retval others          Errors from dns_name_concatenate() and others.
  *
  */
-static isc_result_t ATTR_NONNULLS
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 rbt_iter_getnodename(rbt_iterator_t *iter, dns_name_t *nodename) {
 	isc_result_t result;
 	dns_rbtnode_t *node = NULL;

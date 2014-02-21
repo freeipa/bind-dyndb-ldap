@@ -39,7 +39,7 @@
 		}							\
 	} while(0)
 
-static isc_result_t
+static isc_result_t ATTR_CHECKRESULT
 check_credentials(krb5_context context,
 		  krb5_ccache ccache,
 		  krb5_principal service)

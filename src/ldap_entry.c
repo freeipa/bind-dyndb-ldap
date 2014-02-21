@@ -143,7 +143,7 @@ ldap_attributelist_destroy(isc_mem_t *mctx, ldap_attributelist_t *attrlist)
         }
 }
 
-static isc_result_t ATTR_NONNULLS
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_attr_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 		 ldap_attribute_t *attr)
 {

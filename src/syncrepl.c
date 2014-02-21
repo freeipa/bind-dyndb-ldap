@@ -145,7 +145,7 @@ cleanup:
 	return;
 }
 
-static isc_result_t ATTR_NONNULLS
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 sync_barrierev_create(sync_ctx_t *sctx, const char *inst_name,
 		      sync_barrierev_t **evp) {
 	sync_barrierev_t *ev = NULL;

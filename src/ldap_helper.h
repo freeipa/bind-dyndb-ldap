@@ -32,7 +32,7 @@
 
 isc_result_t ldapdb_rdatalist_findrdatatype(ldapdb_rdatalist_t *rdatalist,
 					    dns_rdatatype_t rdtype,
-					    dns_rdatalist_t **rdlistp) ATTR_NONNULLS;
+					    dns_rdatalist_t **rdlistp) ATTR_NONNULLS ATTR_CHECKRESULT;
 /*
  * ldapdb_rdatalist_findrdatatype
  *
