@@ -121,8 +121,10 @@ extern isc_boolean_t verbose_checks; /* from settings.c */
 #define ATTR_NONNULLS     ATTR_NONNULL()
 #ifdef __GNUC__
 #define ATTR_NONNULL(...) __attribute__((nonnull(__VA_ARGS__)))
+#define ATTR_CHECKRESULT __attribute__((warn_unused_result))
 #else
 #define ATTR_NONNULL(...)
+#define ATTR_CHECKRESULT
 #endif
 
 #endif /* !_LD_UTIL_H_ */

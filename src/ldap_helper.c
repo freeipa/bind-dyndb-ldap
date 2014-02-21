@@ -1772,7 +1772,7 @@ ldap_replace_serial(ldap_instance_t *inst, dns_name_t *zone,
 
 	REQUIRE(inst != NULL);
 
-	str_new(inst->mctx, &dn);
+	CHECK(str_new(inst->mctx, &dn));
 	CHECK(dnsname_to_dn(inst->zone_register, zone, dn));
 
 	change.mod_op = LDAP_MOD_REPLACE;
@@ -2405,8 +2405,10 @@ ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 		CHECK(ldap_pool_getconnection(ldap_inst->pool, &ldap_conn));
 
 	va_start(ap, filter);
-	str_vsprintf(ldap_qresult->query_string, filter, ap);
+	result = str_vsprintf(ldap_qresult->query_string, filter, ap);
 	va_end(ap);
+	if (result != ISC_R_SUCCESS)
+		goto cleanup;
 
 	log_debug(2, "querying '%s' with '%s'", base,
 		  str_buf(ldap_qresult->query_string));

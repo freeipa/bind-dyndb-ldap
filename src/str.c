@@ -66,7 +66,7 @@ struct ld_string {
  * Make sure we have enough space for at least len + 1 bytes.
  * This function is private.
  */
-static isc_result_t ATTR_NONNULLS
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 str_alloc(ld_string_t *str, size_t len)
 {
 	size_t new_size;
@@ -112,7 +112,7 @@ str_alloc(ld_string_t *str, size_t len)
  * implement caching of the string length in the future for performance
  * reasons.
  */
-static size_t ATTR_NONNULLS
+static size_t ATTR_NONNULLS ATTR_CHECKRESULT
 str_len_internal(const ld_string_t *str)
 {
 	REQUIRE(str != NULL);
