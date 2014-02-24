@@ -1,7 +1,7 @@
 %define VERSION %{version}
 
 Name:           bind-dyndb-ldap
-Version:        4.0
+Version:        4.1
 Release:        0%{?dist}
 Summary:        LDAP back-end plug-in for BIND
 
@@ -49,8 +49,7 @@ rm -rf %{buildroot}
 %files
 %defattr(-,root,root,-)
 %doc NEWS README COPYING doc/{example.ldif,schema}
-%dir %{_localstatedir}/named/dyndb-ldap
-%attr(770, root, named) %{_localstatedir}/named/dyndb-ldap
+%dir %attr(770, root, named) %{_localstatedir}/named/dyndb-ldap
 %{_libdir}/bind/ldap.so
 
 
