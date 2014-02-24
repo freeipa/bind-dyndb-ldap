@@ -1,3 +1,7 @@
+4.1
+====
+[1] Fix few minor bugs in error handling found by static code analyzers.
+
 4.0
 ====
 [1] Persistent search and zone refresh were replaced by RFC 4533 (SyncRepl).
