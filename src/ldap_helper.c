@@ -4274,8 +4274,6 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	dns_name_t zone_name;
 	dns_zone_t *zone_ptr = NULL;
 	char *dn = NULL;
-	char *prevdn_ldap = NULL;
-	char *prevdn = NULL;
 	char *dbname = NULL;
 	const char *ldap_base = NULL;
 	isc_boolean_t isbase;
@@ -4385,7 +4383,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	pevent->mctx = mctx;
 	pevent->dbname = dbname;
 	pevent->dn = dn;
-	pevent->prevdn = prevdn;
+	pevent->prevdn = NULL;
 	pevent->chgtype = chgtype;
 	pevent->entry = entry;
 	isc_task_send(task, (isc_event_t **)&pevent);
@@ -4406,12 +4404,8 @@ cleanup:
 			isc_mem_free(mctx, dbname);
 		if (dn != NULL)
 			isc_mem_free(mctx, dn);
-		if (prevdn != NULL)
-			isc_mem_free(mctx, prevdn);
 		if (mctx != NULL)
 			isc_mem_detach(&mctx);
-		if (prevdn_ldap != NULL)
-			ldap_memfree(prevdn);
 		ldap_entry_destroy(inst->mctx, &entry);
 		if (task != NULL)
 			isc_task_detach(&task);
