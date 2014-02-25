@@ -15,14 +15,6 @@ m4_ifdef([AM_PROG_AR], [AM_PROG_AR])
 AC_PROG_CC
 AC_PROG_LIBTOOL
 
-# Checks for libraries.
-AC_CHECK_LIB([dns], [dns_name_init], [],
-	AC_MSG_ERROR([Install BIND9 development files]))
-AC_CHECK_LIB([ldap], [ldap_initialize], [],
-	AC_MSG_ERROR([Install OpenLDAP development files]))
-AC_CHECK_LIB([krb5], [krb5_cc_initialize], [],
-	AC_MSG_ERROR([Install Kerberos 5 development files]))
-
 # Checks for header files.
 AC_CHECK_HEADERS([stddef.h stdlib.h string.h strings.h])
 
@@ -47,6 +39,39 @@ AC_TRY_COMPILE([
 [CFLAGS="$SAVED_CFLAGS"
  AC_MSG_RESULT([no])])
 
+# Get CFLAGS from isc-config.sh
+AC_ARG_VAR([BIND9_CFLAGS],
+           [C compiler flags for bind9, overriding isc-config.sh])
+AC_SUBST(BIND9_CFLAGS)
+
+dnl do not override enviroment variables BIND9_CFLAGS
+if test -z "$BIND9_CFLAGS"; then
+	AC_PATH_PROG(ISC_CONFIG, [isc-config.sh])
+	AC_MSG_CHECKING([for working isc-config])
+	if test -x "$ISC_CONFIG"; then
+		AC_MSG_RESULT([yes]);
+		BIND9_CFLAGS=`$ISC_CONFIG --cflags dns`
+		dnl We do not need all libraries suggested by isc-config.sh
+		dnl {-lcrypto, -lcap} are useless
+		dnl BIND9_LIBS=`$ISC_CONFIG --libs dns`
+	else
+		AC_MSG_RESULT([no])
+		AC_MSG_WARN([
+	Could not detect script isc-config.sh. Compilation may fail.
+	Defining variable BIND9_CFLAGS will fix this problem.
+	])
+	fi
+fi
+CFLAGS="$BIND9_CFLAGS $CFLAGS"
+
+# Checks for libraries.
+AC_CHECK_LIB([dns], [dns_name_init], [],
+	AC_MSG_ERROR([Install BIND9 development files]))
+AC_CHECK_LIB([ldap], [ldap_initialize], [],
+	AC_MSG_ERROR([Install OpenLDAP development files]))
+AC_CHECK_LIB([krb5], [krb5_cc_initialize], [],
+	AC_MSG_ERROR([Install Kerberos 5 development files]))
+
 # Check version of libdns
 AC_MSG_CHECKING([libdns version])
 AC_TRY_RUN([
@@ -62,7 +87,7 @@ int main(void) {
 [AC_MSG_ERROR([Cross compiling is not supported.])]
 )
 
-# Older autoconf (2.59, for example) doesn't define docdir
+dnl Older autoconf (2.59, for example) doesn't define docdir
 [[ ! -n "$docdir" ]] && docdir='${datadir}/doc/${PACKAGE_TARNAME}'
 AC_SUBST([docdir])
 

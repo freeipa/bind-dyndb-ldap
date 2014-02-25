@@ -28,7 +28,6 @@ off of your LDAP server.
 %setup -q -n %{name}-%{VERSION}
 
 %build
-export CFLAGS="`isc-config.sh --cflags dns` $RPM_OPT_FLAGS"
 %configure
 make %{?_smp_mflags}
 
