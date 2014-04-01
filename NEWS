@@ -1,3 +1,9 @@
+4.2
+====
+[1] Record parsing was fixed to prevent child-zone data corruption in cases
+    where parent zone example.com was hosted on the same server as child zone
+    sub.example.com. (This bug was introduced in version 4.0.)
+
 4.1
 ====
 [1] Fix few minor bugs in error handling found by static code analyzers.

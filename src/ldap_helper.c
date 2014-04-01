@@ -4030,7 +4030,7 @@ update_restart:
 	ldapdb = NULL;
 	journal = NULL;
 	ldapdb_rdatalist_destroy(mctx, &rdatalist);
-	CHECK(zr_get_zone_dbs(inst->zone_register, &name, &ldapdb, &rbtdb));
+	CHECK(zr_get_zone_dbs(inst->zone_register, &origin, &ldapdb, &rbtdb));
 	CHECK(dns_db_newversion(ldapdb, &version));
 
 	CHECK(dns_db_findnode(rbtdb, &name, ISC_TRUE, &node));
