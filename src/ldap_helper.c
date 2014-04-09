@@ -3913,16 +3913,18 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	}
 
 cleanup:
-	sync_concurr_limit_signal(inst->sctx);
+	if (inst != NULL) {
+		sync_concurr_limit_signal(inst->sctx);
+		if (dns_name_dynamic(&currname))
+			dns_name_free(&currname, inst->mctx);
+		if (dns_name_dynamic(&prevname))
+			dns_name_free(&prevname, inst->mctx);
+	}
 	if (result != ISC_R_SUCCESS)
 		log_error_r("update_zone (syncrepl) failed for '%s'. "
 			  "Zones can be outdated, run `rndc reload`",
 			  pevent->dn);
 
-	if (dns_name_dynamic(&currname))
-		dns_name_free(&currname, inst->mctx);
-	if (dns_name_dynamic(&prevname))
-		dns_name_free(&prevname, inst->mctx);
 	isc_mem_free(mctx, pevent->dbname);
 	if (pevent->prevdn != NULL)
 		isc_mem_free(mctx, pevent->prevdn);
@@ -3948,7 +3950,8 @@ update_config(isc_task_t *task, isc_event_t *event)
 	CHECK(ldap_parse_configentry(entry, inst));
 
 cleanup:
-	sync_concurr_limit_signal(inst->sctx);
+	if (inst != NULL)
+		sync_concurr_limit_signal(inst->sctx);
 	if (result != ISC_R_SUCCESS)
 		log_error_r("update_config (syncrepl) failed for '%s'. "
 			    "Configuration can be outdated, run `rndc reload`",
@@ -4200,17 +4203,19 @@ cleanup:
 			  pevent->dn, pevent->chgtype);
 	}
 
-	sync_concurr_limit_signal(inst->sctx);
+	if (inst != NULL) {
+		sync_concurr_limit_signal(inst->sctx);
+		if (dns_name_dynamic(&name))
+			dns_name_free(&name, inst->mctx);
+		if (dns_name_dynamic(&prevname))
+			dns_name_free(&prevname, inst->mctx);
+		if (dns_name_dynamic(&origin))
+			dns_name_free(&origin, inst->mctx);
+		if (dns_name_dynamic(&prevorigin))
+			dns_name_free(&prevorigin, inst->mctx);
+	}
 	if (zone_ptr != NULL)
 		dns_zone_detach(&zone_ptr);
-	if (dns_name_dynamic(&name))
-		dns_name_free(&name, inst->mctx);
-	if (dns_name_dynamic(&prevname))
-		dns_name_free(&prevname, inst->mctx);
-	if (dns_name_dynamic(&origin))
-		dns_name_free(&origin, inst->mctx);
-	if (dns_name_dynamic(&prevorigin))
-		dns_name_free(&prevorigin, inst->mctx);
 	ldapdb_rdatalist_destroy(mctx, &rdatalist);
 	isc_mem_free(mctx, pevent->dbname);
 	if (pevent->prevdn != NULL)
