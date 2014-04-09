@@ -1,7 +1,7 @@
 %define VERSION %{version}
 
 Name:           bind-dyndb-ldap
-Version:        4.1
+Version:        4.2
 Release:        0%{?dist}
 Summary:        LDAP back-end plug-in for BIND
 
