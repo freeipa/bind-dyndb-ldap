@@ -11,11 +11,12 @@ URL:            https://fedorahosted.org/bind-dyndb-ldap
 Source0:        https://fedorahosted.org/released/%{name}/%{name}-%{VERSION}.tar.bz2
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 
-BuildRequires:  bind-devel >= 32:9.9.0-1
+BuildRequires:  bind-devel >= 32:9.9.0, bind-lite-devel >= 32:9.9.0
 BuildRequires:  krb5-devel
 BuildRequires:  openldap-devel
+BuildRequires:  automake, autoconf, libtool
 
-Requires:       bind >= 32:9.9.0-1
+Requires:       bind >= 32:9.9.0
 
 %description
 This package provides an LDAP back-end plug-in for BIND. It features
