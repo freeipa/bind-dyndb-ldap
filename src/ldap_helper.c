@@ -901,10 +901,11 @@ create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, dns_zone_t **zonep)
 	return ISC_R_SUCCESS;
 
 cleanup:
-	if (dns_zone_getmgr(zone) != NULL)
-		dns_zonemgr_releasezone(ldap_inst->zmgr, zone);
-	if (zone != NULL)
+	if (zone != NULL) {
+		if (dns_zone_getmgr(zone) != NULL)
+			dns_zonemgr_releasezone(ldap_inst->zmgr, zone);
 		dns_zone_detach(&zone);
+	}
 	if (task != NULL)
 		isc_task_detach(&task);
 
