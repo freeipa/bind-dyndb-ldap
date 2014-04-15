@@ -876,10 +876,10 @@ cleanup:
  * ldap_inst->view.
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, dns_zone_t **zonep)
+create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, dns_zone_t **rawp)
 {
 	isc_result_t result;
-	dns_zone_t *zone = NULL;
+	dns_zone_t *raw = NULL;
 	const char *argv[2];
 	sync_state_t sync_state;
 	isc_task_t *task = NULL;
@@ -887,7 +887,7 @@ create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, dns_zone_t **zonep)
 
 	REQUIRE(ldap_inst != NULL);
 	REQUIRE(name != NULL);
-	REQUIRE(zonep != NULL && *zonep == NULL);
+	REQUIRE(rawp != NULL && *rawp == NULL);
 
 	argv[0] = ldapdb_impname;
 	argv[1] = ldap_inst->db_name;
@@ -896,30 +896,30 @@ create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, dns_zone_t **zonep)
 	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
 		goto cleanup;
 
-	CHECK(dns_zone_create(&zone, ldap_inst->mctx));
-	CHECK(dns_zone_setorigin(zone, name));
-	dns_zone_setclass(zone, dns_rdataclass_in);
-	dns_zone_settype(zone, dns_zone_master);
-	CHECK(dns_zone_setdbtype(zone, 2, argv));
-	CHECK(dns_zonemgr_managezone(ldap_inst->zmgr, zone));
+	CHECK(dns_zone_create(&raw, ldap_inst->mctx));
+	CHECK(dns_zone_setorigin(raw, name));
+	dns_zone_setclass(raw, dns_rdataclass_in);
+	dns_zone_settype(raw, dns_zone_master);
+	CHECK(dns_zone_setdbtype(raw, 2, argv));
+	CHECK(dns_zonemgr_managezone(ldap_inst->zmgr, raw));
 	sync_state_get(ldap_inst->sctx, &sync_state);
 	if (sync_state == sync_init) {
-		dns_zone_gettask(zone, &task);
+		dns_zone_gettask(raw, &task);
 		CHECK(sync_task_add(ldap_inst->sctx, task));
 		isc_task_detach(&task);
 	}
 
-	*zonep = zone;
+	*rawp = raw;
 	return ISC_R_SUCCESS;
 
 cleanup:
 	dns_name_format(name, zone_name, DNS_NAME_FORMATSIZE);
 	log_error_r("failed to create new zone '%s'", zone_name);
 
-	if (zone != NULL) {
-		if (dns_zone_getmgr(zone) != NULL)
-			dns_zonemgr_releasezone(ldap_inst->zmgr, zone);
-		dns_zone_detach(&zone);
+	if (raw != NULL) {
+		if (dns_zone_getmgr(raw) != NULL)
+			dns_zonemgr_releasezone(ldap_inst->zmgr, raw);
+		dns_zone_detach(&raw);
 	}
 	if (task != NULL)
 		isc_task_detach(&task);
@@ -1812,7 +1812,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	const char *dn;
 	ldap_valuelist_t values;
 	dns_name_t name;
-	dns_zone_t *zone = NULL;
+	dns_zone_t *raw = NULL;
 	dns_zone_t *zone_raw = NULL;
 	isc_result_t result;
 	isc_boolean_t unlock = ISC_FALSE;
@@ -1880,13 +1880,13 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	 * Load the zone. */
 
 	/* Check if we are already serving given zone */
-	result = zr_get_zone_ptr(inst->zone_register, &name, &zone);
+	result = zr_get_zone_ptr(inst->zone_register, &name, &raw);
 	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
-		CHECK(create_zone(inst, &name, &zone));
-		CHECK(configure_paths(inst->mctx, inst, zone, ISC_FALSE));
-		CHECK(zr_add_zone(inst->zone_register, zone, dn));
+		CHECK(create_zone(inst, &name, &raw));
+		CHECK(configure_paths(inst->mctx, inst, raw, ISC_FALSE));
+		CHECK(zr_add_zone(inst->zone_register, raw, dn));
 		new_zone = ISC_TRUE;
-		log_debug(2, "created zone %p: %s", zone, dn);
+		log_debug(2, "created zone %p: %s", raw, dn);
 	} else if (result != ISC_R_SUCCESS)
 		goto cleanup;
 
@@ -1912,44 +1912,44 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 		isc_boolean_t ssu_enabled;
 		const char *ssu_policy = NULL;
 
-		log_debug(2, "Setting SSU table for %p: %s", zone, dn);
+		log_debug(2, "Setting SSU table for %p: %s", raw, dn);
 		CHECK(setting_get_bool("dyn_update", zone_settings, &ssu_enabled));
 		if (ssu_enabled) {
 			/* Get the update policy and update the zone with it. */
 			CHECK(setting_get_str("update_policy", zone_settings,
 					      &ssu_policy));
-			CHECK(configure_zone_ssutable(zone, ssu_policy));
+			CHECK(configure_zone_ssutable(raw, ssu_policy));
 		} else {
 			/* Empty policy will prevent the update from reaching
 			 * LDAP driver and error will be logged. */
-			CHECK(configure_zone_ssutable(zone, ""));
+			CHECK(configure_zone_ssutable(raw, ""));
 		}
 	}
 
 	/* Fetch allow-query and allow-transfer ACLs */
-	log_debug(2, "Setting allow-query for %p: %s", zone, dn);
+	log_debug(2, "Setting allow-query for %p: %s", raw, dn);
 	result = ldap_entry_getvalues(entry, "idnsAllowQuery", &values);
 	if (result == ISC_R_SUCCESS) {
-		CHECK(configure_zone_acl(inst->mctx, zone, &dns_zone_setqueryacl,
+		CHECK(configure_zone_acl(inst->mctx, raw, &dns_zone_setqueryacl,
 					 HEAD(values)->value, acl_type_query));
 	} else {
 		log_debug(2, "allow-query not set");
-		dns_zone_clearqueryacl(zone);
+		dns_zone_clearqueryacl(raw);
 	}
 
-	log_debug(2, "Setting allow-transfer for %p: %s", zone, dn);
+	log_debug(2, "Setting allow-transfer for %p: %s", raw, dn);
 	result = ldap_entry_getvalues(entry, "idnsAllowTransfer", &values);
 	if (result == ISC_R_SUCCESS) {
-		CHECK(configure_zone_acl(inst->mctx, zone, &dns_zone_setxfracl,
+		CHECK(configure_zone_acl(inst->mctx, raw, &dns_zone_setxfracl,
 					 HEAD(values)->value, acl_type_transfer));
 	} else {
 		log_debug(2, "allow-transfer not set");
-		dns_zone_clearxfracl(zone);
+		dns_zone_clearxfracl(raw);
 	}
 
 	sync_state_get(inst->sctx, &sync_state);
 	if (new_zone == ISC_TRUE && sync_state == sync_finished)
-		CHECK(publish_zone(task, inst, zone));
+		CHECK(publish_zone(task, inst, raw));
 
 	/* synchronize zone origin with LDAP */
 	CHECK(setting_get_str("fake_mname", inst->local_settings,
@@ -2026,11 +2026,11 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	dns_diff_print(&diff, NULL);
 #endif
 	if (ldap_writeback == ISC_TRUE) {
-		dns_zone_log(zone, ISC_LOG_DEBUG(5), "writing new zone serial "
+		dns_zone_log(raw, ISC_LOG_DEBUG(5), "writing new zone serial "
 			     "%u to LDAP", new_serial);
 		result = ldap_replace_serial(inst, &name, new_serial);
 		if (result != ISC_R_SUCCESS)
-			dns_zone_log(zone, ISC_LOG_ERROR,
+			dns_zone_log(raw, ISC_LOG_ERROR,
 				     "serial (%u) write back to LDAP failed",
 				     new_serial);
 	}
@@ -2038,9 +2038,9 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	if (!EMPTY(diff.tuples)) {
 		if (sync_state == sync_finished && new_zone == ISC_FALSE) {
 			/* write the transaction to journal */
-			dns_zone_getraw(zone, &zone_raw);
+			dns_zone_getraw(raw, &zone_raw);
 			if (zone_raw == NULL)
-				journal_filename = dns_zone_getjournal(zone);
+				journal_filename = dns_zone_getjournal(raw);
 			else
 				journal_filename = dns_zone_getjournal(zone_raw);
 			CHECK(dns_journal_open(inst->mctx, journal_filename,
@@ -2060,7 +2060,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 
 	/* Do zone load only if the initial LDAP synchronization is done. */
 	if (sync_state == sync_finished && data_changed == ISC_TRUE)
-		CHECK(load_zone(zone));
+		CHECK(load_zone(raw));
 
 cleanup:
 	dns_diff_clear(&diff);
@@ -2089,8 +2089,8 @@ cleanup:
 		isc_task_endexclusive(task);
 	if (dns_name_dynamic(&name))
 		dns_name_free(&name, inst->mctx);
-	if (zone != NULL)
-		dns_zone_detach(&zone);
+	if (raw != NULL)
+		dns_zone_detach(&raw);
 	ldapdb_rdatalist_destroy(inst->mctx, &rdatalist);
 
 	return result;
