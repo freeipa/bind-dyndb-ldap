@@ -715,10 +715,12 @@ destroy_ldap_connection(ldap_connection_t **ldap_connp)
 
 /* Test if the existing zone is 'empty zone' per RFC 6303. */
 static isc_boolean_t ATTR_NONNULLS ATTR_CHECKRESULT
-zone_isempty(isc_mem_t *mctx, dns_zone_t *zone) {
+zone_isempty(dns_zone_t *zone) {
 	char **argv = NULL;
+	isc_mem_t *mctx = NULL;
 	isc_boolean_t result = ISC_FALSE;
 
+	mctx = dns_zone_getmctx(zone);
 	if (dns_zone_getdbtype(zone, &argv, mctx) != ISC_R_SUCCESS)
 		CLEANUP_WITH(ISC_FALSE);
 
@@ -833,6 +835,42 @@ cleanup:
 	return result;
 }
 
+/**
+ * Unload empty zone from given view.
+ *
+ * @retval ISC_R_EXISTS   if a zone with given name is not an empty zone
+ * @retval ISC_R_SUCCESS  if name was an empty zone
+ *                        and it was unloaded successfully
+ * @retval ISC_R_NOTFOUND if name does not match any zone in given view
+ * @retval other errors
+ */
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+zone_unload_ifempty(dns_view_t *view, dns_name_t *name) {
+	isc_result_t result;
+	dns_zone_t *zone = NULL;
+	char zone_name[DNS_NAME_FORMATSIZE];
+
+	CHECK(dns_view_findzone(view, name, &zone));
+
+	if (zone_isempty(zone) == ISC_TRUE) {
+		dns_name_format(name, zone_name, DNS_NAME_FORMATSIZE);
+		result = delete_bind_zone(view->zonetable, &zone);
+		if (result != ISC_R_SUCCESS)
+			log_error_r("unable to unload automatic empty zone "
+				    "%s", zone_name);
+		else
+			log_info("automatic empty zone %s unloaded",
+				 zone_name);
+	} else {
+		result = ISC_R_EXISTS;
+	}
+
+cleanup:
+	if (zone != NULL)
+		dns_zone_detach(&zone);
+	return result;
+}
+
 /*
  * Create a new zone with origin 'name'. The zone will be added to the
  * ldap_inst->view.
@@ -845,6 +883,7 @@ create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, dns_zone_t **zonep)
 	const char *argv[2];
 	sync_state_t sync_state;
 	isc_task_t *task = NULL;
+	char zone_name[DNS_NAME_FORMATSIZE];
 
 	REQUIRE(ldap_inst != NULL);
 	REQUIRE(name != NULL);
@@ -853,36 +892,9 @@ create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, dns_zone_t **zonep)
 	argv[0] = ldapdb_impname;
 	argv[1] = ldap_inst->db_name;
 
-	result = dns_view_findzone(ldap_inst->view, name, &zone);
-	if (result != ISC_R_NOTFOUND) {
-		char zone_name[DNS_NAME_FORMATSIZE];
-		dns_name_format(name, zone_name, DNS_NAME_FORMATSIZE);
-
-		if (result != ISC_R_SUCCESS) {
-			log_error_r("dns_view_findzone() failed while "
-				    "searching for zone '%s'", zone_name);
-		} else { /* zone already exists */
-			if (zone_isempty(ldap_inst->mctx, zone) == ISC_TRUE) {
-				result = delete_bind_zone(ldap_inst->view->zonetable,
-							  &zone);
-				if (result != ISC_R_SUCCESS)
-					log_error_r("failed to create new zone "
-						    "'%s': unable to unload "
-						    "automatic empty zone",
-						    zone_name);
-				else
-					log_info("automatic empty zone %s "
-						 "unloaded", zone_name);
-
-			} else {
-				result = ISC_R_EXISTS;
-				log_error_r("failed to create new zone '%s'",
-					    zone_name);
-			}
-		}
-		if (result != ISC_R_SUCCESS)
-			goto cleanup;
-	}
+	result = zone_unload_ifempty(ldap_inst->view, name);
+	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
+		goto cleanup;
 
 	CHECK(dns_zone_create(&zone, ldap_inst->mctx));
 	CHECK(dns_zone_setorigin(zone, name));
@@ -901,6 +913,9 @@ create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, dns_zone_t **zonep)
 	return ISC_R_SUCCESS;
 
 cleanup:
+	dns_name_format(name, zone_name, DNS_NAME_FORMATSIZE);
+	log_error_r("failed to create new zone '%s'", zone_name);
+
 	if (zone != NULL) {
 		if (dns_zone_getmgr(zone) != NULL)
 			dns_zonemgr_releasezone(ldap_inst->zmgr, zone);
@@ -1403,7 +1418,7 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 		result = dns_zt_find(inst->view->zonetable, name, 0, NULL,
 				     &zone);
 		if (result == ISC_R_SUCCESS || result == DNS_R_PARTIALMATCH) {
-			if (zone_isempty(inst->mctx, zone)) {
+			if (zone_isempty(zone)) {
 				dns_zone_log(zone, ISC_LOG_INFO, "automatic "
 					     "empty zone will be shut down "
 					     "to enable forwarding");
