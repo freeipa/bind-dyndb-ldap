@@ -1642,16 +1642,25 @@ configure_paths(isc_mem_t *mctx, ldap_instance_t *inst, dns_zone_t *zone,
 		isc_boolean_t issecure) {
 	isc_result_t result;
 	ld_string_t *file_name = NULL;
+	ld_string_t *key_dir = NULL;
 
 	CHECK(zr_get_zone_path(mctx, ldap_instance_getsettings_local(inst),
 			       dns_zone_getorigin(zone),
 			       (issecure ? "signed" : "raw"), &file_name));
 	CHECK(dns_zone_setfile(zone, str_buf(file_name)));
+	if (issecure == ISC_TRUE) {
+		CHECK(zr_get_zone_path(mctx,
+				       ldap_instance_getsettings_local(inst),
+				       dns_zone_getorigin(zone), "keys/",
+				       &key_dir));
+		dns_zone_setkeydirectory(zone, str_buf(key_dir));
+	}
 	CHECK(fs_file_remove(dns_zone_getfile(zone)));
 	CHECK(fs_file_remove(dns_zone_getjournal(zone)));
 
 cleanup:
 	str_destroy(&file_name);
+	str_destroy(&key_dir);
 	return result;
 }
 

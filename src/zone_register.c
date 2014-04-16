@@ -257,9 +257,9 @@ create_zone_info(isc_mem_t *mctx, dns_zone_t *zone, const char *dn,
 				  settings_name, global_settings,
 				  &zinfo->settings));
 
-	/* Prepate a directory for this zone */
+	/* Prepare a directory for this zone */
 	CHECK(zr_get_zone_path(mctx, global_settings, dns_zone_getorigin(zone),
-			       NULL, &zone_dir));
+			       "keys/", &zone_dir));
 	CHECK(fs_dirs_create(str_buf(zone_dir)));
 
 	DE_CONST(db_name, argv[0]);
