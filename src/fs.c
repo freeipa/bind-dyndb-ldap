@@ -92,7 +92,8 @@ fs_dirs_create(const char *path) {
 			CHECK(fs_dir_create(curr_path));
 		*end = '/';
 	}
-
+	/* Handle single-component paths and paths without trailing '/' */
+	CHECK(fs_dir_create(curr_path));
 
 cleanup:
 	return result;
