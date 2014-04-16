@@ -3,11 +3,13 @@
 *.swp
 *~
 tags
+/build
 
 # Autoconf
 Makefile.in
 /aclocal.m4
 /autom4te.cache
+/ar-lib
 /config.guess
 /config.h.in
 /config.sub
@@ -15,4 +17,9 @@ Makefile.in
 /depcomp
 /install-sh
 /ltmain.sh
+/m4
 /missing
+
+# Eclipse
+.project
+.cproject
