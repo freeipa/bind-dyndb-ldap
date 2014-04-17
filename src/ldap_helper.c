@@ -1896,6 +1896,124 @@ cleanup:
 	return result;
 }
 
+/**
+ * Synchronize internal RBTDB with master zone object in LDAP and update serial
+ * as necessary.
+ *
+ * @param[in]  new_zone Is the RBTDB empty? (I.e. even without SOA record.)
+ * @param[in]  version  LDAP DB opened for reading and writing.
+ * @param[out] diff     Initialized diff. It will be filled with differences
+ *                      between RBTDB and LDAP object + SOA serial update.
+ * @param[out] new_serial     SOA serial after update;
+ *                            valid if ldap_writeback = ISC_TRUE.
+ * @param[out] ldap_writeback SOA serial was updated.
+ * @param[out] data_changed   Other data were updated.
+ *
+ */
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+zone_sync_apex(const ldap_instance_t * const inst,
+	       ldap_entry_t * const entry, dns_name_t name,
+	       const sync_state_t sync_state, const isc_boolean_t new_zone,
+	       dns_db_t * const ldapdb, dns_db_t * const rbtdb,
+	       dns_dbversion_t * const version, dns_diff_t * const diff,
+	       isc_uint32_t * const new_serial,
+	       isc_boolean_t * const ldap_writeback,
+	       isc_boolean_t * const data_changed) {
+	isc_result_t result;
+	const char *fake_mname = NULL;
+	ldapdb_rdatalist_t rdatalist;
+	dns_rdatasetiter_t *rbt_rds_iterator = NULL;
+	/* RBTDB's origin node cannot be detached until the node is non-empty.
+	 * This is workaround for ISC-Bug #35080. */
+	dns_dbnode_t *node = NULL;
+	dns_difftuple_t *soa_tuple = NULL;
+	isc_boolean_t soa_tuple_alloc = ISC_FALSE;
+	isc_uint32_t curr_serial;
+
+	INIT_LIST(rdatalist);
+	CHECK(setting_get_str("fake_mname", inst->local_settings,
+			      &fake_mname));
+	CHECK(ldap_parse_rrentry(inst->mctx, entry, &name, fake_mname,
+				 &rdatalist));
+
+	CHECK(dns_db_getoriginnode(rbtdb, &node));
+	result = dns_db_allrdatasets(rbtdb, node, version, 0,
+				     &rbt_rds_iterator);
+	if (result == ISC_R_SUCCESS) {
+		CHECK(diff_ldap_rbtdb(inst->mctx, &name, &rdatalist,
+				      rbt_rds_iterator, diff));
+		dns_rdatasetiter_destroy(&rbt_rds_iterator);
+	} else if (result != ISC_R_NOTFOUND)
+		goto cleanup;
+
+	/* New zone doesn't have serial defined yet. */
+	if (new_zone != ISC_TRUE)
+		CHECK(dns_db_getsoaserial(rbtdb, version, &curr_serial));
+
+	/* Detect if SOA serial is affected by the update or not.
+	 * Always bump serial in case of re-synchronization. */
+	CHECK(diff_analyze_serial(diff, &soa_tuple, data_changed));
+	if (new_zone == ISC_TRUE || *data_changed == ISC_TRUE ||
+	    sync_state != sync_finished) {
+		if (soa_tuple == NULL) {
+			/* The diff doesn't contain new SOA serial
+			 * => generate new serial and write it back to LDAP. */
+			*ldap_writeback = ISC_TRUE;
+			soa_tuple_alloc = ISC_TRUE;
+			CHECK(dns_db_createsoatuple(ldapdb, version, inst->mctx,
+						    DNS_DIFFOP_DEL, &soa_tuple));
+			dns_diff_appendminimal(diff, &soa_tuple);
+			CHECK(dns_db_createsoatuple(ldapdb, version, inst->mctx,
+						    DNS_DIFFOP_ADD, &soa_tuple));
+			CHECK(update_soa_serial(dns_updatemethod_unixtime,
+						soa_tuple, new_serial));
+			dns_diff_appendminimal(diff, &soa_tuple);
+		} else if (new_zone == ISC_TRUE || sync_state != sync_finished ||
+			   isc_serial_le(dns_soa_getserial(&soa_tuple->rdata),
+					 curr_serial)) {
+			/* The diff tries to send SOA serial back!
+			 * => generate new serial and write it back to LDAP.
+			 * Force serial update if we are adding a new zone. */
+			*ldap_writeback = ISC_TRUE;
+			CHECK(update_soa_serial(dns_updatemethod_unixtime,
+						soa_tuple, new_serial));
+		} else {
+			/* The diff contains new serial already
+			 * => do nothing. */
+			*ldap_writeback = ISC_FALSE;
+		}
+
+	} else {/* if (data_changed == ISC_FALSE) */
+		*ldap_writeback = ISC_FALSE;
+		if (soa_tuple == NULL) {
+			/* The diff is empty => do nothing. */
+			INSIST(EMPTY(diff->tuples));
+		} else if (isc_serial_le(dns_soa_getserial(&soa_tuple->rdata),
+					 curr_serial)) {
+			/* Attempt to move serial backwards without any data
+			 * => ignore it. */
+			dns_diff_clear(diff);
+		}/* else:
+		  * The diff contains new serial already
+		  * => do nothing. */
+	}
+
+	/* New zone has to have at least SOA record and NS record. */
+	if (new_zone == ISC_TRUE
+	    && (*data_changed == ISC_FALSE || soa_tuple == NULL))
+		result = DNS_R_BADZONE;
+
+cleanup:
+	if (soa_tuple_alloc == ISC_TRUE && soa_tuple != NULL)
+		dns_difftuple_free(&soa_tuple);
+	if (node != NULL)
+		dns_db_detachnode(rbtdb, &node);
+	if (rbt_rds_iterator != NULL)
+		dns_rdatasetiter_destroy(&rbt_rds_iterator);
+	ldapdb_rdatalist_destroy(inst->mctx, &rdatalist);
+	return result;
+}
+
 /* Parse the master zone entry */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
@@ -1904,41 +2022,27 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	const char *dn;
 	dns_name_t name;
 	dns_zone_t *raw = NULL;
-	dns_zone_t *zone_raw = NULL;
 	isc_result_t result;
 	isc_boolean_t unlock = ISC_FALSE;
 	isc_boolean_t new_zone = ISC_FALSE;
-	isc_boolean_t configured = ISC_FALSE;
-	ldapdb_rdatalist_t rdatalist;
 	settings_set_t *zone_settings = NULL;
-	const char *fake_mname = NULL;
-	isc_boolean_t data_changed;
 	isc_boolean_t ldap_writeback;
-	isc_uint32_t curr_serial;
+	isc_boolean_t data_changed = ISC_FALSE; /* GCC */
 	isc_uint32_t new_serial;
 
 	dns_db_t *rbtdb = NULL;
 	dns_db_t *ldapdb = NULL;
 	dns_diff_t diff;
 	dns_dbversion_t *version = NULL;
-	/* RBTDB's origin node cannot be detached until the node is non-empty.
-	 * This is workaround for possible bug in bind-9.9.3-P2. */
-	dns_dbnode_t *node = NULL;
-	dns_rdatasetiter_t *rbt_rds_iterator = NULL;
-	dns_difftuple_t *soa_tuple = NULL;
-	isc_boolean_t soa_tuple_alloc = ISC_FALSE;
-
 	sync_state_t sync_state;
 	dns_journal_t *journal = NULL;
 	char *journal_filename = NULL;
 
-	dns_diff_init(inst->mctx, &diff);
-
 	REQUIRE(entry != NULL);
 	REQUIRE(inst != NULL);
 
+	dns_diff_init(inst->mctx, &diff);
 	dns_name_init(&name, NULL);
-	INIT_LIST(rdatalist);
 
 	/* Derive the dns name of the zone from the DN. */
 	dn = entry->dn;
@@ -1988,73 +2092,12 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 		CHECK(publish_zone(task, inst, raw));
 
 	/* synchronize zone origin with LDAP */
-	CHECK(setting_get_str("fake_mname", inst->local_settings,
-			      &fake_mname));
-	CHECK(ldap_parse_rrentry(inst->mctx, entry, &name, fake_mname,
-				 &rdatalist));
-
 	CHECK(zr_get_zone_dbs(inst->zone_register, &name, &ldapdb, &rbtdb));
 	CHECK(dns_db_newversion(ldapdb, &version));
-	CHECK(dns_db_getoriginnode(rbtdb, &node));
-	result = dns_db_allrdatasets(rbtdb, node, version, 0,
-				     &rbt_rds_iterator);
-	if (result == ISC_R_SUCCESS) {
-		CHECK(diff_ldap_rbtdb(inst->mctx, &name, &rdatalist,
-				      rbt_rds_iterator, &diff));
-		dns_rdatasetiter_destroy(&rbt_rds_iterator);
-	} else if (result != ISC_R_NOTFOUND)
-		goto cleanup;
-
-	/* New zone doesn't have serial defined yet. */
-	if (new_zone == ISC_FALSE)
-		CHECK(dns_db_getsoaserial(rbtdb, version, &curr_serial));
-
-	/* Detect if SOA serial is affected by the update or not.
-	 * Always bump serial in case of re-synchronization. */
-	CHECK(diff_analyze_serial(&diff, &soa_tuple, &data_changed));
-	if (data_changed == ISC_TRUE || sync_state != sync_finished) {
-		if (soa_tuple == NULL) {
-			/* The diff doesn't contain new SOA serial
-			 * => generate new serial and write it back to LDAP. */
-			ldap_writeback = ISC_TRUE;
-			soa_tuple_alloc = ISC_TRUE;
-			CHECK(dns_db_createsoatuple(ldapdb, version, inst->mctx,
-						    DNS_DIFFOP_DEL, &soa_tuple));
-			dns_diff_appendminimal(&diff, &soa_tuple);
-			CHECK(dns_db_createsoatuple(ldapdb, version, inst->mctx,
-						    DNS_DIFFOP_ADD, &soa_tuple));
-			CHECK(update_soa_serial(dns_updatemethod_unixtime,
-						soa_tuple, &new_serial));
-			dns_diff_appendminimal(&diff, &soa_tuple);
-		} else if (new_zone == ISC_TRUE || sync_state != sync_finished ||
-			   isc_serial_le(dns_soa_getserial(&soa_tuple->rdata),
-					 curr_serial)) {
-			/* The diff tries to send SOA serial back!
-			 * => generate new serial and write it back to LDAP.
-			 * Force serial update if we are adding a new zone. */
-			ldap_writeback = ISC_TRUE;
-			CHECK(update_soa_serial(dns_updatemethod_unixtime,
-						soa_tuple, &new_serial));
-		} else {
-			/* The diff contains new serial already
-			 * => do nothing. */
-			ldap_writeback = ISC_FALSE;
-		}
-
-	} else {/* if (data_changed == ISC_FALSE) */
-		ldap_writeback = ISC_FALSE;
-		if (soa_tuple == NULL) {
-			/* The diff is empty => do nothing. */
-			INSIST(EMPTY(diff.tuples));
-		} else if (isc_serial_le(dns_soa_getserial(&soa_tuple->rdata),
-					 curr_serial)) {
-			/* Attempt to move serial backwards without any data
-			 * => ignore it. */
-			dns_diff_clear(&diff);
-		}/* else:
-		  * The diff contains new serial already
-		  * => do nothing. */
-	}
+	CHECK(zone_sync_apex(inst, entry, name, sync_state, new_zone,
+			     ldapdb, rbtdb, version,
+			     &diff, &new_serial, &ldap_writeback,
+			     &data_changed));
 
 #if RBTDB_DEBUG >= 2
 	dns_diff_print(&diff, stdout);
@@ -2074,11 +2117,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	if (!EMPTY(diff.tuples)) {
 		if (sync_state == sync_finished && new_zone == ISC_FALSE) {
 			/* write the transaction to journal */
-			dns_zone_getraw(raw, &zone_raw);
-			if (zone_raw == NULL)
-				journal_filename = dns_zone_getjournal(raw);
-			else
-				journal_filename = dns_zone_getjournal(zone_raw);
+			journal_filename = dns_zone_getjournal(raw);
 			CHECK(dns_journal_open(inst->mctx, journal_filename,
 					       DNS_JOURNAL_CREATE, &journal));
 			CHECK(dns_journal_write_transaction(journal, &diff));
@@ -2089,23 +2128,12 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 		dns_db_closeversion(ldapdb, &version, ISC_TRUE);
 	}
 
-	/* Make sure that zone has at least SOA record. */
-	if (new_zone == ISC_FALSE
-	    || (data_changed == ISC_TRUE && soa_tuple != NULL))
-		configured = ISC_TRUE;
-
 	/* Do zone load only if the initial LDAP synchronization is done. */
 	if (sync_state == sync_finished && data_changed == ISC_TRUE)
 		CHECK(load_zone(raw));
 
 cleanup:
 	dns_diff_clear(&diff);
-	if (soa_tuple_alloc == ISC_TRUE && soa_tuple != NULL)
-		dns_difftuple_free(&soa_tuple);
-	if (rbt_rds_iterator != NULL)
-		dns_rdatasetiter_destroy(&rbt_rds_iterator);
-	if (node != NULL)
-		dns_db_detachnode(rbtdb, &node);
 	if (rbtdb != NULL && version != NULL)
 		dns_db_closeversion(ldapdb, &version, ISC_FALSE); /* rollback */
 	if (rbtdb != NULL)
@@ -2114,7 +2142,8 @@ cleanup:
 		dns_journal_destroy(&journal);
 	if (ldapdb != NULL)
 		dns_db_detach(&ldapdb);
-	if (new_zone && !configured) { /* Failure in ACL parsing or so. */
+	if (new_zone && result != ISC_R_SUCCESS) {
+		/* Failure in ACL parsing or so. */
 		log_error_r("zone '%s': publishing failed, rolling back due to",
 			    entry->dn);
 		result = ldap_delete_zone2(inst, &name, ISC_TRUE, ISC_FALSE);
@@ -2127,7 +2156,6 @@ cleanup:
 		dns_name_free(&name, inst->mctx);
 	if (raw != NULL)
 		dns_zone_detach(&raw);
-	ldapdb_rdatalist_destroy(inst->mctx, &rdatalist);
 
 	return result;
 }
