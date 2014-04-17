@@ -1813,13 +1813,95 @@ cleanup:
 #undef MAX_SERIAL_LENGTH
 }
 
+/**
+ * Reconfigure master zone according to configuration in LDAP object.
+ *
+ * @param[in]  raw Raw zone backed by LDAP database. In-line secure zone
+ *                 will be reconfigured as necessary.
+ */
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
+			dns_zone_t *raw, isc_task_t *task) {
+	isc_result_t result;
+	const char *dn = NULL;
+	ldap_valuelist_t values;
+	isc_mem_t *mctx = NULL;
+	isc_boolean_t ssu_changed;
+
+	REQUIRE(entry != NULL);
+	REQUIRE(zone_settings != NULL);
+	REQUIRE(raw != NULL);
+	REQUIRE(task != NULL);
+
+	dn = entry->dn;
+	mctx = dns_zone_getmctx(raw);
+
+	result = setting_update_from_ldap_entry("dyn_update", zone_settings,
+						"idnsAllowDynUpdate", entry, task);
+	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
+		goto cleanup;
+	ssu_changed = (result == ISC_R_SUCCESS);
+
+	result = setting_update_from_ldap_entry("sync_ptr", zone_settings,
+				       "idnsAllowSyncPTR", entry, task);
+	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
+		goto cleanup;
+
+	result = setting_update_from_ldap_entry("update_policy", zone_settings,
+						"idnsUpdatePolicy", entry, task);
+	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
+		goto cleanup;
+
+	if (result == ISC_R_SUCCESS || ssu_changed) {
+		isc_boolean_t ssu_enabled;
+		const char *ssu_policy = NULL;
+
+		log_debug(2, "Setting SSU table for %p: %s", raw, dn);
+		CHECK(setting_get_bool("dyn_update", zone_settings, &ssu_enabled));
+		if (ssu_enabled) {
+			/* Get the update policy and update the zone with it. */
+			CHECK(setting_get_str("update_policy", zone_settings,
+					      &ssu_policy));
+			CHECK(configure_zone_ssutable(raw, ssu_policy));
+		} else {
+			/* Empty policy will prevent the update from reaching
+			 * LDAP driver and error will be logged. */
+			CHECK(configure_zone_ssutable(raw, ""));
+		}
+	}
+
+	/* Fetch allow-query and allow-transfer ACLs */
+	log_debug(2, "Setting allow-query for %p: %s", raw, dn);
+	result = ldap_entry_getvalues(entry, "idnsAllowQuery", &values);
+	if (result == ISC_R_SUCCESS) {
+		CHECK(configure_zone_acl(mctx, raw, &dns_zone_setqueryacl,
+					 HEAD(values)->value, acl_type_query));
+	} else {
+		log_debug(2, "allow-query not set");
+		dns_zone_clearqueryacl(raw);
+	}
+
+	log_debug(2, "Setting allow-transfer for %p: %s", raw, dn);
+	result = ldap_entry_getvalues(entry, "idnsAllowTransfer", &values);
+	if (result == ISC_R_SUCCESS) {
+		CHECK(configure_zone_acl(mctx, raw, &dns_zone_setxfracl,
+					 HEAD(values)->value, acl_type_transfer));
+	} else {
+		log_debug(2, "allow-transfer not set");
+		dns_zone_clearxfracl(raw);
+		result = ISC_R_SUCCESS;
+	}
+
+cleanup:
+	return result;
+}
+
 /* Parse the master zone entry */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 			    isc_task_t *task)
 {
 	const char *dn;
-	ldap_valuelist_t values;
 	dns_name_t name;
 	dns_zone_t *raw = NULL;
 	dns_zone_t *zone_raw = NULL;
@@ -1827,7 +1909,6 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	isc_boolean_t unlock = ISC_FALSE;
 	isc_boolean_t new_zone = ISC_FALSE;
 	isc_boolean_t configured = ISC_FALSE;
-	isc_boolean_t ssu_changed;
 	ldapdb_rdatalist_t rdatalist;
 	settings_set_t *zone_settings = NULL;
 	const char *fake_mname = NULL;
@@ -1900,61 +1981,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 		goto cleanup;
 
 	CHECK(zr_get_zone_settings(inst->zone_register, &name, &zone_settings));
-
-	result = setting_update_from_ldap_entry("dyn_update", zone_settings,
-				       "idnsAllowDynUpdate", entry, inst->task);
-	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
-		goto cleanup;
-	ssu_changed = (result == ISC_R_SUCCESS);
-
-	result = setting_update_from_ldap_entry("sync_ptr", zone_settings,
-				       "idnsAllowSyncPTR", entry, inst->task);
-	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
-		goto cleanup;
-
-	result = setting_update_from_ldap_entry("update_policy", zone_settings,
-				       "idnsUpdatePolicy", entry, inst->task);
-	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
-		goto cleanup;
-
-	if (result == ISC_R_SUCCESS || ssu_changed) {
-		isc_boolean_t ssu_enabled;
-		const char *ssu_policy = NULL;
-
-		log_debug(2, "Setting SSU table for %p: %s", raw, dn);
-		CHECK(setting_get_bool("dyn_update", zone_settings, &ssu_enabled));
-		if (ssu_enabled) {
-			/* Get the update policy and update the zone with it. */
-			CHECK(setting_get_str("update_policy", zone_settings,
-					      &ssu_policy));
-			CHECK(configure_zone_ssutable(raw, ssu_policy));
-		} else {
-			/* Empty policy will prevent the update from reaching
-			 * LDAP driver and error will be logged. */
-			CHECK(configure_zone_ssutable(raw, ""));
-		}
-	}
-
-	/* Fetch allow-query and allow-transfer ACLs */
-	log_debug(2, "Setting allow-query for %p: %s", raw, dn);
-	result = ldap_entry_getvalues(entry, "idnsAllowQuery", &values);
-	if (result == ISC_R_SUCCESS) {
-		CHECK(configure_zone_acl(inst->mctx, raw, &dns_zone_setqueryacl,
-					 HEAD(values)->value, acl_type_query));
-	} else {
-		log_debug(2, "allow-query not set");
-		dns_zone_clearqueryacl(raw);
-	}
-
-	log_debug(2, "Setting allow-transfer for %p: %s", raw, dn);
-	result = ldap_entry_getvalues(entry, "idnsAllowTransfer", &values);
-	if (result == ISC_R_SUCCESS) {
-		CHECK(configure_zone_acl(inst->mctx, raw, &dns_zone_setxfracl,
-					 HEAD(values)->value, acl_type_transfer));
-	} else {
-		log_debug(2, "allow-transfer not set");
-		dns_zone_clearxfracl(raw);
-	}
+	CHECK(zone_master_reconfigure(entry, zone_settings, raw, task));
 
 	sync_state_get(inst->sctx, &sync_state);
 	if (new_zone == ISC_TRUE && sync_state == sync_finished)
