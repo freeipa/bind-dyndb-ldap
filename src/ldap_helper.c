@@ -874,45 +874,116 @@ cleanup:
 	return result;
 }
 
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+configure_paths(isc_mem_t *mctx, ldap_instance_t *inst, dns_zone_t *zone,
+		isc_boolean_t issecure) {
+	isc_result_t result;
+	ld_string_t *file_name = NULL;
+	ld_string_t *key_dir = NULL;
+
+	CHECK(zr_get_zone_path(mctx, ldap_instance_getsettings_local(inst),
+			       dns_zone_getorigin(zone),
+			       (issecure ? "signed" : "raw"), &file_name));
+	CHECK(dns_zone_setfile(zone, str_buf(file_name)));
+	if (issecure == ISC_TRUE) {
+		CHECK(zr_get_zone_path(mctx,
+				       ldap_instance_getsettings_local(inst),
+				       dns_zone_getorigin(zone), "keys/",
+				       &key_dir));
+		dns_zone_setkeydirectory(zone, str_buf(key_dir));
+	}
+	CHECK(fs_file_remove(dns_zone_getfile(zone)));
+	CHECK(fs_file_remove(dns_zone_getjournal(zone)));
+
+cleanup:
+	str_destroy(&file_name);
+	str_destroy(&key_dir);
+	return result;
+}
+
 /*
  * Create a new zone with origin 'name'. The zone will be added to the
  * ldap_inst->view.
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-create_zone(ldap_instance_t *ldap_inst, dns_name_t *name, dns_zone_t **rawp)
+create_zone(ldap_instance_t * const inst, const char * const dn,
+	    dns_name_t * const name, const isc_boolean_t want_secure,
+	    dns_zone_t ** const rawp, dns_zone_t ** const securep)
 {
 	isc_result_t result;
 	dns_zone_t *raw = NULL;
-	const char *argv[2];
+	dns_zone_t *secure = NULL;
+	const char *ldap_argv[2];
+	const char *rbt_argv[1] = { "rbt" };
 	sync_state_t sync_state;
 	isc_task_t *task = NULL;
 	char zone_name[DNS_NAME_FORMATSIZE];
 
-	REQUIRE(ldap_inst != NULL);
+	REQUIRE(inst != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(rawp != NULL && *rawp == NULL);
 
-	argv[0] = ldapdb_impname;
-	argv[1] = ldap_inst->db_name;
+	ldap_argv[0] = ldapdb_impname;
+	ldap_argv[1] = inst->db_name;
 
-	result = zone_unload_ifempty(ldap_inst->view, name);
+	result = zone_unload_ifempty(inst->view, name);
 	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
 		goto cleanup;
 
-	CHECK(dns_zone_create(&raw, ldap_inst->mctx));
+	CHECK(dns_zone_create(&raw, inst->mctx));
 	CHECK(dns_zone_setorigin(raw, name));
 	dns_zone_setclass(raw, dns_rdataclass_in);
 	dns_zone_settype(raw, dns_zone_master);
-	CHECK(dns_zone_setdbtype(raw, 2, argv));
-	CHECK(dns_zonemgr_managezone(ldap_inst->zmgr, raw));
-	sync_state_get(ldap_inst->sctx, &sync_state);
-	if (sync_state == sync_init) {
-		dns_zone_gettask(raw, &task);
-		CHECK(sync_task_add(ldap_inst->sctx, task));
-		isc_task_detach(&task);
+	/* dns_zone_setview(raw, view); */
+	CHECK(dns_zone_setdbtype(raw, 2, ldap_argv));
+	CHECK(configure_paths(inst->mctx, inst, raw, ISC_FALSE));
+
+	if (want_secure == ISC_FALSE) {
+		CHECK(dns_zonemgr_managezone(inst->zmgr, raw));
+	} else {
+		CHECK(dns_zone_create(&secure, inst->mctx));
+		CHECK(dns_zone_setorigin(secure, name));
+		dns_zone_setclass(secure, dns_rdataclass_in);
+		dns_zone_settype(secure, dns_zone_master);
+		/* dns_zone_setview(secure, view); */
+		CHECK(dns_zone_setdbtype(secure, 1, rbt_argv));
+		CHECK(dns_zonemgr_managezone(inst->zmgr, secure));
+		CHECK(dns_zone_link(secure, raw));
+
+		/* Magic constants are taken from zoneconf.c */
+		dns_zone_setsigvalidityinterval(secure, 2592000); /* sig-validity-interval */
+		dns_zone_setsigresigninginterval(secure, 648000); /* re-sign */
+		dns_zone_setsignatures(secure, 10); /* sig-signing-signatures */
+		dns_zone_setnodes(secure, 10); /* sig-signing-nodes */
+		dns_zone_setprivatetype(secure, 65534); /* sig-signing-type */
+		dns_zone_setoption(secure, DNS_ZONEOPT_UPDATECHECKKSK,
+				   ISC_TRUE); /* update-check-ksk */
+		dns_zone_setrefreshkeyinterval(secure, 60); /* dnssec-loadkeys-interval */
+		/* auto-dnssec = maintain */
+		dns_zone_setkeyopt(secure, DNS_ZONEKEY_ALLOW, ISC_TRUE);
+		dns_zone_setkeyopt(secure, DNS_ZONEKEY_MAINTAIN, ISC_TRUE);
+
+		dns_zone_rekey(secure, ISC_TRUE);
+		CHECK(configure_paths(inst->mctx, inst, secure, ISC_TRUE));
 	}
 
+	sync_state_get(inst->sctx, &sync_state);
+	if (sync_state == sync_init) {
+		dns_zone_gettask(raw, &task);
+		CHECK(sync_task_add(inst->sctx, task));
+		isc_task_detach(&task);
+
+		if (secure != NULL) {
+			dns_zone_gettask(secure, &task);
+			CHECK(sync_task_add(inst->sctx, task));
+			isc_task_detach(&task);
+		}
+	}
+
+	CHECK(zr_add_zone(inst->zone_register, raw, secure, dn));
+
 	*rawp = raw;
+	*securep = secure;
 	return ISC_R_SUCCESS;
 
 cleanup:
@@ -921,7 +992,7 @@ cleanup:
 
 	if (raw != NULL) {
 		if (dns_zone_getmgr(raw) != NULL)
-			dns_zonemgr_releasezone(ldap_inst->zmgr, raw);
+			dns_zonemgr_releasezone(inst->zmgr, raw);
 		dns_zone_detach(&raw);
 	}
 	if (task != NULL)
@@ -1653,33 +1724,6 @@ cleanup:
 	return result;
 }
 
-static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-configure_paths(isc_mem_t *mctx, ldap_instance_t *inst, dns_zone_t *zone,
-		isc_boolean_t issecure) {
-	isc_result_t result;
-	ld_string_t *file_name = NULL;
-	ld_string_t *key_dir = NULL;
-
-	CHECK(zr_get_zone_path(mctx, ldap_instance_getsettings_local(inst),
-			       dns_zone_getorigin(zone),
-			       (issecure ? "signed" : "raw"), &file_name));
-	CHECK(dns_zone_setfile(zone, str_buf(file_name)));
-	if (issecure == ISC_TRUE) {
-		CHECK(zr_get_zone_path(mctx,
-				       ldap_instance_getsettings_local(inst),
-				       dns_zone_getorigin(zone), "keys/",
-				       &key_dir));
-		dns_zone_setkeydirectory(zone, str_buf(key_dir));
-	}
-	CHECK(fs_file_remove(dns_zone_getfile(zone)));
-	CHECK(fs_file_remove(dns_zone_getjournal(zone)));
-
-cleanup:
-	str_destroy(&file_name);
-	str_destroy(&key_dir);
-	return result;
-}
-
 /**
  * Process strictly minimal diff and detect if data were changed
  * and return latest SOA RR.
@@ -2036,12 +2080,14 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 			    isc_task_t *task)
 {
 	const char *dn;
+	ldap_valuelist_t values;
 	dns_name_t name;
 	dns_zone_t *raw = NULL;
 	dns_zone_t *secure = NULL;
 	isc_result_t result;
 	isc_boolean_t unlock = ISC_FALSE;
 	isc_boolean_t new_zone = ISC_FALSE;
+	isc_boolean_t want_secure = ISC_FALSE;
 	settings_set_t *zone_settings = NULL;
 	isc_boolean_t ldap_writeback;
 	isc_boolean_t data_changed = ISC_FALSE; /* GCC */
@@ -2090,16 +2136,29 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	/* No forwarders are used. Zone was removed from fwdtable.
 	 * Load the zone. */
 
+	result = ldap_entry_getvalues(entry, "idnsSecInlineSigning", &values);
+	if (result == ISC_R_NOTFOUND || HEAD(values) == NULL)
+		want_secure = ISC_FALSE;
+	else
+		want_secure = ISC_TF(strcasecmp(HEAD(values)->value, "TRUE")
+				     == 0);
+
 	/* Check if we are already serving given zone */
 	result = zr_get_zone_ptr(inst->zone_register, &name, &raw, &secure);
 	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
-		CHECK(create_zone(inst, &name, &raw));
-		CHECK(configure_paths(inst->mctx, inst, raw, ISC_FALSE));
-		CHECK(zr_add_zone(inst->zone_register, raw, secure, dn));
+		CHECK(create_zone(inst, dn, &name, want_secure, &raw, &secure));
 		new_zone = ISC_TRUE;
-		log_debug(2, "created zone %p: %s", raw, dn);
+		log_debug(2, "created zone %s: raw %p; secure %p", dn, raw,
+			  secure);
 	} else if (result != ISC_R_SUCCESS)
 		goto cleanup;
+	else {
+		if (want_secure != ISC_TF(secure != NULL)) {
+			log_error("zone '%s': inline-signing setting cannot "
+				  "be changed at run-time yet", dn);
+			CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
+		}
+	}
 
 	CHECK(zr_get_zone_settings(inst->zone_register, &name, &zone_settings));
 	CHECK(zone_master_reconfigure(entry, zone_settings, raw, task));
