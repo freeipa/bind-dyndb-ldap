@@ -57,7 +57,8 @@ struct zone_register {
 };
 
 typedef struct {
-	dns_zone_t	*zone;
+	dns_zone_t	*raw;
+	dns_zone_t	*secure;
 	char		*dn;
 	settings_set_t	*settings;
 	dns_db_t	*ldapdb;
@@ -226,12 +227,13 @@ cleanup:
 	return result;
 }
 
-/*
+/**
  * Create a new zone info structure.
  */
 #define PRINT_BUFF_SIZE 255
-static isc_result_t ATTR_NONNULLS
-create_zone_info(isc_mem_t *mctx, dns_zone_t *zone, const char *dn,
+static isc_result_t ATTR_NONNULL(1,2,4,5,6,7)
+create_zone_info(isc_mem_t * const mctx, dns_zone_t * const raw,
+		dns_zone_t * const secure, const char * const dn,
 		 settings_set_t *global_settings, const char *db_name,
 		 zone_info_t **zinfop)
 {
@@ -241,14 +243,17 @@ create_zone_info(isc_mem_t *mctx, dns_zone_t *zone, const char *dn,
 	ld_string_t *zone_dir = NULL;
 	char *argv[1];
 
-	REQUIRE(zone != NULL);
+	REQUIRE(raw != NULL);
 	REQUIRE(dn != NULL);
 	REQUIRE(zinfop != NULL && *zinfop == NULL);
 
 	CHECKED_MEM_GET_PTR(mctx, zinfo);
 	ZERO_PTR(zinfo);
 	CHECKED_MEM_STRDUP(mctx, dn, zinfo->dn);
-	dns_zone_attach(zone, &zinfo->zone);
+	dns_zone_attach(raw, &zinfo->raw);
+	if (secure != NULL)
+		dns_zone_attach(secure, &zinfo->secure);
+
 	zinfo->settings = NULL;
 	isc_string_printf_truncate(settings_name, PRINT_BUFF_SIZE,
 				   SETTING_SET_NAME_ZONE " %s",
@@ -257,13 +262,13 @@ create_zone_info(isc_mem_t *mctx, dns_zone_t *zone, const char *dn,
 				  settings_name, global_settings,
 				  &zinfo->settings));
 
-	/* Prepare a directory for this zone */
-	CHECK(zr_get_zone_path(mctx, global_settings, dns_zone_getorigin(zone),
+	/* Prepare a directory for this maybesecure */
+	CHECK(zr_get_zone_path(mctx, global_settings, dns_zone_getorigin(raw),
 			       "keys/", &zone_dir));
 	CHECK(fs_dirs_create(str_buf(zone_dir)));
 
 	DE_CONST(db_name, argv[0]);
-	CHECK(ldapdb_create(mctx, dns_zone_getorigin(zone), LDAP_DB_TYPE,
+	CHECK(ldapdb_create(mctx, dns_zone_getorigin(raw), LDAP_DB_TYPE,
 			    LDAP_DB_RDATACLASS, sizeof(argv)/sizeof(argv[0]),
 			    argv, NULL, &zinfo->ldapdb));
 
@@ -293,8 +298,10 @@ delete_zone_info(void *arg1, void *arg2)
 	settings_set_free(&zinfo->settings);
 	if (zinfo->dn != NULL)
 		isc_mem_free(mctx, zinfo->dn);
-	if (zinfo->zone != NULL)
-		dns_zone_detach(&zinfo->zone);
+	if (zinfo->raw != NULL)
+		dns_zone_detach(&zinfo->raw);
+	if (zinfo->secure != NULL)
+		dns_zone_detach(&zinfo->secure);
 	if (zinfo->ldapdb != NULL)
 		dns_db_detach(&zinfo->ldapdb);
 	SAFE_MEM_PUT_PTR(mctx, zinfo);
@@ -305,7 +312,8 @@ delete_zone_info(void *arg1, void *arg2)
  * must be absolute and the zone cannot already be in the zone register.
  */
 isc_result_t
-zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn)
+zr_add_zone(zone_register_t * const zr, dns_zone_t * const raw,
+	    dns_zone_t * const secure, const char * const dn)
 {
 	isc_result_t result;
 	dns_name_t *name;
@@ -313,10 +321,10 @@ zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn)
 	void *dummy = NULL;
 
 	REQUIRE(zr != NULL);
-	REQUIRE(zone != NULL);
+	REQUIRE(raw != NULL);
 	REQUIRE(dn != NULL);
 
-	name = dns_zone_getorigin(zone);
+	name = dns_zone_getorigin(raw);
 	if (!dns_name_isabsolute(name)) {
 		log_bug("zone with bad origin");
 		return ISC_R_FAILURE;
@@ -336,7 +344,7 @@ zr_add_zone(zone_register_t *zr, dns_zone_t *zone, const char *dn)
 		goto cleanup;
 	}
 
-	CHECK(create_zone_info(zr->mctx, zone, dn, zr->global_settings,
+	CHECK(create_zone_info(zr->mctx, raw, secure, dn, zr->global_settings,
 			       ldap_instance_getdbname(zr->ldap_inst),
 			       &new_zinfo));
 	CHECK(dns_rbt_addname(zr->rbt, name, new_zinfo));
@@ -462,21 +470,29 @@ zr_get_zone_dn(zone_register_t *zr, dns_name_t *name, const char **dn,
 	return result;
 }
 
-/*
- * Find a zone with origin 'name' within in the zone register 'zr'. If an
- * exact match is found, the pointer to the zone is returned through 'zonep'.
- * Note that the function will attach the zone pointer and therefore the
- * caller has to detach it after use.
+/**
+ * Get zone pointers from zone register.
+ *
+ * @param[in]  name    Zone origin
+ * @param[out] rawp    Raw zone
+ * @param[out] securep Secure zone
+ *
+ * @pre At least one of rawp/securep has to be non-NULL.
+ *
+ * @remark Caller has to detach zone pointer after use.
  */
 isc_result_t
-zr_get_zone_ptr(zone_register_t *zr, dns_name_t *name, dns_zone_t **zonep)
+zr_get_zone_ptr(zone_register_t * const zr, dns_name_t * const name,
+		dns_zone_t ** const rawp, dns_zone_t ** const securep)
 {
 	isc_result_t result;
-	void *zinfo = NULL;
+	zone_info_t *zinfo = NULL;
 
 	REQUIRE(zr != NULL);
 	REQUIRE(name != NULL);
-	REQUIRE(zonep != NULL && *zonep == NULL);
+	REQUIRE(rawp != NULL || securep != NULL);
+	REQUIRE(rawp == NULL || *rawp == NULL);
+	REQUIRE(securep == NULL || *securep == NULL);
 
 	if (!dns_name_isabsolute(name)) {
 		log_bug("trying to find zone with a relative name");
@@ -485,9 +501,13 @@ zr_get_zone_ptr(zone_register_t *zr, dns_name_t *name, dns_zone_t **zonep)
 
 	RWLOCK(&zr->rwlock, isc_rwlocktype_read);
 
-	result = dns_rbt_findname(zr->rbt, name, 0, NULL, &zinfo);
-	if (result == ISC_R_SUCCESS)
-		dns_zone_attach(((zone_info_t *)zinfo)->zone, zonep);
+	result = dns_rbt_findname(zr->rbt, name, 0, NULL, (void *)&zinfo);
+	if (result == ISC_R_SUCCESS) {
+		if (rawp != NULL)
+			dns_zone_attach(zinfo->raw, rawp);
+		if (zinfo->secure != NULL && securep != NULL)
+			dns_zone_attach(zinfo->secure, securep);
+	}
 
 	RWUNLOCK(&zr->rwlock, isc_rwlocktype_read);
 

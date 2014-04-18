@@ -815,15 +815,18 @@ static isc_result_t ATTR_CHECKRESULT
 cleanup_files(ldap_instance_t *inst) {
 	isc_result_t result;
 	rbt_iterator_t *iter = NULL;
-	dns_zone_t *zone = NULL;
+	dns_zone_t *raw = NULL;
+	dns_zone_t *secure = NULL;
 	DECLARE_BUFFERED_NAME(name);
 
 	INIT_BUFFERED_NAME(name);
 	CHECK(zr_rbt_iter_init(inst->zone_register, &iter, &name));
 	do {
-		CHECK(zr_get_zone_ptr(inst->zone_register, &name, &zone));
-		cleanup_zone_files(zone);
-		dns_zone_detach(&zone);
+		CHECK(zr_get_zone_ptr(inst->zone_register, &name, &raw, &secure));
+		cleanup_zone_files(raw);
+		cleanup_zone_files(secure);
+		dns_zone_detach(&raw);
+		dns_zone_detach(&secure);
 
 		INIT_BUFFERED_NAME(name);
 		CHECK(rbt_iter_next(&iter, &name));
@@ -1022,7 +1025,9 @@ activate_zones(isc_task_t *task, ldap_instance_t *inst) {
 	isc_result_t result;
 	isc_boolean_t loaded;
 	rbt_iterator_t *iter = NULL;
-	dns_zone_t *zone = NULL;
+	dns_zone_t *raw = NULL;
+	dns_zone_t *secure = NULL;
+	dns_zone_t *toview = NULL;
 	DECLARE_BUFFERED_NAME(name);
 	unsigned int published_cnt = 0;
 	unsigned int total_cnt = 0;
@@ -1031,27 +1036,32 @@ activate_zones(isc_task_t *task, ldap_instance_t *inst) {
 	CHECK(zr_rbt_iter_init(inst->zone_register, &iter, &name));
 	do {
 		++total_cnt;
-		CHECK(zr_get_zone_ptr(inst->zone_register, &name, &zone));
+		CHECK(zr_get_zone_ptr(inst->zone_register, &name, &raw, &secure));
+		/* Load only "secure" zone if inline-signing is active.
+		 * It will not work if raw zone is loaded explicitly. */
+		toview = (secure != NULL) ? secure : raw;
+		result = load_zone(toview);
+		loaded = (result == ISC_R_SUCCESS);
+		if (loaded == ISC_FALSE)
+			dns_zone_log(raw, ISC_LOG_ERROR,
+				     "unable to load zone: %s",
+				     dns_result_totext(result));
+
 		/*
 		 * Don't bother if load fails, server will return
 		 * SERVFAIL for queries beneath this zone. This is
 		 * admin's problem.
 		 */
-		result = load_zone(zone);
-		loaded = (result == ISC_R_SUCCESS);
-		if (loaded == ISC_FALSE)
-			dns_zone_log(zone, ISC_LOG_ERROR,
-				     "unable to load zone: %s",
-				     dns_result_totext(result));
-
-		result = publish_zone(task, inst, zone);
+		result = publish_zone(task, inst, toview);
 		if (result != ISC_R_SUCCESS)
-			dns_zone_log(zone, ISC_LOG_ERROR,
+			dns_zone_log(toview, ISC_LOG_ERROR,
 				     "cannot add zone to view: %s",
 				     dns_result_totext(result));
 		else if (loaded == ISC_TRUE)
 			++published_cnt;
-		dns_zone_detach(&zone);
+		dns_zone_detach(&raw);
+		if (secure != NULL)
+			dns_zone_detach(&secure);
 
 		INIT_BUFFERED_NAME(name);
 		CHECK(rbt_iter_next(&iter, &name));
@@ -1170,7 +1180,8 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 	isc_result_t isforward = ISC_R_NOTFOUND;
 	isc_boolean_t unlock = ISC_FALSE;
 	isc_boolean_t freeze = ISC_FALSE;
-	dns_zone_t *zone = NULL;
+	dns_zone_t *raw = NULL;
+	dns_zone_t *secure = NULL;
 	dns_zone_t *foundzone = NULL;
 	char zone_name_char[DNS_NAME_FORMATSIZE];
 
@@ -1192,7 +1203,7 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 			CHECK(fwdr_del_zone(inst->fwd_register, name));
 	}
 
-	result = zr_get_zone_ptr(inst->zone_register, name, &zone);
+	result = zr_get_zone_ptr(inst->zone_register, name, &raw, &secure);
 	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
 		if (isforward == ISC_R_SUCCESS)
 			log_info("forward zone '%s': shutting down", zone_name_char);
@@ -1205,7 +1216,10 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 	result = dns_view_findzone(inst->view, name, &foundzone);
 	if (result == ISC_R_SUCCESS) {
 		/* foundzone != zone indicates a bug */
-		RUNTIME_CHECK(foundzone == zone);
+		if (secure != NULL)
+			RUNTIME_CHECK(foundzone == secure);
+		else
+			RUNTIME_CHECK(foundzone == raw);
 		dns_zone_detach(&foundzone);
 
 		if (lock) {
@@ -1214,7 +1228,9 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 		}
 	} /* else: zone wasn't in a view */
 
-	CHECK(delete_bind_zone(inst->view->zonetable, &zone));
+	if (secure != NULL)
+		CHECK(delete_bind_zone(inst->view->zonetable, &secure));
+	CHECK(delete_bind_zone(inst->view->zonetable, &raw));
 	CHECK(zr_del_zone(inst->zone_register, name));
 
 cleanup:
@@ -2022,6 +2038,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	const char *dn;
 	dns_name_t name;
 	dns_zone_t *raw = NULL;
+	dns_zone_t *secure = NULL;
 	isc_result_t result;
 	isc_boolean_t unlock = ISC_FALSE;
 	isc_boolean_t new_zone = ISC_FALSE;
@@ -2074,11 +2091,11 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	 * Load the zone. */
 
 	/* Check if we are already serving given zone */
-	result = zr_get_zone_ptr(inst->zone_register, &name, &raw);
+	result = zr_get_zone_ptr(inst->zone_register, &name, &raw, &secure);
 	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
 		CHECK(create_zone(inst, &name, &raw));
 		CHECK(configure_paths(inst->mctx, inst, raw, ISC_FALSE));
-		CHECK(zr_add_zone(inst->zone_register, raw, dn));
+		CHECK(zr_add_zone(inst->zone_register, raw, secure, dn));
 		new_zone = ISC_TRUE;
 		log_debug(2, "created zone %p: %s", raw, dn);
 	} else if (result != ISC_R_SUCCESS)
@@ -2156,6 +2173,8 @@ cleanup:
 		dns_name_free(&name, inst->mctx);
 	if (raw != NULL)
 		dns_zone_detach(&raw);
+	if (secure != NULL)
+		dns_zone_detach(&secure);
 
 	return result;
 }
@@ -4105,7 +4124,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 
 	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
 	CHECK(dn_to_dnsname(mctx, pevent->dn, &name, &origin));
-	CHECK(zr_get_zone_ptr(inst->zone_register, &origin, &zone_ptr));
+	CHECK(zr_get_zone_ptr(inst->zone_register, &origin, &zone_ptr, NULL));
 	zone_found = ISC_TRUE;
 
 update_restart:
@@ -4411,7 +4430,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 
 	if (class == LDAP_ENTRYCLASS_MASTER || class == LDAP_ENTRYCLASS_RR) {
 		result = zr_get_zone_ptr(inst->zone_register, &zone_name,
-					 &zone_ptr);
+					 &zone_ptr, NULL);
 		if (result == ISC_R_SUCCESS && dns_zone_getmgr(zone_ptr) != NULL)
 			dns_zone_gettask(zone_ptr, &task);
 		else {
