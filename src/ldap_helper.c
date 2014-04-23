@@ -2234,6 +2234,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 		/* commit */
 		CHECK(dns_diff_apply(&diff, rbtdb, version));
 		dns_db_closeversion(ldapdb, &version, ISC_TRUE);
+		dns_zone_markdirty(raw);
 	}
 
 	/* Do zone load only if the initial LDAP synchronization is done. */
@@ -4322,6 +4323,7 @@ update_restart:
 		/* commit */
 		CHECK(dns_diff_apply(&diff, rbtdb, version));
 		dns_db_closeversion(ldapdb, &version, ISC_TRUE);
+		dns_zone_markdirty(zone_raw);
 	}
 
 	/* Check if the zone is loaded or not.
