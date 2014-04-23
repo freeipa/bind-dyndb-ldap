@@ -949,20 +949,6 @@ create_zone(ldap_instance_t * const inst, const char * const dn,
 		CHECK(dns_zone_setdbtype(secure, 1, rbt_argv));
 		CHECK(dns_zonemgr_managezone(inst->zmgr, secure));
 		CHECK(dns_zone_link(secure, raw));
-
-		/* Magic constants are taken from zoneconf.c */
-		dns_zone_setsigvalidityinterval(secure, 2592000); /* sig-validity-interval */
-		dns_zone_setsigresigninginterval(secure, 648000); /* re-sign */
-		dns_zone_setsignatures(secure, 10); /* sig-signing-signatures */
-		dns_zone_setnodes(secure, 10); /* sig-signing-nodes */
-		dns_zone_setprivatetype(secure, 65534); /* sig-signing-type */
-		dns_zone_setoption(secure, DNS_ZONEOPT_UPDATECHECKKSK,
-				   ISC_TRUE); /* update-check-ksk */
-		dns_zone_setrefreshkeyinterval(secure, 60); /* dnssec-loadkeys-interval */
-		/* auto-dnssec = maintain */
-		dns_zone_setkeyopt(secure, DNS_ZONEKEY_ALLOW, ISC_TRUE);
-		dns_zone_setkeyopt(secure, DNS_ZONEKEY_MAINTAIN, ISC_TRUE);
-
 		dns_zone_rekey(secure, ISC_TRUE);
 		CHECK(configure_paths(inst->mctx, inst, secure, ISC_TRUE));
 	}
@@ -1879,9 +1865,9 @@ cleanup:
  * @param[in]  raw Raw zone backed by LDAP database. In-line secure zone
  *                 will be reconfigured as necessary.
  */
-static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+static isc_result_t ATTR_NONNULL(1,2,3,5) ATTR_CHECKRESULT
 zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
-			dns_zone_t *raw, isc_task_t *task) {
+			dns_zone_t *raw, dns_zone_t *secure, isc_task_t *task) {
 	isc_result_t result;
 	const char *dn = NULL;
 	ldap_valuelist_t values;
@@ -1950,6 +1936,37 @@ zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
 		log_debug(2, "allow-transfer not set");
 		dns_zone_clearxfracl(raw);
 		result = ISC_R_SUCCESS;
+	}
+
+	if (secure != NULL) {
+		/* notifications should be sent from secure zone only */
+		dns_zone_setnotifytype(raw, dns_notifytype_no);
+
+		/* Magic constants are taken from zoneconf.c */
+		/* sig-validity-interval */
+		dns_zone_setsigvalidityinterval(secure, 2592000);
+
+		/* re-sign */
+		dns_zone_setsigresigninginterval(secure, 648000);
+
+		/* sig-signing-signatures */
+		dns_zone_setsignatures(secure, 10);
+
+		/* sig-signing-nodes */
+		dns_zone_setnodes(secure, 10);
+
+		/* sig-signing-type */
+		dns_zone_setprivatetype(secure, 65534);
+
+		/* update-check-ksk */
+		dns_zone_setoption(secure, DNS_ZONEOPT_UPDATECHECKKSK, ISC_TRUE);
+
+		/* dnssec-loadkeys-interval */
+		CHECK(dns_zone_setrefreshkeyinterval(secure, 60));
+
+		/* auto-dnssec = maintain */
+		dns_zone_setkeyopt(secure, DNS_ZONEKEY_ALLOW, ISC_TRUE);
+		dns_zone_setkeyopt(secure, DNS_ZONEKEY_MAINTAIN, ISC_TRUE);
 	}
 
 cleanup:
@@ -2161,7 +2178,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	}
 
 	CHECK(zr_get_zone_settings(inst->zone_register, &name, &zone_settings));
-	CHECK(zone_master_reconfigure(entry, zone_settings, raw, task));
+	CHECK(zone_master_reconfigure(entry, zone_settings, raw, secure, task));
 
 	sync_state_get(inst->sctx, &sync_state);
 	if (new_zone == ISC_TRUE && sync_state == sync_finished)
