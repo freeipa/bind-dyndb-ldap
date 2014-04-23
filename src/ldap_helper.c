@@ -1873,6 +1873,7 @@ zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
 	ldap_valuelist_t values;
 	isc_mem_t *mctx = NULL;
 	isc_boolean_t ssu_changed;
+	dns_zone_t *inview = NULL;
 
 	REQUIRE(entry != NULL);
 	REQUIRE(zone_settings != NULL);
@@ -1881,6 +1882,11 @@ zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
 
 	dn = entry->dn;
 	mctx = dns_zone_getmctx(raw);
+
+	if (secure != NULL)
+		dns_zone_attach(secure, &inview);
+	else
+		dns_zone_attach(raw, &inview);
 
 	result = setting_update_from_ldap_entry("dyn_update", zone_settings,
 						"idnsAllowDynUpdate", entry, task);
@@ -1920,7 +1926,7 @@ zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
 	log_debug(2, "Setting allow-query for %p: %s", raw, dn);
 	result = ldap_entry_getvalues(entry, "idnsAllowQuery", &values);
 	if (result == ISC_R_SUCCESS) {
-		CHECK(configure_zone_acl(mctx, raw, &dns_zone_setqueryacl,
+		CHECK(configure_zone_acl(mctx, inview, &dns_zone_setqueryacl,
 					 HEAD(values)->value, acl_type_query));
 	} else {
 		log_debug(2, "allow-query not set");
@@ -1930,7 +1936,7 @@ zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
 	log_debug(2, "Setting allow-transfer for %p: %s", raw, dn);
 	result = ldap_entry_getvalues(entry, "idnsAllowTransfer", &values);
 	if (result == ISC_R_SUCCESS) {
-		CHECK(configure_zone_acl(mctx, raw, &dns_zone_setxfracl,
+		CHECK(configure_zone_acl(mctx, inview, &dns_zone_setxfracl,
 					 HEAD(values)->value, acl_type_transfer));
 	} else {
 		log_debug(2, "allow-transfer not set");
@@ -1970,6 +1976,8 @@ zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
 	}
 
 cleanup:
+	if (inview != NULL)
+		dns_zone_detach(&inview);
 	return result;
 }
 
