@@ -1869,7 +1869,6 @@ static isc_result_t ATTR_NONNULL(1,2,3,5) ATTR_CHECKRESULT
 zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
 			dns_zone_t *raw, dns_zone_t *secure, isc_task_t *task) {
 	isc_result_t result;
-	const char *dn = NULL;
 	ldap_valuelist_t values;
 	isc_mem_t *mctx = NULL;
 	isc_boolean_t ssu_changed;
@@ -1880,7 +1879,6 @@ zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
 	REQUIRE(raw != NULL);
 	REQUIRE(task != NULL);
 
-	dn = entry->dn;
 	mctx = dns_zone_getmctx(raw);
 
 	if (secure != NULL)
@@ -1908,38 +1906,47 @@ zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
 		isc_boolean_t ssu_enabled;
 		const char *ssu_policy = NULL;
 
-		log_debug(2, "Setting SSU table for %p: %s", raw, dn);
 		CHECK(setting_get_bool("dyn_update", zone_settings, &ssu_enabled));
 		if (ssu_enabled) {
 			/* Get the update policy and update the zone with it. */
 			CHECK(setting_get_str("update_policy", zone_settings,
 					      &ssu_policy));
+			dns_zone_log(raw, ISC_LOG_DEBUG(2),
+				     "setting update-policy to '%s'",
+				     ssu_policy);
 			CHECK(configure_zone_ssutable(raw, ssu_policy));
 		} else {
 			/* Empty policy will prevent the update from reaching
 			 * LDAP driver and error will be logged. */
+			dns_zone_log(raw, ISC_LOG_DEBUG(2),
+				     "update-policy is not set");
 			CHECK(configure_zone_ssutable(raw, ""));
 		}
 	}
 
 	/* Fetch allow-query and allow-transfer ACLs */
-	log_debug(2, "Setting allow-query for %p: %s", raw, dn);
 	result = ldap_entry_getvalues(entry, "idnsAllowQuery", &values);
 	if (result == ISC_R_SUCCESS) {
+		dns_zone_log(inview, ISC_LOG_DEBUG(2),
+			     "setting allow-query to '%s'",
+			     HEAD(values)->value);
 		CHECK(configure_zone_acl(mctx, inview, &dns_zone_setqueryacl,
 					 HEAD(values)->value, acl_type_query));
 	} else {
-		log_debug(2, "allow-query not set");
+		dns_zone_log(inview, ISC_LOG_DEBUG(2), "allow-query is not set");
 		dns_zone_clearqueryacl(raw);
 	}
 
-	log_debug(2, "Setting allow-transfer for %p: %s", raw, dn);
 	result = ldap_entry_getvalues(entry, "idnsAllowTransfer", &values);
 	if (result == ISC_R_SUCCESS) {
+		dns_zone_log(inview, ISC_LOG_DEBUG(2),
+			     "setting allow-transfer to '%s'",
+			     HEAD(values)->value);
 		CHECK(configure_zone_acl(mctx, inview, &dns_zone_setxfracl,
 					 HEAD(values)->value, acl_type_transfer));
 	} else {
-		log_debug(2, "allow-transfer not set");
+		dns_zone_log(inview, ISC_LOG_DEBUG(2),
+			     "allow-transfer is not set");
 		dns_zone_clearxfracl(raw);
 		result = ISC_R_SUCCESS;
 	}
