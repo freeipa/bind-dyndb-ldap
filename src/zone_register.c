@@ -88,6 +88,7 @@ static const setting_t zone_settings[] = {
 	{ "sync_ptr",			no_default_boolean	},
 	{ "forward_policy",		no_default_string	},
 	{ "forwarders",			no_default_string	},
+	{ "nsec3param",			no_default_string	},
 	end_of_settings
 };
 

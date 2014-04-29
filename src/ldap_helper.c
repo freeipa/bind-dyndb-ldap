@@ -261,6 +261,7 @@ static const setting_t settings_local_default[] = {
 	{ "serial_autoincrement",	no_default_string	}, /* No longer supported */
 	{ "verbose_checks",		no_default_boolean	},
 	{ "directory",			no_default_string	},
+	{ "nsec3param",			default_string("0 0 0 00")	}, /* NSEC only */
 	end_of_settings
 };
 
@@ -334,6 +335,10 @@ static isc_result_t ldap_pool_connect(ldap_pool_t *pool,
 /* Persistent updates watcher */
 static isc_threadresult_t
 ldap_syncrepl_watcher(isc_threadarg_t arg) ATTR_NONNULLS ATTR_CHECKRESULT;
+
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+zone_master_reconfigure_nsec3param(settings_set_t *zone_settings,
+				   dns_zone_t *secure);
 
 #define PRINT_BUFF_SIZE 10 /* for unsigned int 2^32 */
 isc_result_t
@@ -1109,6 +1114,7 @@ activate_zones(isc_task_t *task, ldap_instance_t *inst) {
 	DECLARE_BUFFERED_NAME(name);
 	unsigned int published_cnt = 0;
 	unsigned int total_cnt = 0;
+	settings_set_t *zone_settings = NULL;
 
 	INIT_BUFFERED_NAME(name);
 	CHECK(zr_rbt_iter_init(inst->zone_register, &iter, &name));
@@ -1124,6 +1130,13 @@ activate_zones(isc_task_t *task, ldap_instance_t *inst) {
 			dns_zone_log(raw, ISC_LOG_ERROR,
 				     "unable to load zone: %s",
 				     dns_result_totext(result));
+		else if (secure != NULL) {
+			zone_settings = NULL;
+			CHECK(zr_get_zone_settings(inst->zone_register,
+						   &name, &zone_settings));
+			CHECK(zone_master_reconfigure_nsec3param(zone_settings,
+								 secure));
+		}
 
 		/*
 		 * Don't bother if load fails, server will return
@@ -1880,6 +1893,45 @@ cleanup:
 #undef MAX_SERIAL_LENGTH
 }
 
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+zone_master_reconfigure_nsec3param(settings_set_t *zone_settings,
+				   dns_zone_t *secure) {
+	isc_mem_t *mctx = NULL;
+	isc_result_t result;
+	dns_rdata_t *nsec3p_rdata = NULL;
+	dns_rdata_nsec3param_t nsec3p_rr;
+	dns_name_t *origin = NULL;
+	const char *nsec3p_str = NULL;
+	ldap_entry_t *fake_entry = NULL;
+
+	REQUIRE(secure != NULL);
+
+	mctx = dns_zone_getmctx(secure);
+	origin = dns_zone_getorigin(secure);
+	CHECK(ldap_entry_init(mctx, &fake_entry));
+
+	CHECK(setting_get_str("nsec3param", zone_settings, &nsec3p_str));
+	dns_zone_log(secure, ISC_LOG_INFO,
+		     "reconfiguring NSEC3PARAM to '%s'", nsec3p_str);
+	CHECK(parse_rdata(mctx, fake_entry, dns_rdataclass_in,
+			  dns_rdatatype_nsec3param, origin, nsec3p_str,
+			  &nsec3p_rdata));
+	CHECK(dns_rdata_tostruct(nsec3p_rdata, &nsec3p_rr, NULL));
+	CHECK(dns_zone_setnsec3param(secure, nsec3p_rr.hash, nsec3p_rr.flags,
+				     nsec3p_rr.iterations,
+				     nsec3p_rr.salt_length, nsec3p_rr.salt,
+				     ISC_TRUE));
+
+cleanup:
+	if (nsec3p_rdata != NULL) {
+		isc_mem_put(mctx, nsec3p_rdata->data, nsec3p_rdata->length);
+		SAFE_MEM_PUT_PTR(mctx, nsec3p_rdata);
+	}
+	if (fake_entry != NULL)
+		ldap_entry_destroy(mctx, &fake_entry);
+	return result;
+}
+
 /**
  * Reconfigure master zone according to configuration in LDAP object.
  *
@@ -1997,6 +2049,18 @@ zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
 
 		/* dnssec-loadkeys-interval */
 		CHECK(dns_zone_setrefreshkeyinterval(secure, 60));
+
+		result = setting_update_from_ldap_entry("nsec3param",
+							zone_settings,
+							"nsec3paramRecord",
+							entry, task);
+		if (result == ISC_R_SUCCESS)
+			CHECK(zone_master_reconfigure_nsec3param(zone_settings,
+								 secure));
+		else if (result == ISC_R_IGNORE)
+			result = ISC_R_SUCCESS;
+		else
+			goto cleanup;
 
 		/* auto-dnssec = maintain */
 		dns_zone_setkeyopt(secure, DNS_ZONEKEY_ALLOW, ISC_TRUE);
