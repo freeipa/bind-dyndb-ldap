@@ -79,6 +79,8 @@ typedef unsigned char		ldap_entryclass_t;
 /* Max type length definitions, from lib/dns/master.c */
 #define TOKENSIZ (8*1024)
 
+isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+ldap_entry_init(isc_mem_t *mctx, ldap_entry_t **entryp);
 
 isc_result_t
 ldap_entrylist_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *msg,

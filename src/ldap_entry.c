@@ -179,9 +179,41 @@ cleanup:
 	return result;
 }
 
+/**
+ * Allocate and initialize empty ldap_entry_t. The new entry will not contain
+ * any data, it needs to be filled by ldap_entry_create.
+ */
+isc_result_t
+ldap_entry_init(isc_mem_t *mctx, ldap_entry_t **entryp) {
+	isc_result_t result;
+	ldap_entry_t *entry = NULL;
+
+	REQUIRE(entryp != NULL);
+	REQUIRE(*entryp == NULL);
+
+	CHECKED_MEM_GET_PTR(mctx, entry);
+	ZERO_PTR(entry);
+	INIT_LIST(entry->attrs);
+	INIT_LINK(entry, link);
+
+	CHECKED_MEM_GET(mctx, entry->rdata_target_mem, DNS_RDATA_MAXLENGTH);
+	CHECK(isc_lex_create(mctx, TOKENSIZ, &entry->lex));
+
+	*entryp = entry;
+
+cleanup:
+	if (result != ISC_R_SUCCESS)
+		ldap_entry_destroy(mctx, &entry);
+
+	return result;
+}
+
+/**
+ * Allocate new ldap_entry and fill it with data from LDAPMessage.
+ */
 isc_result_t
 ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
-                  ldap_entry_t **entryp)
+		  ldap_entry_t **entryp)
 {
 	isc_result_t result;
 	ldap_attribute_t *attr = NULL;
@@ -191,13 +223,11 @@ ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 
 	REQUIRE(ld != NULL);
 	REQUIRE(ldap_entry != NULL);
-	REQUIRE(entryp != NULL && *entryp == NULL);
+	REQUIRE(entryp != NULL);
+	REQUIRE(*entryp == NULL);
 
-	CHECKED_MEM_GET_PTR(mctx, entry);
-	ZERO_PTR(entry);
+	CHECK(ldap_entry_init(mctx, &entry));
 	entry->ldap_entry = ldap_entry;
-	INIT_LIST(entry->attrs);
-	INIT_LINK(entry, link);
 
 	for (attribute = ldap_first_attribute(ld, ldap_entry, &ber);
 	     attribute != NULL;
@@ -220,23 +250,14 @@ ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 		CLEANUP_WITH(ISC_R_FAILURE);
 	}
 
-	CHECKED_MEM_GET(mctx, entry->rdata_target_mem, DNS_RDATA_MAXLENGTH);
-	CHECK(isc_lex_create(mctx, TOKENSIZ, &entry->lex));
-
 	*entryp = entry;
 
 cleanup:
 	if (ber != NULL)
 		ber_free(ber, 0);
 	if (result != ISC_R_SUCCESS) {
-		if (entry != NULL) {
-			ldap_attributelist_destroy(mctx, &entry->attrs);
-			SAFE_MEM_PUT(mctx, entry->rdata_target_mem,
-				     DNS_RDATA_MAXLENGTH);
-			if (entry->lex != NULL)
-				isc_lex_destroy(&entry->lex);
-		}
-		SAFE_MEM_PUT_PTR(mctx, entry);
+		if (entry != NULL)
+			ldap_entry_destroy(mctx, &entry);
 		SAFE_MEM_PUT_PTR(mctx, attr);
 	}
 
@@ -262,7 +283,7 @@ ldap_entry_destroy(isc_mem_t *mctx, ldap_entry_t **entryp)
 		isc_lex_destroy(&entry->lex);
 	}
 	if (entry->rdata_target_mem != NULL)
-		isc_mem_put(mctx, entry->rdata_target_mem, DNS_RDATA_MAXLENGTH);
+		SAFE_MEM_PUT(mctx, entry->rdata_target_mem, DNS_RDATA_MAXLENGTH);
 
 	SAFE_MEM_PUT_PTR(mctx, entry);
 
