@@ -992,6 +992,7 @@ load_zone(dns_zone_t *zone) {
 	isc_result_t result;
 	isc_boolean_t zone_dynamic;
 	isc_uint32_t serial;
+	dns_zone_t *raw = NULL;
 
 	result = dns_zone_load(zone);
 	if (result != ISC_R_SUCCESS && result != DNS_R_UPTODATE
@@ -999,13 +1000,33 @@ load_zone(dns_zone_t *zone) {
 		goto cleanup;
 	zone_dynamic = (result == DNS_R_DYNAMIC);
 
-	CHECK(dns_zone_getserial2(zone, &serial));
-	dns_zone_log(zone, ISC_LOG_INFO, "loaded serial %u", serial);
+	dns_zone_getraw(zone, &raw);
+	if (raw == NULL) {
+		dns_zone_attach(zone, &raw);
+		zone = NULL;
+	}
+
+	CHECK(dns_zone_getserial2(raw, &serial));
+	dns_zone_log(raw, ISC_LOG_INFO, "loaded serial %u", serial);
+	if (zone != NULL) {
+		result = dns_zone_getserial2(zone, &serial);
+		if (result == ISC_R_SUCCESS)
+			dns_zone_log(zone, ISC_LOG_INFO, "loaded serial %u",
+				     serial);
+		/* in-line secure zone is loaded asynchonously in background */
+		else if (result == DNS_R_NOTLOADED) {
+			dns_zone_log(zone, ISC_LOG_INFO, "signing in progress");
+			result = ISC_R_SUCCESS;
+		} else
+			goto cleanup;
+	}
 
 	if (zone_dynamic)
-		dns_zone_notify(zone);
+		dns_zone_notify((zone != NULL) ? zone : raw);
 
 cleanup:
+	if (raw != NULL)
+		dns_zone_detach(&raw);
 	return result;
 }
 
