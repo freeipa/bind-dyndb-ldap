@@ -152,6 +152,14 @@ attributetype ( 1.3.6.1.4.1.2428.20.1.44
 	SUBSTR caseIgnoreIA5SubstringsMatch
 	SYNTAX 1.3.6.1.4.1.1466.115.121.1.26 )
 
+attributetype ( 1.3.6.1.4.1.2428.20.1.51
+	NAME 'nSEC3PARAMRecord'
+	DESC 'RFC 5155'
+	EQUALITY caseIgnoreIA5Match
+	SUBSTR caseIgnoreIA5SubstringsMatch
+	SYNTAX 1.3.6.1.4.1.1466.115.121.1.26
+	SINGLE-VALUE )
+
 attributetype ( 2.16.840.1.113730.3.8.5.0
 	NAME 'idnsName'
 	DESC 'DNS FQDN'
@@ -269,6 +277,13 @@ attributetype ( 2.16.840.1.113730.3.8.5.15
 	SUBSTR caseIgnoreIA5SubstringsMatch
 	SYNTAX 1.3.6.1.4.1.1466.115.121.1.26)
 
+attributetype ( 2.16.840.1.113730.3.8.5.18
+	NAME 'idnsSecInlineSigning'
+	DESC 'DNSSEC in-line signing'
+	EQUALITY booleanMatch
+	SYNTAX 1.3.6.1.4.1.1466.115.121.1.7
+	SINGLE-VALUE )
+
 objectclass ( 2.16.840.1.113730.3.8.6.0
 	NAME 'idnsRecord'
 	DESC 'dns Record, usually a host'
@@ -293,7 +308,8 @@ objectclass ( 2.16.840.1.113730.3.8.6.1
 		idnsSOAminimum
 	)
 	MAY ( idnsUpdatePolicy $ idnsAllowQuery $ idnsAllowTransfer $
-		idnsAllowSyncPTR $ idnsForwardPolicy $ idnsForwarders
+		idnsAllowSyncPTR $ idnsForwardPolicy $ idnsForwarders $
+		idnsSecInlineSigning $ nSEC3PARAMRecord
 	) )
 
 objectclass ( 2.16.840.1.113730.3.8.6.2
