@@ -992,6 +992,9 @@ cleanup:
 	return result;
 }
 
+/**
+ * @warning Never call this on raw part of in-line secure zone.
+ */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 load_zone(dns_zone_t *zone) {
 	isc_result_t result;
@@ -2333,7 +2336,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 
 	/* Do zone load only if the initial LDAP synchronization is done. */
 	if (sync_state == sync_finished && data_changed == ISC_TRUE)
-		CHECK(load_zone(raw));
+		CHECK(load_zone(secure));
 
 cleanup:
 	dns_diff_clear(&diff);
@@ -4266,7 +4269,8 @@ update_record(isc_task_t *task, isc_event_t *event)
 	isc_result_t result;
 	ldap_instance_t *inst = NULL;
 	isc_mem_t *mctx;
-	dns_zone_t *zone_raw = NULL;
+	dns_zone_t *raw = NULL;
+	dns_zone_t *secure = NULL;
 	isc_boolean_t zone_found = ISC_FALSE;
 	isc_boolean_t zone_reloaded = ISC_FALSE;
 	isc_uint32_t serial;
@@ -4309,7 +4313,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 
 	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
 	CHECK(dn_to_dnsname(mctx, pevent->dn, &name, &origin));
-	CHECK(zr_get_zone_ptr(inst->zone_register, &origin, &zone_raw, NULL));
+	CHECK(zr_get_zone_ptr(inst->zone_register, &origin, &raw, &secure));
 	zone_found = ISC_TRUE;
 
 update_restart:
@@ -4391,12 +4395,12 @@ update_restart:
 						    DNS_DIFFOP_ADD, &soa_tuple));
 			CHECK(update_soa_serial(dns_updatemethod_unixtime,
 						soa_tuple, &serial));
-			dns_zone_log(zone_raw, ISC_LOG_DEBUG(5),
+			dns_zone_log(raw, ISC_LOG_DEBUG(5),
 				     "writing new zone serial %u to LDAP",
 				     serial);
 			result = ldap_replace_serial(inst, &origin, serial);
 			if (result != ISC_R_SUCCESS)
-				dns_zone_log(zone_raw, ISC_LOG_ERROR,
+				dns_zone_log(raw, ISC_LOG_ERROR,
 					     "serial (%u) write back to LDAP failed",
 					     serial);
 			dns_diff_append(&diff, &soa_tuple);
@@ -4409,7 +4413,7 @@ update_restart:
 #endif
 		if (sync_state == sync_finished) {
 			/* write the transaction to journal */
-			journal_filename = dns_zone_getjournal(zone_raw);
+			journal_filename = dns_zone_getjournal(raw);
 			CHECK(dns_journal_open(mctx, journal_filename,
 					       DNS_JOURNAL_CREATE, &journal));
 			CHECK(dns_journal_write_transaction(journal, &diff));
@@ -4417,13 +4421,13 @@ update_restart:
 		/* commit */
 		CHECK(dns_diff_apply(&diff, rbtdb, version));
 		dns_db_closeversion(ldapdb, &version, ISC_TRUE);
-		dns_zone_markdirty(zone_raw);
+		dns_zone_markdirty(raw);
 	}
 
 	/* Check if the zone is loaded or not.
 	 * No other function above returns DNS_R_NOTLOADED. */
 	if (sync_state == sync_finished)
-		result = dns_zone_getserial2(zone_raw, &serial);
+		result = dns_zone_getserial2(raw, &serial);
 
 cleanup:
 #ifdef RBTDB_DEBUG
@@ -4449,30 +4453,25 @@ cleanup:
 		dns_db_detach(&ldapdb);
 	if (result != ISC_R_SUCCESS && zone_found && !zone_reloaded &&
 	   (result == DNS_R_NOTLOADED || result == DNS_R_BADZONE)) {
-		log_debug(1, "reloading invalid zone after a change; "
+		dns_zone_log(raw, ISC_LOG_DEBUG(1),
+			     "reloading invalid zone after a change; "
 			     "reload triggered by change in '%s'",
 			     pevent->dn);
-
-		if (zone_raw != NULL)
-			result = dns_zone_load(zone_raw);
+		if (secure != NULL)
+			result = load_zone(secure);
+		else if (raw != NULL)
+			result = load_zone(raw);
 		if (result == ISC_R_SUCCESS || result == DNS_R_UPTODATE ||
 		    result == DNS_R_DYNAMIC || result == DNS_R_CONTINUE) {
 			/* zone reload succeeded, fire current event again */
 			log_debug(1, "restarting update_record after zone reload "
 				     "caused by change in '%s'", pevent->dn);
 			zone_reloaded = ISC_TRUE;
-			result = dns_zone_getserial2(zone_raw, &serial);
-			if (result == ISC_R_SUCCESS) {
-				dns_zone_log(zone_raw, ISC_LOG_INFO,
-					     "reloaded serial %u", serial);
+			result = dns_zone_getserial2(raw, &serial);
+			if (result == ISC_R_SUCCESS)
 				goto update_restart;
-			} else {
-				dns_zone_log(zone_raw, ISC_LOG_ERROR,
-					     "could not get serial after "
-					     "reload");
-			}
 		} else {
-			dns_zone_log(zone_raw, ISC_LOG_ERROR,
+			dns_zone_log(raw, ISC_LOG_ERROR,
 				    "unable to reload invalid zone; "
 				    "reload triggered by change in '%s':%s",
 				    pevent->dn, dns_result_totext(result));
@@ -4496,8 +4495,10 @@ cleanup:
 		if (dns_name_dynamic(&prevorigin))
 			dns_name_free(&prevorigin, inst->mctx);
 	}
-	if (zone_raw != NULL)
-		dns_zone_detach(&zone_raw);
+	if (raw != NULL)
+		dns_zone_detach(&raw);
+	if (secure != NULL)
+		dns_zone_detach(&secure);
 	ldapdb_rdatalist_destroy(mctx, &rdatalist);
 	isc_mem_free(mctx, pevent->dbname);
 	if (pevent->prevdn != NULL)
