@@ -103,6 +103,6 @@ const char * ldap_instance_getdbname(ldap_instance_t *ldap_inst) ATTR_NONNULLS;
 
 zone_register_t * ldap_instance_getzr(ldap_instance_t *ldap_inst) ATTR_NONNULLS;
 
-isc_result_t activate_zones(isc_task_t *task, ldap_instance_t *inst);
+isc_result_t activate_zones(isc_task_t *task, ldap_instance_t *inst) ATTR_NONNULLS;
 
 #endif /* !_LD_LDAP_HELPER_H_ */

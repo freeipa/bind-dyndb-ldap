@@ -1100,65 +1100,74 @@ cleanup:
 }
 
 /**
+ * Add zone to view and call dns_zone_load().
+ */
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+activate_zone(isc_task_t *task, ldap_instance_t *inst, dns_name_t *name) {
+	isc_result_t result;
+	dns_zone_t *raw = NULL;
+	dns_zone_t *secure = NULL;
+	dns_zone_t *toview = NULL;
+	settings_set_t *zone_settings = NULL;
+
+	CHECK(zr_get_zone_ptr(inst->zone_register, name, &raw, &secure));
+
+	/* Load only "secure" zone if inline-signing is active.
+	 * It will not work if raw zone is loaded explicitly
+	 * - dns_zone_load() will fail magically. */
+	toview = (secure != NULL) ? secure : raw;
+
+	/*
+	 * Zone has to be published *before* zone load
+	 * otherwise it will race with zone->view != NULL check
+	 * in zone_maintenance() in zone.c.
+	 */
+	result = publish_zone(task, inst, toview);
+	if (result != ISC_R_SUCCESS) {
+		dns_zone_log(toview, ISC_LOG_ERROR,
+			     "cannot add zone to view: %s",
+			     dns_result_totext(result));
+		goto cleanup;
+	}
+
+	CHECK(load_zone(toview));
+	if (secure != NULL) {
+		CHECK(zr_get_zone_settings(inst->zone_register, name,
+					   &zone_settings));
+		CHECK(zone_master_reconfigure_nsec3param(zone_settings,
+							 secure));
+	}
+
+cleanup:
+	if (raw != NULL)
+		dns_zone_detach(&raw);
+	if (secure != NULL)
+		dns_zone_detach(&secure);
+	return result;
+}
+
+/**
  * Add all zones in zone register to DNS view specified in inst->view
  * and load zones.
  */
 isc_result_t
 activate_zones(isc_task_t *task, ldap_instance_t *inst) {
 	isc_result_t result;
-	isc_boolean_t loaded;
 	rbt_iterator_t *iter = NULL;
-	dns_zone_t *raw = NULL;
-	dns_zone_t *secure = NULL;
-	dns_zone_t *toview = NULL;
 	DECLARE_BUFFERED_NAME(name);
 	unsigned int published_cnt = 0;
 	unsigned int total_cnt = 0;
-	settings_set_t *zone_settings = NULL;
 
 	INIT_BUFFERED_NAME(name);
-	CHECK(zr_rbt_iter_init(inst->zone_register, &iter, &name));
-	do {
+	for(result = zr_rbt_iter_init(inst->zone_register, &iter, &name);
+	    result == ISC_R_SUCCESS;
+	    dns_name_reset(&name), result = rbt_iter_next(&iter, &name)) {
 		++total_cnt;
-		CHECK(zr_get_zone_ptr(inst->zone_register, &name, &raw, &secure));
-		/* Load only "secure" zone if inline-signing is active.
-		 * It will not work if raw zone is loaded explicitly. */
-		toview = (secure != NULL) ? secure : raw;
-		result = load_zone(toview);
-		loaded = (result == ISC_R_SUCCESS);
-		if (loaded == ISC_FALSE)
-			dns_zone_log(raw, ISC_LOG_ERROR,
-				     "unable to load zone: %s",
-				     dns_result_totext(result));
-		else if (secure != NULL) {
-			zone_settings = NULL;
-			CHECK(zr_get_zone_settings(inst->zone_register,
-						   &name, &zone_settings));
-			CHECK(zone_master_reconfigure_nsec3param(zone_settings,
-								 secure));
-		}
-
-		/*
-		 * Don't bother if load fails, server will return
-		 * SERVFAIL for queries beneath this zone. This is
-		 * admin's problem.
-		 */
-		result = publish_zone(task, inst, toview);
-		if (result != ISC_R_SUCCESS)
-			dns_zone_log(toview, ISC_LOG_ERROR,
-				     "cannot add zone to view: %s",
-				     dns_result_totext(result));
-		else if (loaded == ISC_TRUE)
+		result = activate_zone(task, inst, &name);
+		if (result == ISC_R_SUCCESS)
 			++published_cnt;
-		dns_zone_detach(&raw);
-		if (secure != NULL)
-			dns_zone_detach(&secure);
+	};
 
-		INIT_BUFFERED_NAME(name);
-		CHECK(rbt_iter_next(&iter, &name));
-	} while (result == ISC_R_SUCCESS);
-
-cleanup:
 	log_info("%u zones from LDAP instance '%s' loaded (%u zones defined)",
 		 published_cnt, inst->db_name, total_cnt);
 	return result;
