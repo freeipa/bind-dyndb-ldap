@@ -2213,6 +2213,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	dns_name_t name;
 	dns_zone_t *raw = NULL;
 	dns_zone_t *secure = NULL;
+	dns_zone_t *toview = NULL;
 	isc_result_t result;
 	isc_boolean_t unlock = ISC_FALSE;
 	isc_boolean_t new_zone = ISC_FALSE;
@@ -2292,13 +2293,10 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	CHECK(zr_get_zone_settings(inst->zone_register, &name, &zone_settings));
 	CHECK(zone_master_reconfigure(entry, zone_settings, raw, secure, task));
 
-	sync_state_get(inst->sctx, &sync_state);
-	if (new_zone == ISC_TRUE && sync_state == sync_finished)
-		CHECK(publish_zone(task, inst, raw));
-
 	/* synchronize zone origin with LDAP */
 	CHECK(zr_get_zone_dbs(inst->zone_register, &name, &ldapdb, &rbtdb));
 	CHECK(dns_db_newversion(ldapdb, &version));
+	sync_state_get(inst->sctx, &sync_state);
 	CHECK(zone_sync_apex(inst, entry, name, sync_state, new_zone,
 			     ldapdb, rbtdb, version,
 			     &diff, &new_serial, &ldap_writeback,
@@ -2335,8 +2333,14 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	}
 
 	/* Do zone load only if the initial LDAP synchronization is done. */
-	if (sync_state == sync_finished && data_changed == ISC_TRUE)
-		CHECK(load_zone(secure));
+	if (sync_state == sync_finished) {
+		toview = (want_secure == ISC_TRUE) ? secure : raw;
+		if (new_zone == ISC_TRUE) {
+			CHECK(publish_zone(task, inst, toview));
+		}
+		if (data_changed == ISC_TRUE)
+			CHECK(load_zone(toview));
+	}
 
 cleanup:
 	dns_diff_clear(&diff);
