@@ -2218,6 +2218,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	isc_boolean_t unlock = ISC_FALSE;
 	isc_boolean_t new_zone = ISC_FALSE;
 	isc_boolean_t want_secure = ISC_FALSE;
+	isc_boolean_t configured = ISC_FALSE;
 	settings_set_t *zone_settings = NULL;
 	isc_boolean_t ldap_writeback;
 	isc_boolean_t data_changed = ISC_FALSE; /* GCC */
@@ -2337,6 +2338,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 		toview = (want_secure == ISC_TRUE) ? secure : raw;
 		if (new_zone == ISC_TRUE) {
 			CHECK(publish_zone(task, inst, toview));
+			configured = ISC_TRUE;
 		}
 		if (data_changed == ISC_TRUE)
 			CHECK(load_zone(toview));
@@ -2352,7 +2354,8 @@ cleanup:
 		dns_journal_destroy(&journal);
 	if (ldapdb != NULL)
 		dns_db_detach(&ldapdb);
-	if (new_zone && result != ISC_R_SUCCESS) {
+	if (new_zone == ISC_TRUE && configured == ISC_FALSE &&
+	    result != ISC_R_SUCCESS) {
 		/* Failure in ACL parsing or so. */
 		log_error_r("zone '%s': publishing failed, rolling back due to",
 			    entry->dn);
