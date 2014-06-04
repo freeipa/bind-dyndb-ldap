@@ -782,12 +782,14 @@ delete_bind_zone(dns_zt_t *zt, dns_zone_t **zonep) {
 	return result;
 }
 
-isc_result_t
+static isc_result_t ATTR_NONNULLS
 cleanup_zone_files(dns_zone_t *zone) {
 	isc_result_t result;
 	isc_boolean_t failure = ISC_FALSE;
 	const char *filename = NULL;
 	dns_zone_t *raw = NULL;
+	int namelen;
+	char bck_filename[PATH_MAX];
 
 	dns_zone_getraw(zone, &raw);
 	if (raw != NULL) {
@@ -804,6 +806,17 @@ cleanup_zone_files(dns_zone_t *zone) {
 	result = fs_file_remove(filename);
 	failure = failure || (result != ISC_R_SUCCESS);
 
+	/* Taken from dns_journal_open() from bind-9.9.4-P2:
+	 * Journal backup file name ends with ".jbk" instead of ".jnl". */
+	namelen = strlen(filename);
+	if (namelen > 4 && strcmp(filename + namelen - 4, ".jnl") == 0)
+		namelen -= 4;
+	CHECK(isc_string_printf(bck_filename, sizeof(bck_filename),
+				"%.*s.jbk", namelen, filename));
+	CHECK(fs_file_remove(bck_filename));
+
+cleanup:
+	failure = failure || (result != ISC_R_SUCCESS);
 	if (failure == ISC_TRUE)
 		dns_zone_log(zone, ISC_LOG_ERROR,
 			     "unable to remove files, expect problems");
@@ -946,6 +959,7 @@ create_zone(ldap_instance_t * const inst, const char * const dn,
 
 	if (want_secure == ISC_FALSE) {
 		CHECK(dns_zonemgr_managezone(inst->zmgr, raw));
+		CHECK(cleanup_zone_files(raw));
 	} else {
 		CHECK(dns_zone_create(&secure, inst->mctx));
 		CHECK(dns_zone_setorigin(secure, name));
@@ -957,6 +971,7 @@ create_zone(ldap_instance_t * const inst, const char * const dn,
 		CHECK(dns_zone_link(secure, raw));
 		dns_zone_rekey(secure, ISC_TRUE);
 		CHECK(configure_paths(inst->mctx, inst, secure, ISC_TRUE));
+		CHECK(cleanup_zone_files(secure));
 	}
 
 	sync_state_get(inst->sctx, &sync_state);
