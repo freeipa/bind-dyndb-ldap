@@ -293,6 +293,11 @@ static isc_result_t parse_rdata(isc_mem_t *mctx, ldap_entry_t *entry,
 		dns_name_t *origin, const char *rdata_text,
 		dns_rdata_t **rdatap) ATTR_NONNULLS ATTR_CHECKRESULT;
 static isc_result_t
+ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
+			    ldap_instance_t *const inst,
+			    isc_task_t *const task)
+			    ATTR_NONNULL(1,3,4) ATTR_CHECKRESULT;
+static isc_result_t
 ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
 		   const char *fake_mname, ldapdb_rdatalist_t *rdatalist) ATTR_NONNULLS ATTR_CHECKRESULT;
 
@@ -926,8 +931,9 @@ cleanup:
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 create_zone(ldap_instance_t * const inst, const char * const dn,
-	    dns_name_t * const name, const isc_boolean_t want_secure,
-	    dns_zone_t ** const rawp, dns_zone_t ** const securep)
+	    dns_name_t * const name, dns_db_t * const ldapdb,
+	    const isc_boolean_t want_secure, dns_zone_t ** const rawp,
+	    dns_zone_t ** const securep)
 {
 	isc_result_t result;
 	dns_zone_t *raw = NULL;
@@ -987,7 +993,7 @@ create_zone(ldap_instance_t * const inst, const char * const dn,
 		}
 	}
 
-	CHECK(zr_add_zone(inst->zone_register, raw, secure, dn));
+	CHECK(zr_add_zone(inst->zone_register, ldapdb, raw, secure, dn));
 
 	*rawp = raw;
 	*securep = secure;
@@ -2192,11 +2198,6 @@ zone_sync_apex(const ldap_instance_t * const inst,
 		  * => do nothing. */
 	}
 
-	/* New zone has to have at least SOA record and NS record. */
-	if (new_zone == ISC_TRUE
-	    && (*data_changed == ISC_FALSE || soa_tuple == NULL))
-		result = DNS_R_BADZONE;
-
 cleanup:
 	if (soa_tuple_alloc == ISC_TRUE && soa_tuple != NULL)
 		dns_difftuple_free(&soa_tuple);
@@ -2208,10 +2209,54 @@ cleanup:
 	return result;
 }
 
-/* Parse the master zone entry */
+/**
+ * Change security status of an existing zone.
+ *
+ * LDAP database is detached from the original zone, the zone is deleted
+ * and re-created with different parameters on top of the old LDAP database.
+ */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
-			    isc_task_t *task)
+zone_security_change(ldap_entry_t * const entry, dns_name_t * const name,
+		     ldap_instance_t * const inst, isc_task_t * const task) {
+	isc_result_t result;
+	dns_db_t *olddb = NULL;
+	isc_result_t lock_state = ISC_R_IGNORE;
+
+	CHECK(zr_get_zone_dbs(inst->zone_register, name, &olddb, NULL));
+
+	/* Lock is necessary to ensure that no events from LDAP are lost
+	 * in period where old zone was deleted but the new zone was not
+	 * created yet. */
+	run_exclusive_enter(task, &lock_state);
+	CHECK(ldap_delete_zone2(inst, name, ISC_FALSE,	ISC_TRUE));
+	CHECK(ldap_parse_master_zoneentry(entry, olddb, inst, task));
+
+cleanup:
+	run_exclusive_exit(task, lock_state);
+	if (olddb != NULL)
+		dns_db_detach(&olddb);
+	return result;
+}
+
+/**
+ * Parse the master zone entry and configure DNS zone accordingly.
+ * New zone will be created if it doesn't exist. Existing zone will be
+ * updated with new settings from LDAP entry.
+ *
+ * This function also synchronizes data at zone apex and ensures
+ * that zone serial is incremented after each change.
+ *
+ * @param olddb[in]  LDAP database to be used when constructing a new zone.
+ *                   Empty database will be created if it is NULL.
+ *                   It should be non-NULL only if reconfiguration of
+ *                   an existing zone is not possible so the old zone
+ *                   was deleted but the new zone should re-use the old
+ *                   database.
+ */
+static isc_result_t
+ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
+			    ldap_instance_t * const inst,
+			    isc_task_t * const task)
 {
 	const char *dn;
 	ldap_valuelist_t values;
@@ -2279,18 +2324,24 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	/* Check if we are already serving given zone */
 	result = zr_get_zone_ptr(inst->zone_register, &name, &raw, &secure);
 	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
-		CHECK(create_zone(inst, dn, &name, want_secure, &raw, &secure));
+		CHECK(create_zone(inst, dn, &name, olddb, want_secure,
+				  &raw, &secure));
 		new_zone = ISC_TRUE;
 		log_debug(2, "created zone %s: raw %p; secure %p", dn, raw,
 			  secure);
 	} else if (result != ISC_R_SUCCESS)
 		goto cleanup;
-	else {
-		if (want_secure != ISC_TF(secure != NULL)) {
-			log_error("zone '%s': inline-signing setting cannot "
-				  "be changed at run-time yet", dn);
-			CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
-		}
+	else if (want_secure != ISC_TF(secure != NULL)) {
+		if (want_secure == ISC_TRUE)
+			dns_zone_log(raw, ISC_LOG_INFO,
+				     "upgrading zone to secure");
+		else
+			dns_zone_log(secure, ISC_LOG_INFO,
+				     "downgrading zone to insecure");
+		CHECK(zone_security_change(entry, &name, inst, task));
+		goto cleanup;
+	} else { /* Zone exists and it's security status is unchanged. */
+		INSIST(olddb == NULL);
 	}
 
 	CHECK(zr_get_zone_settings(inst->zone_register, &name, &zone_settings));
@@ -2342,7 +2393,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 			CHECK(publish_zone(task, inst, toview));
 			configured = ISC_TRUE;
 		}
-		if (data_changed == ISC_TRUE)
+		if (data_changed == ISC_TRUE || olddb != NULL)
 			CHECK(load_zone(toview));
 	}
 
@@ -4174,7 +4225,8 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	if (zone_active) {
 		CHECK(ldap_entry_getclass(entry, &objclass));
 		if (objclass & LDAP_ENTRYCLASS_MASTER)
-			CHECK(ldap_parse_master_zoneentry(entry, inst, task));
+			CHECK(ldap_parse_master_zoneentry(entry, NULL, inst,
+							  task));
 		else if (objclass & LDAP_ENTRYCLASS_FORWARD)
 			CHECK(ldap_parse_fwd_zoneentry(entry, inst));
 

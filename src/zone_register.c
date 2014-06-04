@@ -232,11 +232,11 @@ cleanup:
  * Create a new zone info structure.
  */
 #define PRINT_BUFF_SIZE 255
-static isc_result_t ATTR_NONNULL(1,2,4,5,6,7)
+static isc_result_t ATTR_NONNULL(1,2,4,5,6,8)
 create_zone_info(isc_mem_t * const mctx, dns_zone_t * const raw,
 		dns_zone_t * const secure, const char * const dn,
 		 settings_set_t *global_settings, const char *db_name,
-		 zone_info_t **zinfop)
+		 dns_db_t * const ldapdb, zone_info_t **zinfop)
 {
 	isc_result_t result;
 	zone_info_t *zinfo;
@@ -268,10 +268,15 @@ create_zone_info(isc_mem_t * const mctx, dns_zone_t * const raw,
 			       "keys/", &zone_dir));
 	CHECK(fs_dirs_create(str_buf(zone_dir)));
 
-	DE_CONST(db_name, argv[0]);
-	CHECK(ldapdb_create(mctx, dns_zone_getorigin(raw), LDAP_DB_TYPE,
-			    LDAP_DB_RDATACLASS, sizeof(argv)/sizeof(argv[0]),
-			    argv, NULL, &zinfo->ldapdb));
+	if (ldapdb == NULL) { /* create new empty database */
+		DE_CONST(db_name, argv[0]);
+		CHECK(ldapdb_create(mctx, dns_zone_getorigin(raw),
+				    LDAP_DB_TYPE, LDAP_DB_RDATACLASS,
+				    sizeof(argv)/sizeof(argv[0]),
+				    argv, NULL, &zinfo->ldapdb));
+	} else { /* re-use existing database */
+		dns_db_attach(ldapdb, &zinfo->ldapdb);
+	}
 
 cleanup:
 	if (result == ISC_R_SUCCESS)
@@ -313,8 +318,9 @@ delete_zone_info(void *arg1, void *arg2)
  * must be absolute and the zone cannot already be in the zone register.
  */
 isc_result_t
-zr_add_zone(zone_register_t * const zr, dns_zone_t * const raw,
-	    dns_zone_t * const secure, const char * const dn)
+zr_add_zone(zone_register_t * const zr, dns_db_t * const ldapdb,
+	    dns_zone_t * const raw, dns_zone_t * const secure,
+	    const char * const dn)
 {
 	isc_result_t result;
 	dns_name_t *name;
@@ -346,7 +352,7 @@ zr_add_zone(zone_register_t * const zr, dns_zone_t * const raw,
 	}
 
 	CHECK(create_zone_info(zr->mctx, raw, secure, dn, zr->global_settings,
-			       ldap_instance_getdbname(zr->ldap_inst),
+			       ldap_instance_getdbname(zr->ldap_inst), ldapdb,
 			       &new_zinfo));
 	CHECK(dns_rbt_addname(zr->rbt, name, new_zinfo));
 

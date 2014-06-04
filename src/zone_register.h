@@ -33,9 +33,10 @@ void
 zr_destroy(zone_register_t **zrp) ATTR_NONNULLS;
 
 isc_result_t
-zr_add_zone(zone_register_t * const zr, dns_zone_t * const raw,
-	    dns_zone_t * const secure, const char * const dn)
-	    ATTR_NONNULL(1,2,4) ATTR_CHECKRESULT;
+zr_add_zone(zone_register_t * const zr, dns_db_t * const ldapdb,
+	    dns_zone_t * const raw, dns_zone_t * const secure,
+	    const char * const dn)
+	    ATTR_NONNULL(1,3,5) ATTR_CHECKRESULT;
 
 isc_result_t
 zr_del_zone(zone_register_t *zr, dns_name_t *origin) ATTR_NONNULLS ATTR_CHECKRESULT;
