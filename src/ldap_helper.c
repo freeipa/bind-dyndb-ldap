@@ -76,6 +76,7 @@
 #include "ldap_driver.h"
 #include "ldap_entry.h"
 #include "ldap_helper.h"
+#include "lock.h"
 #include "log.h"
 #include "rdlist.h"
 #include "semaphore.h"
@@ -1048,7 +1049,7 @@ publish_zone(isc_task_t *task, ldap_instance_t *inst, dns_zone_t *zone)
 	isc_boolean_t freeze = ISC_FALSE;
 	dns_zone_t *zone_in_view = NULL;
 	dns_view_t *view_in_zone = NULL;
-	isc_boolean_t unlock = ISC_FALSE;
+	isc_result_t lock_state = ISC_R_IGNORE;
 
 	REQUIRE(ISCAPI_TASK_VALID(task));
 	REQUIRE(inst != NULL);
@@ -1078,11 +1079,7 @@ publish_zone(isc_task_t *task, ldap_instance_t *inst, dns_zone_t *zone)
 	} /* else if (zone_in_view == NULL && view_in_zone == NULL)
 	     Publish the zone. */
 
-	result = isc_task_beginexclusive(task);
-	RUNTIME_CHECK(result == ISC_R_SUCCESS ||
-		      result == ISC_R_LOCKBUSY);
-	unlock = (result == ISC_R_SUCCESS);
-
+	run_exclusive_enter(task, &lock_state);
 	if (inst->view->frozen) {
 		freeze = ISC_TRUE;
 		dns_view_thaw(inst->view);
@@ -1096,8 +1093,7 @@ cleanup:
 		dns_zone_detach(&zone_in_view);
 	if (freeze)
 		dns_view_freeze(inst->view);
-	if (unlock)
-		isc_task_endexclusive(task);
+	run_exclusive_exit(task, lock_state);
 
 	return result;
 }
@@ -1281,7 +1277,7 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 {
 	isc_result_t result;
 	isc_result_t isforward = ISC_R_NOTFOUND;
-	isc_boolean_t unlock = ISC_FALSE;
+	isc_result_t lock_state = ISC_R_IGNORE;
 	isc_boolean_t freeze = ISC_FALSE;
 	dns_zone_t *raw = NULL;
 	dns_zone_t *secure = NULL;
@@ -1290,13 +1286,8 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 
 	dns_name_format(name, zone_name_char, DNS_NAME_FORMATSIZE);
 	log_debug(1, "deleting zone '%s'", zone_name_char);
-	if (lock) {
-		result = isc_task_beginexclusive(inst->task);
-		RUNTIME_CHECK(result == ISC_R_SUCCESS ||
-			      result == ISC_R_LOCKBUSY);
-		if (result == ISC_R_SUCCESS)
-			unlock = ISC_TRUE;
-	}
+	if (lock)
+		run_exclusive_enter(inst->task, &lock_state);
 
 	if (!preserve_forwarding) {
 		CHECK(delete_forwarding_table(inst, name, "zone",
@@ -1339,8 +1330,7 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 cleanup:
 	if (freeze)
 		dns_view_freeze(inst->view);
-	if (unlock)
-		isc_task_endexclusive(inst->task);
+	run_exclusive_exit(inst->task, lock_state);
 
 	return result;
 }
@@ -2215,7 +2205,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	dns_zone_t *secure = NULL;
 	dns_zone_t *toview = NULL;
 	isc_result_t result;
-	isc_boolean_t unlock = ISC_FALSE;
+	isc_result_t lock_state = ISC_R_IGNORE;
 	isc_boolean_t new_zone = ISC_FALSE;
 	isc_boolean_t want_secure = ISC_FALSE;
 	isc_boolean_t configured = ISC_FALSE;
@@ -2242,10 +2232,7 @@ ldap_parse_master_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	dn = entry->dn;
 	CHECK(dn_to_dnsname(inst->mctx, dn, &name, NULL));
 
-	result = isc_task_beginexclusive(task);
-	RUNTIME_CHECK(result == ISC_R_SUCCESS || result == ISC_R_LOCKBUSY);
-	if (result == ISC_R_SUCCESS)
-		unlock = ISC_TRUE;
+	run_exclusive_enter(task, &lock_state);
 
 	/*
 	 * TODO: Remove this hack, most probably before Fedora 20.
@@ -2363,8 +2350,7 @@ cleanup:
 		if (result != ISC_R_SUCCESS)
 			log_error_r("zone '%s': rollback failed: ", entry->dn);
 	}
-	if (unlock)
-		isc_task_endexclusive(task);
+	run_exclusive_exit(task, lock_state);
 	if (dns_name_dynamic(&name))
 		dns_name_free(&name, inst->mctx);
 	if (raw != NULL)

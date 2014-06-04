@@ -11,6 +11,7 @@ HDRS =				\
 	ldap_driver.h		\
 	ldap_entry.h		\
 	ldap_helper.h		\
+	lock.h			\
 	log.h			\
 	rbt_helper.h		\
 	rdlist.h		\
@@ -33,6 +34,7 @@ ldap_la_SOURCES =		\
 	ldap_driver.c		\
 	ldap_entry.c		\
 	ldap_helper.c		\
+	lock.c			\
 	log.c			\
 	rbt_helper.c		\
 	rdlist.c		\

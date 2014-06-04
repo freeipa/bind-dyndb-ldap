@@ -32,6 +32,7 @@
 #include <string.h>
 #include <strings.h>
 
+#include "lock.h"
 #include "log.h"
 #include "settings.h"
 #include "str.h"
@@ -234,7 +235,7 @@ set_value(isc_mem_t *mctx, setting_t *setting, const char *value,
 	  isc_task_t *task)
 {
 	isc_result_t result;
-	isc_result_t lock = ISC_R_IGNORE;
+	isc_result_t lock_state = ISC_R_IGNORE;
 	isc_uint32_t numeric_value;
 	isc_uint32_t len;
 
@@ -289,8 +290,7 @@ set_value(isc_mem_t *mctx, setting_t *setting, const char *value,
 	}
 
 	/* Switch to single thread mode and write new value. */
-	lock = isc_task_beginexclusive(task);
-	RUNTIME_CHECK(lock == ISC_R_SUCCESS || lock == ISC_R_LOCKBUSY);
+	run_exclusive_enter(task, &lock_state);
 
 	switch (setting->type) {
 	case ST_STRING:
@@ -318,8 +318,7 @@ set_value(isc_mem_t *mctx, setting_t *setting, const char *value,
 	result = ISC_R_SUCCESS;
 
 cleanup:
-	if (lock == ISC_R_SUCCESS)
-		isc_task_endexclusive(task);
+	run_exclusive_exit(task, lock_state);
 	return result;
 }
 
@@ -377,7 +376,7 @@ setting_unset(const char *const name, const settings_set_t *set,
 	      isc_task_t *task)
 {
 	isc_result_t result;
-	isc_result_t lock = ISC_R_IGNORE;
+	isc_result_t lock_state = ISC_R_IGNORE;
 	setting_t *setting = NULL;
 
 	REQUIRE(task != NULL);
@@ -387,8 +386,7 @@ setting_unset(const char *const name, const settings_set_t *set,
 	if (!setting->filled)
 		return ISC_R_IGNORE;
 
-	lock = isc_task_beginexclusive(task);
-	RUNTIME_CHECK(lock == ISC_R_SUCCESS || lock == ISC_R_LOCKBUSY);
+	run_exclusive_enter(task, &lock_state);
 
 	switch (setting->type) {
 	case ST_STRING:
@@ -408,8 +406,7 @@ setting_unset(const char *const name, const settings_set_t *set,
 	setting->filled = 0;
 
 cleanup:
-	if (lock == ISC_R_SUCCESS)
-		isc_task_endexclusive(task);
+	run_exclusive_exit(task, lock_state);
 	if (result == ISC_R_NOTFOUND)
 		log_bug("setting '%s' was not found in set of settings '%s'",
 			name, set->name);
