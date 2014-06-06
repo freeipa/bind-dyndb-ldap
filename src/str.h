@@ -48,22 +48,12 @@ typedef struct ld_string	ld_string_t;
 
 size_t str_len(const ld_string_t *str) ATTR_NONNULLS ATTR_CHECKRESULT;
 const char * str_buf(const ld_string_t *src) ATTR_NONNULLS ATTR_CHECKRESULT;
-isc_result_t str_copy(ld_string_t *dest, const ld_string_t *src) ATTR_NONNULLS ATTR_CHECKRESULT;
-isc_result_t str_clone(ld_string_t **dest, const ld_string_t *src _STR_MEM_FLARG) ATTR_NONNULLS ATTR_CHECKRESULT;
 void str_clear(ld_string_t *dest) ATTR_NONNULLS;
 isc_result_t str_init_char(ld_string_t *dest, const char *src) ATTR_NONNULLS ATTR_CHECKRESULT;
 isc_result_t str_cat_char(ld_string_t *dest, const char *src) ATTR_NONNULLS ATTR_CHECKRESULT;
 isc_result_t str_cat_char_len(ld_string_t *dest, const char *src, size_t len) ATTR_NONNULLS ATTR_CHECKRESULT;
-isc_result_t str_cat_isc_region(ld_string_t *dest, const isc_region_t *region) ATTR_NONNULLS ATTR_CHECKRESULT;
-isc_result_t str_cat_isc_buffer(ld_string_t *dest, const isc_buffer_t *buffer) ATTR_NONNULLS ATTR_CHECKRESULT;
-isc_result_t str_cat(ld_string_t *dest, const ld_string_t *src) ATTR_NONNULLS ATTR_CHECKRESULT;
 isc_result_t str_sprintf(ld_string_t *dest, const char *format, ...) ISC_FORMAT_PRINTF(2, 3) ATTR_NONNULLS ATTR_CHECKRESULT;
 isc_result_t str_vsprintf(ld_string_t *dest, const char *format, va_list ap) ATTR_NONNULLS ATTR_CHECKRESULT;
-void str_toupper(ld_string_t *str) ATTR_NONNULLS;
-
-void str_to_isc_buffer(const ld_string_t *src, isc_buffer_t *dest) ATTR_NONNULLS;
-
-int str_casecmp_char(const ld_string_t *s1, const char *s2) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 /* These are pseudo-private functions and shouldn't be called directly. */
 isc_result_t str__new(isc_mem_t *mctx, ld_string_t **new_str _STR_MEM_FLARG) ATTR_NONNULLS ATTR_CHECKRESULT;

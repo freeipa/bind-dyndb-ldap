@@ -212,51 +212,6 @@ str_buf(const ld_string_t *src)
 	return src->data;
 }
 
-/*
- * Copy string from src to dest.
- */
-isc_result_t
-str_copy(ld_string_t *dest, const ld_string_t *src)
-{
-	isc_result_t result;
-	size_t len;
-
-	REQUIRE(dest != NULL);
-	REQUIRE(src != NULL);
-
-	if (src->data == NULL)
-            return ISC_R_SUCCESS;
-
-	len = str_len_internal(src);
-	CHECK(str_alloc(dest, len));
-	memcpy(dest->data, src->data, len + 1);
-
-	return ISC_R_SUCCESS;
-
-cleanup:
-	return result;
-}
-
-/*
- * Make a new string and copy src to it.
- */
-isc_result_t
-str_clone(ld_string_t **dest, const ld_string_t *src _STR_MEM_FLARG)
-{
-	isc_result_t result;
-
-	REQUIRE(src != NULL);
-	REQUIRE(dest != NULL && *dest == NULL);
-
-	CHECK(str__new(src->mctx, dest _STR_MEM_FLARG_PASS));
-	CHECK(str_copy(*dest, src));
-
-	return ISC_R_SUCCESS;
-
-cleanup:
-	return result;
-}
-
 void
 str_clear(ld_string_t *dest)
 {
@@ -324,69 +279,6 @@ cleanup:
 	return result;
 }
 
-isc_result_t
-str_cat_char_len(ld_string_t *dest, const char *src, size_t len)
-{
-	isc_result_t result;
-	char *from;
-	size_t dest_size;
-
-	REQUIRE(dest != NULL);
-
-        if (src == NULL || len == 0)
-            return ISC_R_SUCCESS;
-
-	dest_size = str_len_internal(dest);
-
-	CHECK(str_alloc(dest, dest_size + len));
-	from = dest->data + dest_size;
-	memcpy(from, src, len);
-	from[len] = '\0';
-
-	return ISC_R_SUCCESS;
-
-cleanup:
-	return result;
-}
-
-isc_result_t
-str_cat_isc_region(ld_string_t *dest, const isc_region_t *region)
-{
-	REQUIRE(dest != NULL);
-	REQUIRE(region != NULL);
-
-	return str_cat_char_len(dest, (char *)region->base, region->length);
-}
-
-isc_result_t
-str_cat_isc_buffer(ld_string_t *dest, const isc_buffer_t *buffer)
-{
-	isc_region_t region;
-	isc_buffer_t *deconst_buffer;
-
-	REQUIRE(dest != NULL);
-	REQUIRE(ISC_BUFFER_VALID(buffer));
-
-	DE_CONST(buffer, deconst_buffer);
-	isc_buffer_usedregion(deconst_buffer, &region);
-
-	return str_cat_isc_region(dest, &region);
-}
-
-/*
- * Concatenate string src to string dest.
- */
-isc_result_t
-str_cat(ld_string_t *dest, const ld_string_t *src)
-{
-	REQUIRE(dest != NULL);
-
-	if (src == NULL || src->data == NULL)
-            return ISC_R_SUCCESS;
-
-	return str_cat_char(dest, src->data);
-}
-
 /*
  * A sprintf() like function.
  */
@@ -433,41 +325,4 @@ str_vsprintf(ld_string_t *dest, const char *format, va_list ap)
 cleanup:
 	va_end(backup);
 	return result;
-}
-
-void
-str_toupper(ld_string_t *str)
-{
-	char *ptr;
-
-	REQUIRE(str != NULL);
-
-	if (str->data == NULL)
-		return;
-
-	for (ptr = str->data; *ptr != '\0'; ptr++)
-		*ptr = toupper((unsigned char)*ptr);
-}
-
-void
-str_to_isc_buffer(const ld_string_t *src, isc_buffer_t *dest)
-{
-	size_t len;
-
-	REQUIRE(src != NULL);
-	REQUIRE(dest != NULL);
-
-	len = str_len_internal(src);
-
-	isc_buffer_init(dest, src->data, len);
-	isc_buffer_add(dest, len);
-}
-
-int
-str_casecmp_char(const ld_string_t *s1, const char *s2)
-{
-	REQUIRE(s1 != NULL && s1->data != NULL);
-	REQUIRE(s2 != NULL);
-
-	return strcasecmp(s1->data, s2);
 }
