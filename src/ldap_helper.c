@@ -1397,8 +1397,8 @@ cleanup:
  * @retval others	  Some RBT manipulation errors including ISC_R_FAILURE.
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst, 
-                          dns_name_t *name)
+configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
+			  dns_name_t *name)
 {
 	const char *dn = entry->dn;
 	isc_result_t result;
@@ -2294,25 +2294,9 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 
 	run_exclusive_enter(task, &lock_state);
 
-	/*
-	 * TODO: Remove this hack, most probably before Fedora 20.
-	 * Forwarding has top priority hence when the forwarders are properly
-	 * set up all others attributes are ignored.
-	 */
 	result = configure_zone_forwarders(entry, inst, &name);
-	if (result != ISC_R_DISABLED) {
-		if (result == ISC_R_SUCCESS) {
-			/* forwarding was enabled for the zone
-			 * => zone type was changed to "forward"
-			 * => delete "master" zone */
-			CHECK(ldap_delete_zone2(inst, &name, ISC_FALSE,
-						ISC_TRUE));
-		}
-		/* DO NOT CHANGE ANYTHING ELSE after forwarders are set up! */
+	if (result != ISC_R_SUCCESS && result != ISC_R_DISABLED)
 		goto cleanup;
-	}
-	/* No forwarders are used. Zone was removed from fwdtable.
-	 * Load the zone. */
 
 	result = ldap_entry_getvalues(entry, "idnsSecInlineSigning", &values);
 	if (result == ISC_R_NOTFOUND || HEAD(values) == NULL)
