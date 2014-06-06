@@ -40,48 +40,136 @@
 #include "util.h"
 #include "zone_register.h"
 
-static isc_result_t explode_dn(const char *dn, char ***explodedp, int notypes) ATTR_NONNULLS ATTR_CHECKRESULT;
-static isc_result_t explode_rdn(const char *rdn, char ***explodedp,
-				int notypes) ATTR_NONNULLS ATTR_CHECKRESULT;
-
-
+/**
+ * Convert LDAP DN to absolute DNS names.
+ *
+ * @param[in]  dn     LDAP DN with one or two idnsName components at the
+ *                    beginning.
+ * @param[out] target Absolute DNS name derived from the first two idnsNames.
+ * @param[out] origin Absolute DNS name derived from the last idnsName
+ *                    component of DN, i.e. zone. Can be NULL.
+ *
+ * @code
+ * Examples:
+ * dn = "idnsName=foo.bar, idnsName=example.org., cn=dns, dc=example, dc=org"
+ * target = "foo.bar.example.org."
+ * origin = "example.org."
+ *
+ * dn = "idnsname=89, idnsname=4.34.10.in-addr.arpa, cn=dns, dc=example, dc=org"
+ * target = "89.4.34.10.in-addr.arpa."
+ * origin = "4.34.10.in-addr.arpa."
+ *
+ * dn = "idnsname=third.test., idnsname=test., cn=dns, dc=example, dc=org"
+ * target = "third.test."
+ * origin = "test."
+ * @endcode
+ */
 isc_result_t
-dn_to_dnsname(isc_mem_t *mctx, const char *dn, dns_name_t *target,
+dn_to_dnsname(isc_mem_t *mctx, const char *dn_str, dns_name_t *target,
 	      dns_name_t *otarget)
 {
-	isc_result_t result;
+	LDAPDN dn = NULL;
+	LDAPRDN rdn = NULL;
+	LDAPAVA *attr = NULL;
+	int idx;
+	int ret;
+
 	DECLARE_BUFFERED_NAME(name);
 	DECLARE_BUFFERED_NAME(origin);
-	ld_string_t *str = NULL;
-	ld_string_t *ostr = NULL;
-	isc_buffer_t buffer;
+	isc_buffer_t name_buf;
+	isc_buffer_t origin_buf;
+	isc_result_t result;
 
-	REQUIRE(dn != NULL);
+	REQUIRE(dn_str != NULL);
+	REQUIRE(target != NULL);
 
 	INIT_BUFFERED_NAME(name);
-	CHECK(str_new(mctx, &str));
+	INIT_BUFFERED_NAME(origin);
+	isc_buffer_initnull(&name_buf);
+	isc_buffer_initnull(&origin_buf);
 
-	if (otarget != NULL) {
-		INIT_BUFFERED_NAME(origin);
-		CHECK(str_new(mctx, &ostr));
+	/* Example DN: cn=a+sn=b, ou=people */
+
+	ret = ldap_str2dn(dn_str, &dn, LDAP_DN_FORMAT_LDAPV3);
+	if (ret != LDAP_SUCCESS || dn == NULL) {
+		log_bug("ldap_str2dn failed: %u", ret);
+		CLEANUP_WITH(ISC_R_UNEXPECTED);
 	}
 
-	CHECK(dn_to_text(dn, str, ostr));
-	str_to_isc_buffer(str, &buffer);
-	CHECK(dns_name_fromtext(&name, &buffer, NULL, 0, NULL));
+	/* iterate over DN components: e.g. cn=a+sn=b */
+	for (idx = 0; dn[idx] != NULL; idx++) {
+		rdn = dn[idx];
 
-	if (otarget != NULL) {
-		str_to_isc_buffer(ostr, &buffer);
-		CHECK(dns_name_fromtext(&origin, &buffer, NULL, 0, NULL));
+		/* "iterate" over RDN components: e.g. cn=a */
+		INSIST(rdn[0] != NULL); /* RDN without (attr=value)?! */
+		if (rdn[1] != NULL) {
+			log_bug("multi-valued RDNs are not supported");
+			CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
+		}
+
+		/* attribute in current RDN component */
+		attr = rdn[0];
+		if ((attr->la_flags & LDAP_AVA_STRING) == 0) {
+			log_error("non-string attribute detected: position %u",
+				  idx);
+			CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
+		}
+
+		if (strncasecmp("idnsName", attr->la_attr.bv_val,
+				attr->la_attr.bv_len) == 0) {
+			if (idx == 0) {
+				isc_buffer_init(&name_buf,
+						attr->la_value.bv_val,
+						attr->la_value.bv_len);
+				isc_buffer_add(&name_buf,
+					       attr->la_value.bv_len);
+			} else if (idx == 1) {
+				isc_buffer_init(&origin_buf,
+						attr->la_value.bv_val,
+						attr->la_value.bv_len);
+				isc_buffer_add(&origin_buf,
+					       attr->la_value.bv_len);
+			} else { /* more than two idnsNames?! */
+				break;
+			}
+		} else { /* no match - idx holds position */
+			break;
+		}
+	}
+
+	/* filter out unsupported cases */
+	if (idx <= 0) {
+		log_error("no idnsName component found in DN");
+		CLEANUP_WITH(ISC_R_UNEXPECTEDEND);
+	} else if (idx == 1) { /* zone only */
+		CHECK(dns_name_copy(dns_rootname, &origin, NULL));
+		CHECK(dns_name_fromtext(&name, &name_buf, dns_rootname, 0, NULL));
+	} else if (idx == 2) { /* owner and zone */
+		CHECK(dns_name_fromtext(&origin, &origin_buf, dns_rootname, 0,
+					NULL));
+		CHECK(dns_name_fromtext(&name, &name_buf, &origin, 0, NULL));
+		if (dns_name_issubdomain(&name, &origin) == ISC_FALSE) {
+			log_error("out-of-zone data: first idnsName is not a "
+				  "subdomain of the other");
+			CLEANUP_WITH(DNS_R_BADOWNERNAME);
+		} else if (dns_name_equal(&name, &origin) == ISC_TRUE) {
+			log_error("attempt to redefine zone apex: first "
+				  "idnsName equals to zone name");
+			CLEANUP_WITH(DNS_R_BADOWNERNAME);
+		}
+	} else {
+		log_error("unsupported number of idnsName components in DN: "
+			  "%u components found", idx);
+		CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
 	}
 
 cleanup:
 	if (result == ISC_R_SUCCESS)
 		result = dns_name_dupwithoffsets(&name, mctx, target);
 	else
-		log_error_r("failed to convert dn %s to DNS name", dn);
+		log_error_r("failed to convert DN '%s' to DNS name", dn_str);
 
-	if (otarget != NULL && result == ISC_R_SUCCESS)
+	if (result == ISC_R_SUCCESS && otarget != NULL)
 		result = dns_name_dupwithoffsets(&origin, mctx, otarget);
 
 	if (result != ISC_R_SUCCESS) {
@@ -93,111 +181,8 @@ cleanup:
 		}
 	}
 
-	str_destroy(&str);
-	if (otarget != NULL)
-		str_destroy(&ostr);
-
-	return result;
-}
-
-/**
- * Convert LDAP DN to absolute DNS name.
- *
- * @param[in]  dn     LDAP DN with one or two idnsName components at the
- *                    beginning.
- * @param[out] target Absolute DNS name derived from the all idnsNames.
- * @param[out] origin Absolute DNS name derived from the last idnsName
- *                    component of DN, i.e. zone. Can be NULL.
- *
- * @code
- * Examples:
- * dn = "idnsName=foo, idnsName=bar, idnsName=example.org,"
- *      "cn=dns, dc=example, dc=org"
- * target = "foo.bar.example.org."
- * origin = "example.org."
- *
- * dn = "idnsname=89, idnsname=4.34.10.in-addr.arpa.",
- *      " cn=dns, dc=example, dc=org"
- * target = "89.4.34.10.in-addr.arpa."
- * origin = "4.34.10.in-addr.arpa."
- * (The dot at the end is not doubled when it's already present.)
- * @endcode
- */
-isc_result_t
-dn_to_text(const char *dn, ld_string_t *target, ld_string_t *origin)
-{
-	isc_result_t result;
-	char **exploded_dn = NULL;
-	char **exploded_rdn = NULL;
-	unsigned int i;
-
-	REQUIRE(dn != NULL);
-	REQUIRE(target != NULL);
-
-	CHECK(explode_dn(dn, &exploded_dn, 0));
-	str_clear(target);
-	for (i = 0; exploded_dn[i] != NULL; i++) {
-		if (strncasecmp(exploded_dn[i], "idnsName", 8) != 0)
-			break;
-
-		if (exploded_rdn != NULL) {
-			ldap_value_free(exploded_rdn);
-			exploded_rdn = NULL;
-		}
-
-		CHECK(explode_rdn(exploded_dn[i], &exploded_rdn, 1));
-		if (exploded_rdn[0] == NULL || exploded_rdn[1] != NULL) {
-			log_error("idnsName component of DN has to have "
-				  "exactly one value: DN '%s'", dn);
-			CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
-		}
-		CHECK(str_cat_char(target, exploded_rdn[0]));
-		if (str_buf(target)[str_len(target)-1] != '.')
-			CHECK(str_cat_char(target, "."));
-	}
-
-	/* filter out unsupported cases */
-	if (i <= 0) {
-		log_error("no idnsName component found in DN '%s'", dn);
-		CLEANUP_WITH(ISC_R_UNEXPECTEDEND);
-	} else if (i == 1) { /* zone only - nothing to check */
-		;
-	} else if (i == 2) {
-		if (exploded_dn[0][strlen(exploded_dn[0])-1] == '.') {
-			log_error("absolute record name in DN "
-				  "is not supported: DN '%s'", dn);
-			CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
-		}
-	} else {
-		log_error("unsupported number of idnsName components in DN "
-			  "'%s': %u components found", dn, i);
-		CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
-	}
-
-	if (origin != NULL) {
-		str_clear(origin);
-
-		/*
-		 * If we have DNs with only one idnsName part,
-		 * treat them as absolute zone name, i.e. origin is root.
-		 */
-		if (i < 2)
-			CHECK(str_init_char(origin, "."));
-		else {
-			CHECK(str_cat_char(origin, exploded_rdn[0]));
-			if (str_buf(origin)[str_len(origin)-1] != '.')
-				CHECK(str_cat_char(origin, "."));
-		}
-	}
-
-	if (str_len(target) == 0)
-		CHECK(str_init_char(target, "."));
-
-cleanup:
-	if (exploded_dn != NULL)
-		ldap_value_free(exploded_dn);
-	if (exploded_rdn != NULL)
-		ldap_value_free(exploded_rdn);
+	if (dn != NULL)
+		ldap_dnfree(dn);
 
 	return result;
 }
@@ -307,54 +292,6 @@ cleanup:
 		*ldap_name = NULL;
 	}
 	return result;
-}
-
-static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-explode_dn(const char *dn, char ***explodedp, int notypes)
-{
-	char **exploded;
-
-	REQUIRE(dn != NULL);
-	REQUIRE(explodedp != NULL && *explodedp == NULL);
-
-	exploded = ldap_explode_dn(dn, notypes);
-	if (exploded == NULL) {
-		if (errno == ENOMEM) {
-			return ISC_R_NOMEMORY;
-		} else {
-			log_error("ldap_explode_dn(\"%s\") failed, "
-				  "error code %d", dn, errno);
-			return ISC_R_FAILURE;
-		}
-	}
-
-	*explodedp = exploded;
-
-	return ISC_R_SUCCESS;
-}
-
-static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-explode_rdn(const char *rdn, char ***explodedp, int notypes)
-{
-	char **exploded;
-
-	REQUIRE(rdn != NULL);
-	REQUIRE(explodedp != NULL && *explodedp == NULL);
-
-	exploded = ldap_explode_rdn(rdn, notypes);
-	if (exploded == NULL) {
-		if (errno == ENOMEM) {
-			return ISC_R_NOMEMORY;
-		} else {
-			log_error("ldap_explode_rdn(\"%s\") failed, "
-				  "error code %d", rdn, errno);
-			return ISC_R_FAILURE;
-		}
-	}
-
-	*explodedp = exploded;
-
-	return ISC_R_SUCCESS;
 }
 
 isc_result_t
