@@ -2130,7 +2130,11 @@ zone_sync_apex(const ldap_instance_t * const inst,
 	isc_boolean_t soa_tuple_alloc = ISC_FALSE;
 	isc_uint32_t curr_serial;
 
+	REQUIRE(ldap_writeback != NULL);
+
 	INIT_LIST(rdatalist);
+	*ldap_writeback = ISC_FALSE; /* GCC */
+
 	CHECK(setting_get_str("fake_mname", inst->local_settings,
 			      &fake_mname));
 	CHECK(ldap_parse_rrentry(inst->mctx, entry, &name, fake_mname,
