@@ -160,6 +160,13 @@ attributetype ( 1.3.6.1.4.1.2428.20.1.51
 	SYNTAX 1.3.6.1.4.1.1466.115.121.1.26
 	SINGLE-VALUE )
 
+attributetype ( 1.3.6.1.4.1.2428.20.1.32769
+       NAME 'DLVRecord'
+       DESC 'RFC 4431: DNSSEC Lookaside Validation'
+       EQUALITY caseIgnoreIA5Match
+       SUBSTR caseIgnoreIA5SubstringsMatch
+       SYNTAX 1.3.6.1.4.1.1466.115.121.1.26 )
+
 attributetype ( 2.16.840.1.113730.3.8.5.0
 	NAME 'idnsName'
 	DESC 'DNS FQDN'
@@ -295,7 +302,7 @@ objectclass ( 2.16.840.1.113730.3.8.6.0
 		SRVRecord $ TXTRecord $ MXRecord $ MDRecord $ HINFORecord $
 		MINFORecord $ AFSDBRecord $ LOCRecord $
 		NXTRecord $ NAPTRRecord $ KXRecord $ CERTRecord $ DNAMERecord $
-		DSRecord $ SSHFPRecord
+		DSRecord $ SSHFPRecord $ DLVRecord
 	) )
 
 objectclass ( 2.16.840.1.113730.3.8.6.1
