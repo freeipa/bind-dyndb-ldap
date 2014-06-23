@@ -1,3 +1,7 @@
+4.4
+====
+[1] Error handling for zone loading was fixed.
+
 4.3
 ====
 [1] LDAP update processing was fixed to prevent BIND from crashing during
