@@ -10,16 +10,17 @@ for your version here:
 
 Hopefully, the patch will once be included in the official BIND release.
 
-Because of bug in dns_db_unregister() in older BIND versions, BIND >= 9.7.0a1
-is required.
+BIND >= 9.9.0 is required.
 
 2. Features
 ===========
+
 * support for dynamic updates
 * SASL authentication
 * SyncRepl (RFC 4533) for run-time synchronization with LDAP server
 * read-query performance nearly same as with plain BIND
 * AXFR and IXFR zone transfers are supported
+* DNSSEC in-line signing is supported, including dynamic updates
 
 
 3. Installation
@@ -51,9 +52,11 @@ This will install the file ldap.so into the <libdir>/bind/ directory.
 You can find the complete LDAP schema in the documentation directory. An
 example zone ldif is available in the doc directory.
 
-4.1 Zone (idnsZone) attributes
-------------------------------
+4.1 Master zone (idnsZone)
+--------------------------
+Object class idnsZone is equivalent to type "master" statement in named.conf.
 
+Attributes:
 * idnsAllowDynUpdate
 	Allow dynamic update of records in this zone. If attribute doesn't exist,
 	value "dyn_update" from plugin configuration will be used.
@@ -94,24 +97,46 @@ example zone ldif is available in the doc directory.
 	i.e. effectively disables forwarding and ignores idnsForwarders
 	attribute.
 
-	Value "none" disables forwarding for given zone and ignores
-	global forwarders. Zone with forward policy "none" is considered
-	as type "master", not "forward".
 	Values "first" and "only" are relevant in conjunction with a valid
 	idnsForwarders attribute. Their meaning is same as in BIND9.
 
 * idnsForwarders
-	Defines multiple IP addresses to which queries will be forwarded and
-	effectively creates "forward" zones.
+	Defines multiple IP addresses to which recursive queries will be
+	forwarded. This is equivalent to "forwarders" statement in "master"
+	zone configuration.
+
+	I.e. local BIND replies authoritatively to queries when possible
+	(including authoritative NXDOMAIN answers) so forwarding affects only
+	queries made by BIND to answer recursive queries which cannot be
+	answered locally. Please see
+	https://lists.isc.org/pipermail/bind-users/2006-January/060810.html
+	https://lists.isc.org/pipermail/bind-users/2011-March/083244.html
+
 	It is multi-value attribute: Each IP address (and optional port) has to
 	be in own value. BIND9 syntax for "forwarders" is required.
 	Optional port can be specified by adding " port <number>" after IP 
 	address. IPv4 and IPv6 addresses are supported.
 	Examples: "1.2.3.4" or "1.2.3.4 port 553" or "A::B" or "A::B port 553"
 
-	Zones with idnsForwarders attribute specified and forward policy other
-	than "none" are considered as "forward" zones. All records in LDAP
-	belonging to those zones are ignored and all queries are forwarded.
+* idnsName
+	Absolute name of DNS zone. It is recommended to use names with trailing
+	period, e.g. "example.com."
+
+* idnsSecInlineSigning (default FALSE)
+	DNSSEC in-line signing configuration. Value TRUE is equivalent to
+	following zone configuration in named.conf (default BIND values):
+
+	auto-dnssec maintain;
+	sig-validity-interval 2592000; # 30 days
+	# re-sign interval will be 648000 seconds = 7.5 days
+	sig-signing-signatures 10;
+	sig-signing-nodes 10;
+	sig-signing-type 65534;
+	update-check-ksk yes;
+	dnssec-loadkeys-interval 60;   # minutes
+	key-directory "<plugin-instance-dir>/<zone-name>/keys";
+
+	There is no way to change those values at this moment.
 
 * idnsSOAserial
 	SOA serial number. It is automatically incremented after each change
@@ -129,6 +154,41 @@ example zone ldif is available in the doc directory.
 	if SOA serial is locally significant because serial numbers between
 	masters	aren't synchronized. It will cause problems with zone
 	transfers from multiple masters to single slave.
+
+* nSEC3PARAMRecord
+	NSEC3PARAM resource record definition according to RFC5155.
+	Zone without NSEC3PARAM RR will use NSEC by default.
+
+
+4.2 Forward zone (idnsForwardZone)
+----------------------------------
+Object class idnsForwardZone is equivalent to type "forward" statement
+in named.conf.
+
+Attributes:
+* idnsForwarders
+	Defines multiple IP addresses to which all queries for sub-tree of DNS
+	will be forwarded. This is equivalent to "forwarders" statement in
+	"forward" zone configuration.
+
+	It is multi-value attribute: Each IP address (and optional port) has to
+	be in own value. BIND9 syntax for "forwarders" is required.
+	Optional port can be specified by adding " port <number>" after IP 
+	address. IPv4 and IPv6 addresses are supported.
+	Examples: "1.2.3.4" or "1.2.3.4 port 553" or "A::B" or "A::B port 553"
+
+* idnsForwardPolicy (default "first")
+	Specifies BIND9 zone forward policy. Proprietary value "none"
+	is equivalent to "forwarders {};" in BIND configuration,
+	i.e. effectively disables forwarding and ignores idnsForwarders
+	attribute.
+
+	Values "first" and "only" are relevant in conjunction with a valid
+	idnsForwarders attribute. Their meaning is same as in BIND9.
+
+* idnsName
+	Absolute name of DNS zone. It is recommended to use names with trailing
+	period, e.g. "example.com."
 
 
 5. Configuration
@@ -308,7 +368,42 @@ sync_ptr = idnsAllowSyncPTR
 Forward policy option cannot be set without setting forwarders at the same time.
 
 
-6. License
+6. DNSSEC support
+=================
+
+In-line signing support in this plugin allows to use this BIND feature
+for zones in LDAP.
+
+Signatures are automatically generated by plugin during zone loading
+and signatures are never written back to LDAP. DNSKEY, RRSIG, NSEC and NSEC3
+records in LDAP are ignored because they are automatically managed by BIND.
+
+NSEC3 can be enabled by writting NSEC3PARAM RR to particular zone object
+in LDAP.
+
+Dynamic updates made to in-line signed zones are written back to LDAP as usual
+and respective signatures are automatically re-generated as necessary.
+
+Key management has to be handled by user, i.e. user has to
+generate/delete keys and configure key timestamps as appropriate.
+
+Key directory for particular DNS zone is automatically configured to value:
+<plugin-instance-dir>/<zone-name>/keys
+
+<plugin-instance-dir> is described in section 5.1.3 of this file.
+<zone-name> is textual representation of zone name without trailing period.
+
+Example:
+* BIND directory: "/var/named"
+* bind-dyndb-ldap directory: "dyndb-ldap"
+* LDAP instance name: "ipa"
+* DNS zone: "example.com."
+* Resulting keys directory: "/var/named/dyndb-ldap/ipa/example.com/keys"
+
+Make sure that keys directory and files is readable by user used for BIND.
+
+
+7. License
 ==========
 
 This package is licensed under the GNU General Public License, version 2

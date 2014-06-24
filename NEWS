@@ -1,3 +1,17 @@
+5.0
+====
+[1] Support for DNSSEC in-line signing was added. Now any LDAP zone can be
+    signed with keys provided by user.
+
+[2] DNSKEY, RRSIG, NSEC and NSEC3 records are automatically managed
+    by BIND+bind-dyndb-ldap. Respective attributes in LDAP are ignored.
+
+[3] Forwarder semantic was changed to match BIND's semantic:
+    - idnsZone object always represent master zone
+    - idnsForwardZone object (new) always represent forward zone
+
+[4] Master root zone can be stored in LDAP.
+
 4.4
 ====
 [1] Error handling for zone loading was fixed.
