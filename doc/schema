@@ -308,7 +308,7 @@ objectclass ( 2.16.840.1.113730.3.8.6.0
 		SRVRecord $ TXTRecord $ MXRecord $ MDRecord $ HINFORecord $
 		MINFORecord $ AFSDBRecord $ LOCRecord $
 		NXTRecord $ NAPTRRecord $ KXRecord $ CERTRecord $ DNAMERecord $
-		DSRecord $ SSHFPRecord $ DLVRecord
+		DSRecord $ SSHFPRecord $ DLVRecord $ TLSARecord
 	) )
 
 objectclass ( 2.16.840.1.113730.3.8.6.1
