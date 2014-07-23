@@ -1,3 +1,7 @@
+5.1
+====
+[1] Fix crash during reconnection to LDAP.
+
 5.0
 ====
 [1] Support for DNSSEC in-line signing was added. Now any LDAP zone can be

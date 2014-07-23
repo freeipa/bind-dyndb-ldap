@@ -848,9 +848,11 @@ cleanup_files(ldap_instance_t *inst) {
 	do {
 		CHECK(zr_get_zone_ptr(inst->zone_register, &name, &raw, &secure));
 		cleanup_zone_files(raw);
-		cleanup_zone_files(secure);
 		dns_zone_detach(&raw);
-		dns_zone_detach(&secure);
+		if (secure != NULL) {
+			cleanup_zone_files(secure);
+			dns_zone_detach(&secure);
+		}
 
 		INIT_BUFFERED_NAME(name);
 		CHECK(rbt_iter_next(&iter, &name));
