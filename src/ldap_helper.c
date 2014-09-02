@@ -1295,7 +1295,8 @@ delete_forwarding_table(ldap_instance_t *inst, dns_name_t *name,
 
 /* Delete zone by dns zone name */
 isc_result_t
-ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
+ldap_delete_zone2(ldap_instance_t *inst, isc_task_t * const task,
+		  dns_name_t *name, isc_boolean_t lock,
 		  isc_boolean_t preserve_forwarding)
 {
 	isc_result_t result;
@@ -1310,7 +1311,7 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 	dns_name_format(name, zone_name_char, DNS_NAME_FORMATSIZE);
 	log_debug(1, "deleting zone '%s'", zone_name_char);
 	if (lock)
-		run_exclusive_enter(inst->task, &lock_state);
+		run_exclusive_enter(task, &lock_state);
 
 	if (!preserve_forwarding) {
 		CHECK(delete_forwarding_table(inst, name, "zone",
@@ -1353,15 +1354,15 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 cleanup:
 	if (freeze)
 		dns_view_freeze(inst->view);
-	run_exclusive_exit(inst->task, lock_state);
+	run_exclusive_exit(task, lock_state);
 
 	return result;
 }
 
 /* Delete zone */
-static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-ldap_delete_zone(ldap_instance_t *inst, const char *dn, isc_boolean_t lock,
-		 isc_boolean_t preserve_forwarding)
+static isc_result_t ATTR_NONNULL(1,3) ATTR_CHECKRESULT
+ldap_delete_zone(ldap_instance_t *inst, isc_task_t * const task, const char *dn,
+		 isc_boolean_t lock, isc_boolean_t preserve_forwarding)
 {
 	isc_result_t result;
 	dns_name_t name;
@@ -1369,7 +1370,7 @@ ldap_delete_zone(ldap_instance_t *inst, const char *dn, isc_boolean_t lock,
 	
 	CHECK(dn_to_dnsname(inst->mctx, dn, &name, NULL));
 
-	result = ldap_delete_zone2(inst, &name, lock, preserve_forwarding);
+	result = ldap_delete_zone2(inst, task, &name, lock, preserve_forwarding);
 
 cleanup:
 	if (dns_name_dynamic(&name))
@@ -1610,7 +1611,8 @@ cleanup:
 
 /* Parse the config object entry */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst)
+ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst,
+		       isc_task_t * const task)
 {
 	isc_result_t result;
 
@@ -1628,14 +1630,14 @@ ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	result = setting_update_from_ldap_entry("dyn_update",
 						inst->global_settings,
 						"idnsAllowDynUpdate",
-						entry, inst->task);
+						entry, task);
 	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
 		goto cleanup;
 
 	result = setting_update_from_ldap_entry("sync_ptr",
 						inst->global_settings,
 						"idnsAllowSyncPTR",
-						entry, inst->task);
+						entry, task);
 	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
 		goto cleanup;
 
@@ -2234,7 +2236,7 @@ zone_security_change(ldap_entry_t * const entry, dns_name_t * const name,
 	 * in period where old zone was deleted but the new zone was not
 	 * created yet. */
 	run_exclusive_enter(task, &lock_state);
-	CHECK(ldap_delete_zone2(inst, name, ISC_FALSE,	ISC_TRUE));
+	CHECK(ldap_delete_zone2(inst, task, name, ISC_FALSE, ISC_TRUE));
 	CHECK(ldap_parse_master_zoneentry(entry, olddb, inst, task));
 
 cleanup:
@@ -2402,7 +2404,8 @@ cleanup:
 		/* Failure in ACL parsing or so. */
 		log_error_r("zone '%s': publishing failed, rolling back due to",
 			    entry->dn);
-		result = ldap_delete_zone2(inst, &name, ISC_TRUE, ISC_FALSE);
+		result = ldap_delete_zone2(inst, task, &name, ISC_TRUE,
+					   ISC_FALSE);
 		if (result != ISC_R_SUCCESS)
 			log_error_r("zone '%s': rollback failed: ", entry->dn);
 	}
@@ -4247,7 +4250,7 @@ update_zone(isc_task_t *task, isc_event_t *event)
 		}
 		*/
 	} else {
-		CHECK(ldap_delete_zone(inst, pevent->dn, ISC_TRUE, ISC_FALSE));
+		CHECK(ldap_delete_zone(inst, task, pevent->dn, ISC_TRUE, ISC_FALSE));
 	}
 
 cleanup:
@@ -4274,7 +4277,7 @@ cleanup:
 }
 
 static void ATTR_NONNULLS
-update_config(isc_task_t *task, isc_event_t *event)
+update_config(isc_task_t * task, isc_event_t *event)
 {
 	ldap_syncreplevent_t *pevent = (ldap_syncreplevent_t *)event;
 	isc_result_t result;
@@ -4285,7 +4288,7 @@ update_config(isc_task_t *task, isc_event_t *event)
 	mctx = pevent->mctx;
 
 	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
-	CHECK(ldap_parse_configentry(entry, inst));
+	CHECK(ldap_parse_configentry(entry, inst, task));
 
 cleanup:
 	if (inst != NULL)

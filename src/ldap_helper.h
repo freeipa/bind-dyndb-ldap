@@ -81,8 +81,9 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 void destroy_ldap_instance(ldap_instance_t **ldap_inst) ATTR_NONNULLS;
 
 isc_result_t
-ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
-		  isc_boolean_t preserve_forwarding) ATTR_NONNULLS;
+ldap_delete_zone2(ldap_instance_t *inst, isc_task_t *task, dns_name_t *name,
+		  isc_boolean_t lock, isc_boolean_t preserve_forwarding)
+		  ATTR_NONNULL(1,3);
 
 /* Functions for writing to LDAP. */
 isc_result_t write_to_ldap(dns_name_t *owner, ldap_instance_t *ldap_inst,

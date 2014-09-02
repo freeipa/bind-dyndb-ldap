@@ -173,8 +173,8 @@ zr_destroy(zone_register_t **zrp)
 		if (result == ISC_R_SUCCESS) {
 			rbt_iter_stop(&iter);
 			result = ldap_delete_zone2(zr->ldap_inst,
-						   &name,
-						   ISC_TRUE, ISC_FALSE);
+						   NULL, &name,
+						   ISC_FALSE, ISC_FALSE);
 			RUNTIME_CHECK(result == ISC_R_SUCCESS);
 		}
 	} while (result == ISC_R_SUCCESS);
