@@ -214,6 +214,7 @@ zr_get_zone_path(isc_mem_t *mctx, settings_set_t *settings,
 
 	CHECK(setting_get_str("directory", settings, &inst_dir));
 	CHECK(str_cat_char(zone_path, inst_dir));
+	CHECK(str_cat_char(zone_path, "master/"));
 	CHECK(str_cat_char(zone_path, zone_name_char));
 	CHECK(str_cat_char(zone_path, "/"));
 	if (last_component != NULL)
