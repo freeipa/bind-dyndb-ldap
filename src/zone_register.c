@@ -189,7 +189,16 @@ zr_destroy(zone_register_t **zrp)
 }
 
 /**
- * Get path associated with particular zone.
+ * Get filesystem path associated with particular zone.
+ *
+ * Zone name will be automatically transformed before usage:
+ * - root zone is translated to '@' to prevent collision with filesystem '.'
+ * + using dns_name_tofilenametext():
+ * - digits, hyphen and underscore are left intact
+ * - letters of English alphabet are downcased
+ * - all other characters are escaped using %ASCII_HEX form, e.g. '/' => '%2F'
+ * - final dot is omited
+ * - labels are separated with '.'
  *
  * @param[in]	settings	Set of settings with working "directory".
  * @param[in]	last_component	String to append to the zone's directory.
@@ -197,25 +206,51 @@ zr_destroy(zone_register_t **zrp)
  * @param[out]	path	Newly allocated string with path terminated
  * 			by 'last_component'.
  * 			Caller is responsible for string deallocation.
+ *
+ * @code
+ * Zone name           Output path
+ * '.'              => '/var/named/dyndb-ldap/ipa/master/@'
+ * 'test.'          => '/var/named/dyndb-ldap/ipa/master/test'
+ * 'TEST.0/1.a.'    => '/var/named/dyndb-ldap/ipa/master/test.0%2F1.a'
+ * @endcode
  */
 isc_result_t
 zr_get_zone_path(isc_mem_t *mctx, settings_set_t *settings,
 		 dns_name_t *zone_name, const char *last_component,
 		 ld_string_t **path) {
 	const char *inst_dir = NULL;
-	char zone_name_char[DNS_NAME_FORMATSIZE];
 	ld_string_t *zone_path = NULL;
 	isc_result_t result;
 
-	REQUIRE(path != NULL && *path == NULL);
+	/* Zone name transformations */
+	char name_char[DNS_NAME_FORMATSIZE];
+	isc_buffer_t name_buf;
+	isc_region_t name_reg;
 
+	REQUIRE(path != NULL && *path == NULL);
+	REQUIRE(dns_name_isabsolute(zone_name));
+
+	isc_buffer_init(&name_buf, name_char, sizeof(name_char));
 	CHECK(str_new(mctx, &zone_path));
-	dns_name_format(zone_name, zone_name_char, sizeof(zone_name_char));
+	CHECK(dns_name_tofilenametext(zone_name, ISC_TRUE, &name_buf));
+	INSIST(isc_buffer_usedlength(&name_buf) > 0);
+
+	/* Root zone is special case: replace '.' with '@'
+	 * to avoid collision with self-reference in directory structure */
+	if (isc_buffer_usedlength(&name_buf) == 1) {
+		isc_buffer_usedregion(&name_buf, &name_reg);
+		if (name_reg.base[0] == '.')
+			name_reg.base[0] = '@';
+	}
+
+	/* NULL-terminate the string */
+	isc_buffer_putuint8(&name_buf, '\0');
+	INSIST(isc_buffer_usedlength(&name_buf) >= 2);
 
 	CHECK(setting_get_str("directory", settings, &inst_dir));
 	CHECK(str_cat_char(zone_path, inst_dir));
 	CHECK(str_cat_char(zone_path, "master/"));
-	CHECK(str_cat_char(zone_path, zone_name_char));
+	CHECK(str_cat_char(zone_path, isc_buffer_base(&name_buf)));
 	CHECK(str_cat_char(zone_path, "/"));
 	if (last_component != NULL)
 		CHECK(str_cat_char(zone_path, last_component));
