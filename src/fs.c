@@ -40,6 +40,7 @@ isc_result_t
 fs_dir_create(const char *dir_name)
 {
 	isc_result_t result;
+	const mode_t dir_mode = S_IRWXU | S_IRWXG;
 	char dir_curr[PATH_MAX + 1] = "";
 	isc_dir_t dir_handle;
 	int ret;
@@ -48,7 +49,7 @@ fs_dir_create(const char *dir_name)
 
 	if (getcwd(dir_curr, sizeof(dir_curr) - 1) == NULL)
 		strncpy(dir_curr, msg_getcwd_failed, sizeof(dir_curr));
-	ret = mkdir(dir_name, 0700);
+	ret = mkdir(dir_name, dir_mode);
 	if (ret == 0)
 		result = ISC_R_SUCCESS;
 	else
@@ -58,6 +59,21 @@ fs_dir_create(const char *dir_name)
 		log_error_r("unable to create directory '%s', working directory "
 			    "is '%s'", dir_name, dir_curr);
 		return result;
+
+	} else if (result == ISC_R_SUCCESS) {
+		/* umask hack for new directories: BIND is multi-threaded and
+		 * I don't want to change umask for all threads or add locking
+		 * solely for this purpose. */
+		ret = chmod(dir_name, dir_mode);
+		if (ret == 0)
+			result = ISC_R_SUCCESS;
+		else {
+			result = isc__errno2result(errno);
+			log_error_r("unable to chmod directory '%s', "
+				    "working directory is '%s'",
+				    dir_name, dir_curr);
+			return result;
+		}
 	}
 
 	/* Verify that the directory is accessible */
