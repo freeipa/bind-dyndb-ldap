@@ -48,6 +48,7 @@
  * @param[out] target Absolute DNS name derived from the first two idnsNames.
  * @param[out] origin Absolute DNS name derived from the last idnsName
  *                    component of DN, i.e. zone. Can be NULL.
+ * @param[out] iszone ISC_TRUE if DN points to zone object, ISC_FALSE otherwise.
  *
  * @code
  * Examples:
@@ -66,7 +67,7 @@
  */
 isc_result_t
 dn_to_dnsname(isc_mem_t *mctx, const char *dn_str, dns_name_t *target,
-	      dns_name_t *otarget)
+	      dns_name_t *otarget, isc_boolean_t *iszone)
 {
 	LDAPDN dn = NULL;
 	LDAPRDN rdn = NULL;
@@ -142,9 +143,13 @@ dn_to_dnsname(isc_mem_t *mctx, const char *dn_str, dns_name_t *target,
 		log_error("no idnsName component found in DN");
 		CLEANUP_WITH(ISC_R_UNEXPECTEDEND);
 	} else if (idx == 1) { /* zone only */
+		if (iszone != NULL)
+			*iszone = ISC_TRUE;
 		CHECK(dns_name_copy(dns_rootname, &origin, NULL));
 		CHECK(dns_name_fromtext(&name, &name_buf, dns_rootname, 0, NULL));
 	} else if (idx == 2) { /* owner and zone */
+		if (iszone != NULL)
+			*iszone = ISC_FALSE;
 		CHECK(dns_name_fromtext(&origin, &origin_buf, dns_rootname, 0,
 					NULL));
 		CHECK(dns_name_fromtext(&name, &name_buf, &origin, 0, NULL));

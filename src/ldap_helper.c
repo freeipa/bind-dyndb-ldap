@@ -1365,10 +1365,12 @@ ldap_delete_zone(ldap_instance_t *inst, isc_task_t * const task, const char *dn,
 		 isc_boolean_t lock, isc_boolean_t preserve_forwarding)
 {
 	isc_result_t result;
+	isc_boolean_t iszone;
 	dns_name_t name;
 	dns_name_init(&name, NULL);
 	
-	CHECK(dn_to_dnsname(inst->mctx, dn, &name, NULL));
+	CHECK(dn_to_dnsname(inst->mctx, dn, &name, NULL, &iszone));
+	INSIST(iszone == ISC_TRUE);
 
 	result = ldap_delete_zone2(inst, task, &name, lock, preserve_forwarding);
 
@@ -1653,6 +1655,7 @@ ldap_parse_fwd_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 {
 	const char *dn;
 	dns_name_t name;
+	isc_boolean_t iszone;
 	char name_txt[DNS_NAME_FORMATSIZE];
 	isc_result_t result;
 
@@ -1663,7 +1666,8 @@ ldap_parse_fwd_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 
 	/* Derive the DNS name of the zone from the DN. */
 	dn = entry->dn;
-	CHECK(dn_to_dnsname(inst->mctx, dn, &name, NULL));
+	CHECK(dn_to_dnsname(inst->mctx, dn, &name, NULL, &iszone));
+	INSIST(iszone == ISC_TRUE);
 
 	result = configure_zone_forwarders(entry, inst, &name);
 	if (result != ISC_R_DISABLED && result != ISC_R_SUCCESS) {
@@ -2277,6 +2281,7 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 	isc_boolean_t new_zone = ISC_FALSE;
 	isc_boolean_t want_secure = ISC_FALSE;
 	isc_boolean_t configured = ISC_FALSE;
+	isc_boolean_t iszone;
 	settings_set_t *zone_settings = NULL;
 	isc_boolean_t ldap_writeback;
 	isc_boolean_t data_changed = ISC_FALSE; /* GCC */
@@ -2298,7 +2303,8 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 
 	/* Derive the dns name of the zone from the DN. */
 	dn = entry->dn;
-	CHECK(dn_to_dnsname(inst->mctx, dn, &name, NULL));
+	CHECK(dn_to_dnsname(inst->mctx, dn, &name, NULL, &iszone));
+	INSIST(iszone == ISC_TRUE);
 
 	run_exclusive_enter(task, &lock_state);
 
@@ -3603,7 +3609,7 @@ ldap_find_ptr(ldap_instance_t *ldap_inst, const int af, const char *ip_str,
 	owner_zone_dn_ptr = strstr(str_buf(ptr_dn),", ") + 1;
 
 	/* Get attribute "idnsAllowDynUpdate" for reverse zone or use default. */
-	CHECK(dn_to_dnsname(mctx, owner_zone_dn_ptr, zone_name, NULL));
+	CHECK(dn_to_dnsname(mctx, owner_zone_dn_ptr, zone_name, NULL, NULL));
 
 cleanup:
 	return result;
@@ -3897,7 +3903,7 @@ modify_ldap_common(dns_name_t *owner, ldap_instance_t *ldap_inst,
 		zone_dn += 1; /* skip whitespace */
 	}
 
-	CHECK(dn_to_dnsname(mctx, zone_dn, &zone_name, NULL));
+	CHECK(dn_to_dnsname(mctx, zone_dn, &zone_name, NULL, NULL));
 
 	result = zr_get_zone_settings(ldap_inst->zone_register, &zone_name,
 				      &zone_settings);
@@ -4200,13 +4206,15 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	ldap_entry_t *entry = pevent->entry;
 	ldap_valuelist_t values;
 	isc_boolean_t zone_active = ISC_FALSE;
+	isc_boolean_t iszone;
 
 	mctx = pevent->mctx;
 	dns_name_init(&currname, NULL);
 	dns_name_init(&prevname, NULL);
 
 	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
-	CHECK(dn_to_dnsname(inst->mctx, pevent->dn, &currname, NULL));
+	CHECK(dn_to_dnsname(inst->mctx, pevent->dn, &currname, NULL, &iszone));
+	INSIST(iszone == ISC_TRUE);
 
 	if (!SYNCREPL_DEL(pevent->chgtype)) {
 		CHECK(ldap_entry_getvalues(entry, "idnsZoneActive", &values));
@@ -4328,6 +4336,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 	isc_boolean_t zone_reloaded = ISC_FALSE;
 	isc_uint32_t serial;
 	ldap_entry_t *entry = pevent->entry;
+	isc_boolean_t iszone;
 	const char *fake_mname = NULL;
 
 	dns_db_t *rbtdb = NULL;
@@ -4365,7 +4374,8 @@ update_record(isc_task_t *task, isc_event_t *event)
 	dns_name_init(&prevorigin, NULL);
 
 	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
-	CHECK(dn_to_dnsname(mctx, pevent->dn, &name, &origin));
+	CHECK(dn_to_dnsname(mctx, pevent->dn, &name, &origin, &iszone));
+	INSIST(iszone == ISC_FALSE);
 	CHECK(zr_get_zone_ptr(inst->zone_register, &origin, &raw, &secure));
 	zone_found = ISC_TRUE;
 
@@ -4612,12 +4622,14 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	isc_result_t result = ISC_R_SUCCESS;
 	ldap_syncreplevent_t *pevent = NULL;
 	dns_name_t entry_name;
-	dns_name_t zone_name;
+	dns_name_t entry_origin;
+	dns_name_t *zone_name = NULL;
 	dns_zone_t *zone_ptr = NULL;
 	char *dn = NULL;
 	char *dbname = NULL;
 	const char *ldap_base = NULL;
 	isc_boolean_t isbase;
+	isc_boolean_t iszone;
 	isc_mem_t *mctx = NULL;
 	isc_taskaction_t action = NULL;
 	isc_task_t *task = NULL;
@@ -4629,7 +4641,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 
 	isc_mem_attach(inst->mctx, &mctx);
 	dns_name_init(&entry_name, NULL);
-	dns_name_init(&zone_name, NULL);
+	dns_name_init(&entry_origin, NULL);
 
 	CHECKED_MEM_STRDUP(mctx, entry->dn, dn);
 	CHECKED_MEM_STRDUP(mctx, inst->db_name, dbname);
@@ -4640,7 +4652,8 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	if (isbase == ISC_TRUE) {
 		class = LDAP_ENTRYCLASS_CONFIG;
 	} else {
-		CHECK(dn_to_dnsname(inst->mctx, dn, &entry_name, &zone_name));
+		CHECK(dn_to_dnsname(inst->mctx, dn, &entry_name, &entry_origin,
+				    &iszone));
 		switch (chgtype) {
 		case LDAP_SYNC_CAPI_ADD:
 		case LDAP_SYNC_CAPI_MODIFY:
@@ -4653,11 +4666,11 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 			 * in other way */
 			result = fwdr_zone_ispresent(inst->fwd_register,
 						     &entry_name);
-			if (result == ISC_R_SUCCESS) {
+			if (result == ISC_R_SUCCESS)
 				class = LDAP_ENTRYCLASS_FORWARD;
-			} else if (dns_name_equal(&zone_name, dns_rootname)
-						  == ISC_TRUE)
-				class = LDAP_ENTRYCLASS_MASTER;
+			else if (iszone == ISC_TRUE)
+				class = (LDAP_ENTRYCLASS_MASTER |
+					 LDAP_ENTRYCLASS_RR);
 			else
 				class = LDAP_ENTRYCLASS_RR;
 			break;
@@ -4665,8 +4678,13 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	}
 	REQUIRE(class != LDAP_ENTRYCLASS_NONE);
 
-	if (class == LDAP_ENTRYCLASS_MASTER || class == LDAP_ENTRYCLASS_RR) {
-		result = zr_get_zone_ptr(inst->zone_register, &zone_name,
+	if (class & LDAP_ENTRYCLASS_MASTER)
+		zone_name = &entry_name;
+	else
+		zone_name = &entry_origin;
+
+	if ((class & (LDAP_ENTRYCLASS_MASTER | LDAP_ENTRYCLASS_RR)) != 0) {
+		result = zr_get_zone_ptr(inst->zone_register, zone_name,
 					 &zone_ptr, NULL);
 		if (result == ISC_R_SUCCESS && dns_zone_getmgr(zone_ptr) != NULL)
 			dns_zone_gettask(zone_ptr, &task);
@@ -4732,8 +4750,8 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 cleanup:
 	if (dns_name_dynamic(&entry_name))
 		dns_name_free(&entry_name, inst->mctx);
-	if (dns_name_dynamic(&zone_name))
-		dns_name_free(&zone_name, inst->mctx);
+	if (dns_name_dynamic(&entry_origin))
+		dns_name_free(&entry_origin, inst->mctx);
 	if (zone_ptr != NULL)
 		dns_zone_detach(&zone_ptr);
 	if (result != ISC_R_SUCCESS) {

@@ -38,7 +38,9 @@
  * that DNS name is returned.
  */
 isc_result_t dn_to_dnsname(isc_mem_t *mctx, const char *dn,
-			   dns_name_t *target, dns_name_t *origin) ATTR_NONNULL(1, 2, 3) ATTR_CHECKRESULT;
+			   dns_name_t *target, dns_name_t *origin,
+			   isc_boolean_t *iszone)
+			   ATTR_NONNULL(1, 2, 3) ATTR_CHECKRESULT;
 
 isc_result_t dnsname_to_dn(zone_register_t *zr, dns_name_t *name,
 			   ld_string_t *target) ATTR_NONNULLS ATTR_CHECKRESULT;
