@@ -6,7 +6,7 @@ database back-end capabilities. For now, it requires that BIND is patched
 to support dynamic loading of database back-ends. You can get a patch
 for your version here:
 
-  http://github.com/mnagy/bind-dynamic_db/downloads
+  https://github.com/spacekpe/bind-dynamic_db
 
 Hopefully, the patch will once be included in the official BIND release.
 
