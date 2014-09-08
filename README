@@ -155,6 +155,11 @@ Attributes:
 	masters	aren't synchronized. It will cause problems with zone
 	transfers from multiple masters to single slave.
 
+* idnsZoneActive
+        Boolean which speicifies if particular DNS zone should be loaded
+        or not. This option is not supported in versions >= 4.0.
+        https://fedorahosted.org/bind-dyndb-ldap/ticket/127
+
 * nSEC3PARAMRecord
 	NSEC3PARAM resource record definition according to RFC5155.
 	Zone without NSEC3PARAM RR will use NSEC by default.
@@ -345,11 +350,12 @@ dynamic-db "my_db_name" {
 
 With this configuration, the LDAP back-end will try to connect to server
 ldap.example.com with simple authentication, without any password. It
-will then do an LDAP subtree search in the "cn=dns,dc=example,dc=com"
-base for entries with object class idnsZone, for which the
-idnsZoneActive attribute is set to True. For each entry it will find, it
-will register a new zone with BIND. The LDAP back-end will keep each
-record it gets from LDAP in its memory.
+will then use RFC 4533 refresh&persist search in the "cn=dns,dc=example,dc=com"
+base for entries with object class idnsZone and idnsRecord.
+For each idnsZone entry it will find, it will register a new zone with BIND.
+For each idnsRecord entry it will create domain name in particular zone.
+The LDAP back-end will keep each record it gets from LDAP in its memory.
+
 Working directory for the plug-in will be "/var/named/dyndb-ldap/my_db_name/",
 so hypothetical zone "example.com" will use sub-directory
 "/var/named/dyndb-ldap/my_db_name/master/example.com/".
