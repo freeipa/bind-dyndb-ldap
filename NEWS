@@ -1,3 +1,8 @@
+4.5
+=====
+[1] Kerberos ticket expiration is now handled correctly.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/131
+
 4.4
 ====
 [1] Error handling for zone loading was fixed.
