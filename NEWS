@@ -1,3 +1,23 @@
+5.2
+====
+[1] Kerberos ticket expiration is now handled correctly.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/131
+
+[2] BIND no longer crashes after removing root zone from LDAP.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/138
+
+[3] Root zone handling was fixed to prevent accidental child zone removal.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/122
+
+[4] Temporary files for idnsZone objects are now inside master/ subdirectory.
+
+[5] Temporary directories are created with ug=rwx,o= permissions to enable
+    POSIX ACL usage.
+
+[6] Naming rules for working directories have changed: See README section 6.
+
+[7] Documentation clearly states that idnsZoneActive attribute is not supported.
+
 5.1
 ====
 [1] Fix crash during reconnection to LDAP.
