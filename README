@@ -326,6 +326,7 @@ directory (default is
 	These sub-directories will contain temporary files like zone dump, zone
 	journal, zone keys etc.
 	The path is relative to "directory" specified in BIND options.
+	See section 6 (DNSSEC) for examples.
 
 5.2 Sample configuration
 ------------------------
@@ -351,7 +352,7 @@ will register a new zone with BIND. The LDAP back-end will keep each
 record it gets from LDAP in its memory.
 Working directory for the plug-in will be "/var/named/dyndb-ldap/my_db_name/",
 so hypothetical zone "example.com" will use sub-directory
-"/var/named/dyndb-ldap/my_db_name/example.com/".
+"/var/named/dyndb-ldap/my_db_name/master/example.com/".
 
 5.3 Configuration in LDAP
 -------------------------
@@ -388,17 +389,29 @@ Key management has to be handled by user, i.e. user has to
 generate/delete keys and configure key timestamps as appropriate.
 
 Key directory for particular DNS zone is automatically configured to value:
-<plugin-instance-dir>/<zone-name>/keys
+<plugin-instance-dir>/master/<zone-name>/keys
 
 <plugin-instance-dir> is described in section 5.1.3 of this file.
-<zone-name> is textual representation of zone name without trailing period.
+<zone-name> is (transformed) textual representation of zone name without
+trailing period.
+
+Zone name will be automatically transformed before usage:
+- root zone is translated to '@' to prevent collision with filesystem '.'
+- digits, hyphen and underscore are left intact
+- letters of English alphabet are downcased
+- all other characters are escaped using %ASCII_HEX form, e.g. '/' => '%2F'
+- final dot is omited
+- labels are separated with '.'
 
 Example:
 * BIND directory: "/var/named"
 * bind-dyndb-ldap directory: "dyndb-ldap"
 * LDAP instance name: "ipa"
 * DNS zone: "example.com."
-* Resulting keys directory: "/var/named/dyndb-ldap/ipa/example.com/keys"
+* Resulting keys directory: "/var/named/dyndb-ldap/ipa/master/example.com/keys"
+
+* DNS zone: "TEST.0/1.a."
+* Resulting keys directory: "/var/named/dyndb-ldap/ipa/master/test.0%2F1.a/keys"
 
 Make sure that keys directory and files is readable by user used for BIND.
 
