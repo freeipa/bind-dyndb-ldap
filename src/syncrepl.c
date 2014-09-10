@@ -33,6 +33,7 @@
 #include "zone_manager.h"
 
 #define LDAPDB_EVENT_SYNCREPL_BARRIER	(LDAPDB_EVENTCLASS + 2)
+#define LDAPDB_EVENT_SYNCREPL_FINISH	(LDAPDB_EVENTCLASS + 3)
 
 /** How many unprocessed LDAP events from syncrepl can be in event queue.
  *  Adding new events into the queue is blocked until some events
@@ -85,6 +86,8 @@ struct sync_ctx {
 	isc_mutex_t			mutex;	/**< guards rest of the structure */
 	isc_condition_t			cond;	/**< for signal when task_cnt == 0 */
 	sync_state_t			state;
+	isc_task_t			*excl_task; /**< task used for transition
+							 barrier->finished */
 	ISC_LIST(task_element_t)	tasks;	/**< list of tasks processing
 						     events from initial
 						     synchronization phase */
@@ -94,7 +97,7 @@ struct sync_ctx {
  * @brief This event is used to separate event queue for particular task to
  * part 'before' and 'after' this event.
  *
- * This is auxiliary event supporting sync_barrier_wait().
+ * This is an auxiliary event supporting sync_barrier_wait().
  *
  * @todo Solution with inst_name is not very clever. Reference counting would
  *       be much better, but ldap_instance_t doesn't support reference counting.
@@ -106,7 +109,62 @@ struct sync_barrierev {
 };
 
 /**
- * @brief Event handler for 'sync barrier event'.
+ * @brief Event handler for 'sync barrier event' - part 2.
+ *
+ * This is auxiliary event handler for zone loading and publishing.
+ * See also barrier_decrement().
+ */
+void
+finish(isc_task_t *task, isc_event_t *event) {
+	isc_result_t result = ISC_R_SUCCESS;
+	ldap_instance_t *inst = NULL;
+	sync_barrierev_t *bev = NULL;
+
+	REQUIRE(ISCAPI_TASK_VALID(task));
+	REQUIRE(event != NULL);
+
+	bev = (sync_barrierev_t *)event;
+	CHECK(manager_get_ldap_instance(bev->dbname, &inst));
+	log_debug(1, "sync_barrier_wait(): finish reached");
+	LOCK(&bev->sctx->mutex);
+	REQUIRE(bev->sctx->state == sync_barrier);
+	bev->sctx->state = sync_finished;
+	isc_condition_broadcast(&bev->sctx->cond);
+	UNLOCK(&bev->sctx->mutex);
+	activate_zones(task, inst);
+
+cleanup:
+	if (result != ISC_R_SUCCESS)
+		log_error_r("syncrepl finish() failed");
+	isc_event_free(&event);
+	return;
+}
+
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+sync_finishev_create(sync_ctx_t *sctx, const char *inst_name,
+		      sync_barrierev_t **evp) {
+	sync_barrierev_t *ev = NULL;
+
+	REQUIRE(sctx != NULL);
+	REQUIRE(inst_name != NULL);
+	REQUIRE(evp != NULL && *evp == NULL);
+
+	ev = (sync_barrierev_t *)isc_event_allocate(sctx->mctx,
+				sctx, LDAPDB_EVENT_SYNCREPL_BARRIER,
+				finish, NULL,
+				sizeof(sync_barrierev_t));
+	if (ev == NULL)
+		return ISC_R_NOMEMORY;
+
+	ev->dbname = inst_name;
+	ev->sctx = sctx;
+	*evp = ev;
+
+	return ISC_R_SUCCESS;
+}
+
+/**
+ * @brief Event handler for 'sync barrier event' - part 1.
  *
  * This is auxiliary event handler for events created by
  * sync_barrierev_create() and sent by sync_barrier_wait().
@@ -114,13 +172,22 @@ struct sync_barrierev {
  * Each call decrements task_cnt counter in synchronization context associated
  * with the particular event. Broadcast will be send to condition in associated
  * synchronization context when task_cnt == 0.
+ *
+ * Secondly, "finish" event will be generated and sent to sctx->excl_task, i.e.
+ * to inst->task when task_cnt == 0.
+ * This split is necessary because we have to make sure that DNS view
+ * manipulation during zone loading is done only from inst->task
+ * (see run_exclusive_enter() comments).
  */
 void
 barrier_decrement(isc_task_t *task, isc_event_t *event) {
 	isc_result_t result = ISC_R_SUCCESS;
 	ldap_instance_t *inst = NULL;
 	sync_barrierev_t *bev = NULL;
+	sync_barrierev_t *fev = NULL;
+	isc_event_t *ev = NULL;
 	isc_uint32_t cnt;
+	isc_boolean_t locked = ISC_FALSE;
 
 	REQUIRE(ISCAPI_TASK_VALID(task));
 	REQUIRE(event != NULL);
@@ -131,14 +198,15 @@ barrier_decrement(isc_task_t *task, isc_event_t *event) {
 	if (cnt == 0) {
 		log_debug(1, "sync_barrier_wait(): barrier reached");
 		LOCK(&bev->sctx->mutex);
-		REQUIRE(bev->sctx->state == sync_barrier);
-		bev->sctx->state = sync_finished;
-		isc_condition_broadcast(&bev->sctx->cond);
-		UNLOCK(&bev->sctx->mutex);
-		activate_zones(task, inst);
+		locked = ISC_TRUE;
+		CHECK(sync_finishev_create(bev->sctx, bev->dbname, &fev));
+		ev = (isc_event_t *)fev;
+		isc_task_send(bev->sctx->excl_task, &ev);
 	}
 
 cleanup:
+	if (locked)
+		UNLOCK(&bev->sctx->mutex);
 	if (result != ISC_R_SUCCESS)
 		log_error_r("barrier_decrement() failed");
 	isc_event_free(&event);
@@ -203,6 +271,8 @@ sync_ctx_init(isc_mem_t *mctx, isc_task_t *task, sync_ctx_t **sctxp) {
 	CHECK(isc_refcount_init(&sctx->task_cnt, 0));
 	refcount_ready = ISC_TRUE;
 
+	isc_task_attach(task, &sctx->excl_task);
+
 	ISC_LIST_INIT(sctx->tasks);
 
 	sctx->state = sync_init;
@@ -251,6 +321,7 @@ sync_ctx_free(sync_ctx_t **sctxp) {
 	}
 	isc_condition_destroy(&sctx->cond);
 	isc_refcount_destroy(&sctx->task_cnt);
+	isc_task_detach(&sctx->excl_task);
 	UNLOCK(&sctx->mutex);
 
 	isc_mutex_destroy(&(*sctxp)->mutex);

@@ -24,40 +24,46 @@
 #include "lock.h"
 
 /**
- * Lock BIND dispatcher and allow only single task to run. This function
- * blocks until task-exclusive mode is entered.
+ * Lock BIND dispatcher and allow only single task to run.
+ *
+ * @warning
+ * All calls to isc_task_beginexclusive() have to operate on the same task
+ * otherwise it would not be possible to distinguish recursive locking
+ * from real conflict on the dispatcher lock.
+ * For this reason this wrapper function always works with inst->task.
+ * As a result, this function have to be be called only from inst->task.
  *
  * Recursive locking is allowed. Auxiliary variable pointed to by "statep"
  * stores information if last run_exclusive_enter() operation really locked
  * something or if the lock was called recursively and was no-op.
  *
- * The pair (task, state) used for run_exclusive_enter() has to be
+ * The pair (inst, state) used for run_exclusive_enter() has to be
  * used for run_exclusive_exit().
  *
- * @param[in]  	  task   The only task allowed to run.
+ * @param[in]  	  inst   The instance with the only task which is allowed to run.
  * @param[in,out] statep Lock state: ISC_R_SUCCESS or ISC_R_LOCKBUSY
  */
 void
-run_exclusive_enter(isc_task_t *task, isc_result_t *statep)
+run_exclusive_enter(ldap_instance_t *inst, isc_result_t *statep)
 {
 	REQUIRE(statep != NULL);
 	REQUIRE(*statep == ISC_R_IGNORE);
 
-	*statep = isc_task_beginexclusive(task);
+	*statep = isc_task_beginexclusive(ldap_instance_gettask(inst));
 	RUNTIME_CHECK(*statep == ISC_R_SUCCESS || *statep == ISC_R_LOCKBUSY);
 }
 
 /**
  * Exit task-exclusive mode.
  *
- * @param task[in]  The only task allowed to run at the moment.
- * @param state[in] Lock state as returned by run_exclusive_enter().
+ * @param[in] inst  The instance used for previous run_exclusive_enter() call.
+ * @param[in] state Lock state as returned by run_exclusive_enter().
  */
 void
-run_exclusive_exit(isc_task_t *task, isc_result_t state)
+run_exclusive_exit(ldap_instance_t *inst, isc_result_t state)
 {
 	if (state == ISC_R_SUCCESS)
-		isc_task_endexclusive(task);
+		isc_task_endexclusive(ldap_instance_gettask(inst));
 	else
 		/* Unlocking recursive lock or the lock was never locked. */
 		INSIST(state == ISC_R_LOCKBUSY || state == ISC_R_IGNORE);

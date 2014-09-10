@@ -1099,7 +1099,7 @@ publish_zone(isc_task_t *task, ldap_instance_t *inst, dns_zone_t *zone)
 	} /* else if (zone_in_view == NULL && view_in_zone == NULL)
 	     Publish the zone. */
 
-	run_exclusive_enter(task, &lock_state);
+	run_exclusive_enter(inst, &lock_state);
 	if (inst->view->frozen) {
 		freeze = ISC_TRUE;
 		dns_view_thaw(inst->view);
@@ -1113,7 +1113,7 @@ cleanup:
 		dns_zone_detach(&zone_in_view);
 	if (freeze)
 		dns_view_freeze(inst->view);
-	run_exclusive_exit(task, lock_state);
+	run_exclusive_exit(inst, lock_state);
 
 	return result;
 }
@@ -1292,8 +1292,7 @@ delete_forwarding_table(ldap_instance_t *inst, dns_name_t *name,
 
 /* Delete zone by dns zone name */
 isc_result_t
-ldap_delete_zone2(ldap_instance_t *inst, isc_task_t * const task,
-		  dns_name_t *name, isc_boolean_t lock,
+ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 		  isc_boolean_t preserve_forwarding)
 {
 	isc_result_t result;
@@ -1308,7 +1307,7 @@ ldap_delete_zone2(ldap_instance_t *inst, isc_task_t * const task,
 	dns_name_format(name, zone_name_char, DNS_NAME_FORMATSIZE);
 	log_debug(1, "deleting zone '%s'", zone_name_char);
 	if (lock)
-		run_exclusive_enter(task, &lock_state);
+		run_exclusive_enter(inst, &lock_state);
 
 	if (!preserve_forwarding) {
 		CHECK(delete_forwarding_table(inst, name, "zone",
@@ -1351,15 +1350,15 @@ ldap_delete_zone2(ldap_instance_t *inst, isc_task_t * const task,
 cleanup:
 	if (freeze)
 		dns_view_freeze(inst->view);
-	run_exclusive_exit(task, lock_state);
+	run_exclusive_exit(inst, lock_state);
 
 	return result;
 }
 
 /* Delete zone */
-static isc_result_t ATTR_NONNULL(1,3) ATTR_CHECKRESULT
-ldap_delete_zone(ldap_instance_t *inst, isc_task_t * const task, const char *dn,
-		 isc_boolean_t lock, isc_boolean_t preserve_forwarding)
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+ldap_delete_zone(ldap_instance_t *inst, const char *dn, isc_boolean_t lock,
+		 isc_boolean_t preserve_forwarding)
 {
 	isc_result_t result;
 	isc_boolean_t iszone;
@@ -1369,7 +1368,7 @@ ldap_delete_zone(ldap_instance_t *inst, isc_task_t * const task, const char *dn,
 	CHECK(dn_to_dnsname(inst->mctx, dn, &name, NULL, &iszone));
 	INSIST(iszone == ISC_TRUE);
 
-	result = ldap_delete_zone2(inst, task, &name, lock, preserve_forwarding);
+	result = ldap_delete_zone2(inst, &name, lock, preserve_forwarding);
 
 cleanup:
 	if (dns_name_dynamic(&name))
@@ -1405,6 +1404,7 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 	const char *dn = entry->dn;
 	isc_result_t result;
 	isc_result_t orig_result;
+	isc_result_t lock_state = ISC_R_IGNORE;
 	ldap_valuelist_t values;
 	ldap_value_t *value;
 	isc_sockaddrlist_t addrs;
@@ -1601,7 +1601,9 @@ cleanup:
 		log_debug(5, "%s '%s': forwarder table was updated: %s",
 			  msg_obj_type, dn, dns_result_totext(result));
 		orig_result = result;
+		run_exclusive_enter(inst, &lock_state);
 		result = dns_view_flushcache(inst->view);
+		run_exclusive_exit(inst, lock_state);
 		if (result == ISC_R_SUCCESS)
 			result = orig_result;
 	}
@@ -2235,12 +2237,12 @@ zone_security_change(ldap_entry_t * const entry, dns_name_t * const name,
 	/* Lock is necessary to ensure that no events from LDAP are lost
 	 * in period where old zone was deleted but the new zone was not
 	 * created yet. */
-	run_exclusive_enter(task, &lock_state);
-	CHECK(ldap_delete_zone2(inst, task, name, ISC_FALSE, ISC_TRUE));
+	run_exclusive_enter(inst, &lock_state);
+	CHECK(ldap_delete_zone2(inst, name, ISC_FALSE, ISC_TRUE));
 	CHECK(ldap_parse_master_zoneentry(entry, olddb, inst, task));
 
 cleanup:
-	run_exclusive_exit(task, lock_state);
+	run_exclusive_exit(inst, lock_state);
 	if (olddb != NULL)
 		dns_db_detach(&olddb);
 	return result;
@@ -2293,6 +2295,7 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 
 	REQUIRE(entry != NULL);
 	REQUIRE(inst != NULL);
+	REQUIRE(task == inst->task); /* For task-exclusive mode */
 
 	dns_diff_init(inst->mctx, &diff);
 	dns_name_init(&name, NULL);
@@ -2302,7 +2305,7 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 	CHECK(dn_to_dnsname(inst->mctx, dn, &name, NULL, &iszone));
 	INSIST(iszone == ISC_TRUE);
 
-	run_exclusive_enter(task, &lock_state);
+	run_exclusive_enter(inst, &lock_state);
 
 	result = configure_zone_forwarders(entry, inst, &name);
 	if (result != ISC_R_SUCCESS && result != ISC_R_DISABLED)
@@ -2406,12 +2409,11 @@ cleanup:
 		/* Failure in ACL parsing or so. */
 		log_error_r("zone '%s': publishing failed, rolling back due to",
 			    entry->dn);
-		result = ldap_delete_zone2(inst, task, &name, ISC_TRUE,
-					   ISC_FALSE);
+		result = ldap_delete_zone2(inst, &name, ISC_TRUE, ISC_FALSE);
 		if (result != ISC_R_SUCCESS)
 			log_error_r("zone '%s': rollback failed: ", entry->dn);
 	}
-	run_exclusive_exit(task, lock_state);
+	run_exclusive_exit(inst, lock_state);
 	if (dns_name_dynamic(&name))
 		dns_name_free(&name, inst->mctx);
 	if (raw != NULL)
@@ -4209,6 +4211,7 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	dns_name_init(&prevname, NULL);
 
 	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
+	INSIST(task == inst->task); /* For task-exclusive mode */
 	CHECK(dn_to_dnsname(inst->mctx, pevent->dn, &currname, NULL, &iszone));
 	INSIST(iszone == ISC_TRUE);
 
@@ -4254,7 +4257,7 @@ update_zone(isc_task_t *task, isc_event_t *event)
 		}
 		*/
 	} else {
-		CHECK(ldap_delete_zone(inst, task, pevent->dn, ISC_TRUE, ISC_FALSE));
+		CHECK(ldap_delete_zone(inst, pevent->dn, ISC_TRUE, ISC_FALSE));
 	}
 
 cleanup:
@@ -4289,11 +4292,10 @@ update_config(isc_task_t * task, isc_event_t *event)
 	ldap_entry_t *entry = pevent->entry;
 	isc_mem_t *mctx;
 
-	UNUSED(task);
-
 	mctx = pevent->mctx;
 
 	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
+	INSIST(task == inst->task); /* For task-exclusive mode */
 	CHECK(ldap_parse_configentry(entry, inst));
 
 cleanup:
@@ -4681,7 +4683,11 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	else
 		zone_name = &entry_origin;
 
-	if ((class & (LDAP_ENTRYCLASS_MASTER | LDAP_ENTRYCLASS_RR)) != 0) {
+	/* Process ordinary records in parallel but serialize operations on
+	 * master zone objects.
+	 * See discussion about run_exclusive_begin() function in lock.c. */
+	if ((class & LDAP_ENTRYCLASS_RR) != 0 &&
+	    (class & LDAP_ENTRYCLASS_MASTER) == 0) {
 		result = zr_get_zone_ptr(inst->zone_register, zone_name,
 					 &zone_ptr, NULL);
 		if (result == ISC_R_SUCCESS && dns_zone_getmgr(zone_ptr) != NULL)
@@ -4694,6 +4700,8 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 			result = ISC_R_SUCCESS;
 		}
 	} else {
+		/* For configuration object and zone object use single task
+		 * to make sure that the exclusive mode actually works. */
 		isc_task_attach(inst->task, &task);
 	}
 	REQUIRE(task != NULL);
@@ -4722,6 +4730,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	/* All events for single zone are handled by one task, so we don't
 	 * need to spend time with normal records. */
 	if (action == update_zone || action == update_config) {
+		INSIST(task == inst->task); /* For task-exclusive mode */
 		sync_state_get(inst->sctx, &sync_state);
 		if (sync_state == sync_init)
 			CHECK(sync_task_add(inst->sctx, task));
@@ -5131,4 +5140,10 @@ zone_register_t *
 ldap_instance_getzr(ldap_instance_t *ldap_inst)
 {
 	return ldap_inst->zone_register;
+}
+
+isc_task_t *
+ldap_instance_gettask(ldap_instance_t *ldap_inst)
+{
+	return ldap_inst->task;
 }
