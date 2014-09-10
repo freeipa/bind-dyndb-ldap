@@ -394,7 +394,7 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 
 	if (strcmp(dir_name, str_buf(buff)) != 0)
 		CHECK(setting_set("directory", inst->local_settings,
-				  str_buf(buff), inst->task));
+				  str_buf(buff)));
 	str_destroy(&buff);
 	dir_name = NULL;
 	CHECK(setting_get_str("directory", inst->local_settings, &dir_name));
@@ -429,8 +429,7 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 		CLEANUP_WITH(ISC_R_FAILURE);
 	}
 	CHECK(isc_string_printf(print_buff, PRINT_BUFF_SIZE, "%u", auth_method_enum));
-	CHECK(setting_set("auth_method_enum", inst->local_settings, print_buff,
-			  inst->task));
+	CHECK(setting_set("auth_method_enum", inst->local_settings, print_buff));
 
 	/* check we have the right data when SASL/GSSAPI is selected */
 	CHECK(setting_get_str("sasl_mech", set, &sasl_mech));
@@ -485,13 +484,11 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 						  "default '%s'",
 						  str_buf(buff));
 					CHECK(setting_set("krb5_principal", set,
-							  str_buf(buff),
-							  inst->task));
+							  str_buf(buff)));
 				}
 			} else {
 				CHECK(setting_set("krb5_principal", set,
-						  sasl_user,
-						  inst->task));
+						  sasl_user));
 			}
 		}
 	} else if (auth_method_enum == AUTH_SASL) {
@@ -559,7 +556,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	      sizeof(settings_global_default), settings_name,
 	      ldap_inst->local_settings, &ldap_inst->global_settings));
 
-	CHECK(settings_set_fill(ldap_inst->local_settings, argv, task));
+	CHECK(settings_set_fill(ldap_inst->local_settings, argv));
 	CHECK(validate_local_instance_settings(ldap_inst, ldap_inst->local_settings));
 	if (settings_set_isfilled(ldap_inst->global_settings) != ISC_TRUE)
 		CLEANUP_WITH(ISC_R_FAILURE);
@@ -1613,8 +1610,7 @@ cleanup:
 
 /* Parse the config object entry */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst,
-		       isc_task_t * const task)
+ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst)
 {
 	isc_result_t result;
 
@@ -1632,14 +1628,14 @@ ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst,
 	result = setting_update_from_ldap_entry("dyn_update",
 						inst->global_settings,
 						"idnsAllowDynUpdate",
-						entry, task);
+						entry);
 	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
 		goto cleanup;
 
 	result = setting_update_from_ldap_entry("sync_ptr",
 						inst->global_settings,
 						"idnsAllowSyncPTR",
-						entry, task);
+						entry);
 	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
 		goto cleanup;
 
@@ -1991,18 +1987,18 @@ zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
 		dns_zone_attach(raw, &inview);
 
 	result = setting_update_from_ldap_entry("dyn_update", zone_settings,
-						"idnsAllowDynUpdate", entry, task);
+						"idnsAllowDynUpdate", entry);
 	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
 		goto cleanup;
 	ssu_changed = (result == ISC_R_SUCCESS);
 
 	result = setting_update_from_ldap_entry("sync_ptr", zone_settings,
-				       "idnsAllowSyncPTR", entry, task);
+				       "idnsAllowSyncPTR", entry);
 	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
 		goto cleanup;
 
 	result = setting_update_from_ldap_entry("update_policy", zone_settings,
-						"idnsUpdatePolicy", entry, task);
+						"idnsUpdatePolicy", entry);
 	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
 		goto cleanup;
 
@@ -2084,7 +2080,7 @@ zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
 		result = setting_update_from_ldap_entry("nsec3param",
 							zone_settings,
 							"nsec3paramRecord",
-							entry, task);
+							entry);
 		if (result == ISC_R_SUCCESS)
 			CHECK(zone_master_reconfigure_nsec3param(zone_settings,
 								 secure));
@@ -4293,10 +4289,12 @@ update_config(isc_task_t * task, isc_event_t *event)
 	ldap_entry_t *entry = pevent->entry;
 	isc_mem_t *mctx;
 
+	UNUSED(task);
+
 	mctx = pevent->mctx;
 
 	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
-	CHECK(ldap_parse_configentry(entry, inst, task));
+	CHECK(ldap_parse_configentry(entry, inst));
 
 cleanup:
 	if (inst != NULL)

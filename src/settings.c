@@ -32,7 +32,6 @@
 #include <string.h>
 #include <strings.h>
 
-#include "lock.h"
 #include "log.h"
 #include "settings.h"
 #include "str.h"
@@ -85,6 +84,7 @@ static const setting_t settings_default[] = {
 const settings_set_t settings_default_set = {
 	NULL,
 	"built-in defaults",
+	NULL,
 	NULL,
 	(setting_t *) &settings_default[0]
 };
@@ -220,8 +220,7 @@ setting_get_bool(const char *const name, const settings_set_t *const set,
 }
 
 /**
- * Convert and copy value to setting structure. Mutual exclusion during write
- * is ensured by isc_task_beginexclusive(task).
+ * Convert and copy value to setting structure.
  *
  * @retval ISC_R_SUCCESS  New value was converted and copied.
  * @retval ISC_R_IGNORE   New and old values are same, no change was made.
@@ -231,24 +230,27 @@ setting_get_bool(const char *const name, const settings_set_t *const set,
  * @retval others         Other errors from isc_parse_uint32().
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-set_value(isc_mem_t *mctx, setting_t *setting, const char *value,
-	  isc_task_t *task)
+set_value(isc_mem_t *mctx, const settings_set_t *set, setting_t *setting,
+	  const char *value)
 {
 	isc_result_t result;
-	isc_result_t lock_state = ISC_R_IGNORE;
 	isc_uint32_t numeric_value;
 	isc_uint32_t len;
 
 	REQUIRE(setting != NULL);
 	REQUIRE(value != NULL);
-	REQUIRE(task != NULL);
+	REQUIRE(set != NULL);
+
+	/* catch attempts to modify built-in defaults */
+	REQUIRE(set->lock != NULL);
+	LOCK(set->lock);
 
 	/* Check and convert new values. */
 	switch (setting->type) {
 	case ST_STRING:
 		if (setting->filled &&
 		    strcmp(setting->value.value_char, value) == 0)
-			return ISC_R_IGNORE;
+			CLEANUP_WITH(ISC_R_IGNORE);
 		break;
 
 	case ST_UNSIGNED_INTEGER:
@@ -289,9 +291,6 @@ set_value(isc_mem_t *mctx, setting_t *setting, const char *value,
 		break;
 	}
 
-	/* Switch to single thread mode and write new value. */
-	run_exclusive_enter(task, &lock_state);
-
 	switch (setting->type) {
 	case ST_STRING:
 		len = strlen(value) + 1;
@@ -318,7 +317,7 @@ set_value(isc_mem_t *mctx, setting_t *setting, const char *value,
 	result = ISC_R_SUCCESS;
 
 cleanup:
-	run_exclusive_exit(task, lock_state);
+	UNLOCK(set->lock);
 	return result;
 }
 
@@ -341,14 +340,14 @@ cleanup:
  */
 isc_result_t
 setting_set(const char *const name, const settings_set_t *set,
-	    const char *const value, isc_task_t *task)
+	    const char *const value)
 {
 	isc_result_t result;
 	setting_t *setting = NULL;
 
 	CHECK(setting_find(name, set, ISC_FALSE, ISC_FALSE, &setting));
 
-	return set_value(set->mctx, setting, value, task);
+	return set_value(set->mctx, set, setting, value);
 
 cleanup:
 	log_bug("setting '%s' was not found in set of settings '%s'", name,
@@ -371,22 +370,18 @@ cleanup:
  * @retval ISC_R_NOTFOUND Required setting was not found
  *                        in given set of settings.
  */
-isc_result_t
-setting_unset(const char *const name, const settings_set_t *set,
-	      isc_task_t *task)
+static isc_result_t
+setting_unset(const char *const name, const settings_set_t *set)
 {
 	isc_result_t result;
-	isc_result_t lock_state = ISC_R_IGNORE;
 	setting_t *setting = NULL;
-
-	REQUIRE(task != NULL);
 
 	CHECK(setting_find(name, set, ISC_FALSE, ISC_FALSE, &setting));
 
 	if (!setting->filled)
 		return ISC_R_IGNORE;
 
-	run_exclusive_enter(task, &lock_state);
+	LOCK(set->lock);
 
 	switch (setting->type) {
 	case ST_STRING:
@@ -406,7 +401,7 @@ setting_unset(const char *const name, const settings_set_t *set,
 	setting->filled = 0;
 
 cleanup:
-	run_exclusive_exit(task, lock_state);
+	UNLOCK(set->lock);
 	if (result == ISC_R_NOTFOUND)
 		log_bug("setting '%s' was not found in set of settings '%s'",
 			name, set->name);
@@ -428,8 +423,7 @@ cleanup:
  */
 isc_result_t
 setting_update_from_ldap_entry(const char *name, settings_set_t *set,
-			       const char *attr_name, ldap_entry_t *entry,
-			       isc_task_t *task) {
+			       const char *attr_name, ldap_entry_t *entry) {
 	isc_result_t result;
 	setting_t *setting = NULL;
 	ldap_valuelist_t values;
@@ -437,7 +431,7 @@ setting_update_from_ldap_entry(const char *name, settings_set_t *set,
 	CHECK(setting_find(name, set, ISC_FALSE, ISC_FALSE, &setting));
 	result = ldap_entry_getvalues(entry, attr_name, &values);
 	if (result == ISC_R_NOTFOUND || HEAD(values) == NULL) {
-		CHECK(setting_unset(name, set, task));
+		CHECK(setting_unset(name, set));
 		log_debug(2, "setting '%s' (%s) was deleted in object '%s'",
 			  name, attr_name, entry->dn);
 		return ISC_R_SUCCESS;
@@ -452,7 +446,7 @@ setting_update_from_ldap_entry(const char *name, settings_set_t *set,
 		return ISC_R_NOTIMPLEMENTED;
 	}
 
-	CHECK(setting_set(name, set, HEAD(values)->value, task));
+	CHECK(setting_set(name, set, HEAD(values)->value));
 	log_debug(2, "setting '%s' (%s) was changed to '%s' in object '%s'",
 		  name, attr_name, HEAD(values)->value, entry->dn);
 
@@ -513,6 +507,11 @@ settings_set_create(isc_mem_t *mctx, const setting_t default_settings[],
 	CHECKED_MEM_ALLOCATE(mctx, new_set, default_set_length);
 	ZERO_PTR(new_set);
 	isc_mem_attach(mctx, &new_set->mctx);
+
+	CHECKED_MEM_GET_PTR(mctx, new_set->lock);
+	result = isc_mutex_init(new_set->lock);
+	INSIST(result == ISC_R_SUCCESS);
+
 	new_set->parent_set = parent_set;
 
 	CHECKED_MEM_ALLOCATE(mctx, new_set->first_setting, default_set_length);
@@ -546,6 +545,12 @@ settings_set_free(settings_set_t **set) {
 
 	if ((*set)->mctx != NULL) {
 		mctx = (*set)->mctx;
+
+		if ((*set)->lock != NULL) {
+			isc_mutex_destroy((*set)->lock);
+			SAFE_MEM_PUT_PTR(mctx, (*set)->lock);
+		}
+
 		for (s = (*set)->first_setting; s->name != NULL; s++) {
 			if (s->is_dynamic)
 				isc_mem_free(mctx, s->value.value_char);
@@ -556,6 +561,7 @@ settings_set_free(settings_set_t **set) {
 		isc_mem_free(mctx, *set);
 		isc_mem_detach(&mctx);
 	}
+
 	*set = NULL;
 }
 
@@ -586,8 +592,7 @@ settings_set_free(settings_set_t **set) {
  * @endcode
  */
 isc_result_t
-settings_set_fill(settings_set_t *set, const char *const *argv,
-		  isc_task_t *task)
+settings_set_fill(settings_set_t *set, const char *const *argv)
 {
 	isc_result_t result;
 	int i;
@@ -608,7 +613,7 @@ settings_set_fill(settings_set_t *set, const char *const *argv,
 				  "set of settings '%s'", name, set->name);
 			CLEANUP_WITH(ISC_R_EXISTS);
 		}
-		result = setting_set(name, set, value, task);
+		result = setting_set(name, set, value);
 		if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
 			goto cleanup;
 	}
