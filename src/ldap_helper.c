@@ -4263,6 +4263,7 @@ update_zone(isc_task_t *task, isc_event_t *event)
 cleanup:
 	if (inst != NULL) {
 		sync_concurr_limit_signal(inst->sctx);
+		sync_event_signal(inst->sctx, event);
 		if (dns_name_dynamic(&currname))
 			dns_name_free(&currname, inst->mctx);
 		if (dns_name_dynamic(&prevname))
@@ -4299,8 +4300,10 @@ update_config(isc_task_t * task, isc_event_t *event)
 	CHECK(ldap_parse_configentry(entry, inst));
 
 cleanup:
-	if (inst != NULL)
+	if (inst != NULL) {
 		sync_concurr_limit_signal(inst->sctx);
+		sync_event_signal(inst->sctx, event);
+	}
 	if (result != ISC_R_SUCCESS)
 		log_error_r("update_config (syncrepl) failed for '%s'. "
 			    "Configuration can be outdated, run `rndc reload`",
@@ -4621,6 +4624,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	ldap_entryclass_t class = LDAP_ENTRYCLASS_NONE;
 	isc_result_t result = ISC_R_SUCCESS;
 	ldap_syncreplevent_t *pevent = NULL;
+	isc_event_t *wait_event = NULL;
 	dns_name_t entry_name;
 	dns_name_t entry_origin;
 	dns_name_t *zone_name = NULL;
@@ -4752,7 +4756,13 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	pevent->prevdn = NULL;
 	pevent->chgtype = chgtype;
 	pevent->entry = entry;
+	wait_event = (isc_event_t *)pevent;
 	isc_task_send(task, (isc_event_t **)&pevent);
+
+	/* Lock syncrepl queue to prevent zone, config and resource records
+	 * from racing with each other. */
+	if (action == update_zone || action == update_config)
+		sync_event_wait(inst->sctx, wait_event);
 
 cleanup:
 	if (dns_name_dynamic(&entry_name))

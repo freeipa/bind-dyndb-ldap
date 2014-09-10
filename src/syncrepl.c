@@ -88,6 +88,7 @@ struct sync_ctx {
 	sync_state_t			state;
 	isc_task_t			*excl_task; /**< task used for transition
 							 barrier->finished */
+	isc_event_t			*last_ev; /**< Last processed event */
 	ISC_LIST(task_element_t)	tasks;	/**< list of tasks processing
 						     events from initial
 						     synchronization phase */
@@ -456,4 +457,34 @@ sync_concurr_limit_signal(sync_ctx_t *sctx) {
 	REQUIRE(sctx != NULL);
 
 	semaphore_signal(&sctx->concurr_limit);
+}
+
+/**
+ * Wait until given event ev is processed.
+ *
+ * End of event processing has to be signalled by
+ * sync_event_signal() call.
+ */
+void
+sync_event_wait(sync_ctx_t *sctx, isc_event_t *ev) {
+	REQUIRE(sctx != NULL);
+
+	LOCK(&sctx->mutex);
+	while (sctx->last_ev != ev)
+		WAIT(&sctx->cond, &sctx->mutex);
+	UNLOCK(&sctx->mutex);
+}
+
+/**
+ * Signal that given syncrepl event was processed.
+ */
+void
+sync_event_signal(sync_ctx_t *sctx, isc_event_t *ev) {
+	REQUIRE(sctx != NULL);
+	REQUIRE(ev != NULL);
+
+	LOCK(&sctx->mutex);
+	sctx->last_ev = ev;
+	BROADCAST(&sctx->cond);
+	UNLOCK(&sctx->mutex);
 }

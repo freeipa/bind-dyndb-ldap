@@ -66,4 +66,10 @@ sync_concurr_limit_wait(sync_ctx_t *sctx) ATTR_NONNULLS;
 void ATTR_NONNULLS
 sync_concurr_limit_signal(sync_ctx_t *sctx) ATTR_NONNULLS;
 
+void
+sync_event_wait(sync_ctx_t *sctx, isc_event_t *ev) ATTR_NONNULLS;
+
+void
+sync_event_signal(sync_ctx_t *sctx, isc_event_t *ev) ATTR_NONNULLS;
+
 #endif /* SYNCREPL_H_ */
