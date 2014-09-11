@@ -39,7 +39,7 @@
  *
  * Initial value can be useful in early phases of initialization.
  */
-isc_interval_t semaphore_wait_timeout = { 3, 0 };
+isc_interval_t conn_wait_timeout = { 3, 0 };
 
 /*
  * Initialize a semaphore.
@@ -103,18 +103,19 @@ semaphore_wait(semaphore_t *sem)
 /**
  * Wait on semaphore. This operation will try to acquire a lock on the
  * semaphore. If the semaphore is already acquired as many times at it allows,
- * the function will block until someone releases the lock OR timeout expire.
+ * the function will block until someone releases the lock OR timeout expires.
  *
  * @return ISC_R_SUCCESS or ISC_R_TIMEDOUT or other errors from ISC libs
  */
 isc_result_t
-semaphore_wait_timed(semaphore_t *sem)
+semaphore_wait_timed(semaphore_t *const sem,
+		     const isc_interval_t * const timeout)
 {
 	isc_result_t result;
 	isc_time_t abs_timeout;
 	REQUIRE(sem != NULL);
 
-	CHECK(isc_time_nowplusinterval(&abs_timeout, &semaphore_wait_timeout));
+	CHECK(isc_time_nowplusinterval(&abs_timeout, timeout));
 	LOCK(&sem->mutex);
 
 	while (sem->value <= 0)

@@ -24,6 +24,7 @@
 #include <isc/event.h>
 #include <isc/mutex.h>
 #include <isc/task.h>
+#include <isc/time.h>
 #include <isc/util.h>
 
 #include "ldap_helper.h"
@@ -45,6 +46,13 @@ struct task_element {
 	isc_task_t			*task;
 	ISC_LINK(task_element_t)	link;
 };
+
+/** Timeout for thread synchronization. Conditions are re-checked every three
+ * seconds to see if inst->exiting is true or not.
+ *
+ * The expectation is that no event will wait in queue for three seconds so
+ * polling will happen once only and only during BIND shutdown. */
+static const isc_interval_t shutdown_timeout = { 3, 0 };
 
 /**
  * @brief Synchronisation context.
@@ -86,8 +94,7 @@ struct sync_ctx {
 	isc_mutex_t			mutex;	/**< guards rest of the structure */
 	isc_condition_t			cond;	/**< for signal when task_cnt == 0 */
 	sync_state_t			state;
-	isc_task_t			*excl_task; /**< task used for transition
-							 barrier->finished */
+	ldap_instance_t			*inst;
 	isc_event_t			*last_ev; /**< Last processed event */
 	ISC_LIST(task_element_t)	tasks;	/**< list of tasks processing
 						     events from initial
@@ -202,7 +209,7 @@ barrier_decrement(isc_task_t *task, isc_event_t *event) {
 		locked = ISC_TRUE;
 		CHECK(sync_finishev_create(bev->sctx, bev->dbname, &fev));
 		ev = (isc_event_t *)fev;
-		isc_task_send(bev->sctx->excl_task, &ev);
+		isc_task_send(ldap_instance_gettask(bev->sctx->inst), &ev);
 	}
 
 cleanup:
@@ -240,8 +247,7 @@ sync_barrierev_create(sync_ctx_t *sctx, const char *inst_name,
 /**
  * Initialize synchronization context.
  *
- * @param[in]	task	Task used for first synchronization events.
- * 			Typically the ldap_inst->task.
+ * @param[in]	inst	LDAP instance associated with this synchronization ctx.
  * @param[out]	sctxp	The new synchronization context.
  *
  * @post state == sync_init
@@ -249,7 +255,7 @@ sync_barrierev_create(sync_ctx_t *sctx, const char *inst_name,
  * @post tasks list contains the task
  */
 isc_result_t
-sync_ctx_init(isc_mem_t *mctx, isc_task_t *task, sync_ctx_t **sctxp) {
+sync_ctx_init(isc_mem_t *mctx, ldap_instance_t *inst, sync_ctx_t **sctxp) {
 	isc_result_t result;
 	sync_ctx_t *sctx = NULL;
 	isc_boolean_t lock_ready = ISC_FALSE;
@@ -257,11 +263,12 @@ sync_ctx_init(isc_mem_t *mctx, isc_task_t *task, sync_ctx_t **sctxp) {
 	isc_boolean_t refcount_ready = ISC_FALSE;
 
 	REQUIRE(sctxp != NULL && *sctxp == NULL);
-	REQUIRE(ISCAPI_TASK_VALID(task));
 
 	CHECKED_MEM_GET_PTR(mctx, sctx);
 	ZERO_PTR(sctx);
 	isc_mem_attach(mctx, &sctx->mctx);
+
+	sctx->inst = inst;
 
 	CHECK(isc_mutex_init(&sctx->mutex));
 	lock_ready = ISC_TRUE;
@@ -272,12 +279,10 @@ sync_ctx_init(isc_mem_t *mctx, isc_task_t *task, sync_ctx_t **sctxp) {
 	CHECK(isc_refcount_init(&sctx->task_cnt, 0));
 	refcount_ready = ISC_TRUE;
 
-	isc_task_attach(task, &sctx->excl_task);
-
 	ISC_LIST_INIT(sctx->tasks);
 
 	sctx->state = sync_init;
-	CHECK(sync_task_add(sctx, task));
+	CHECK(sync_task_add(sctx, ldap_instance_gettask(sctx->inst)));
 
 	CHECK(semaphore_init(&sctx->concurr_limit, LDAP_CONCURRENCY_LIMIT));
 
@@ -322,7 +327,6 @@ sync_ctx_free(sync_ctx_t **sctxp) {
 	}
 	isc_condition_destroy(&sctx->cond);
 	isc_refcount_destroy(&sctx->task_cnt);
-	isc_task_detach(&sctx->excl_task);
 	UNLOCK(&sctx->mutex);
 
 	isc_mutex_destroy(&(*sctxp)->mutex);
@@ -441,11 +445,28 @@ cleanup:
  * End of syncrepl event processing has to be signalled by
  * sync_concurr_limit_signal() call.
  */
-void
+isc_result_t
 sync_concurr_limit_wait(sync_ctx_t *sctx) {
+	isc_result_t result;
+	isc_time_t abs_timeout;
+
 	REQUIRE(sctx != NULL);
 
-	semaphore_wait(&sctx->concurr_limit);
+	while (ldap_instance_isexiting(sctx->inst) == ISC_FALSE) {
+		result = isc_time_nowplusinterval(&abs_timeout,
+						  &shutdown_timeout);
+		INSIST(result == ISC_R_SUCCESS);
+
+		result = semaphore_wait_timed(&sctx->concurr_limit,
+					      &shutdown_timeout);
+		if (result == ISC_R_SUCCESS)
+			goto cleanup;
+	}
+
+	result = ISC_R_SHUTTINGDOWN;
+
+cleanup:
+	return result;
 }
 
 /**
@@ -465,14 +486,29 @@ sync_concurr_limit_signal(sync_ctx_t *sctx) {
  * End of event processing has to be signalled by
  * sync_event_signal() call.
  */
-void
+isc_result_t
 sync_event_wait(sync_ctx_t *sctx, isc_event_t *ev) {
+	isc_result_t result;
+	isc_time_t abs_timeout;
+
 	REQUIRE(sctx != NULL);
 
 	LOCK(&sctx->mutex);
-	while (sctx->last_ev != ev)
-		WAIT(&sctx->cond, &sctx->mutex);
+	while (sctx->last_ev != ev) {
+		if (ldap_instance_isexiting(sctx->inst) == ISC_TRUE)
+			CLEANUP_WITH(ISC_R_SHUTTINGDOWN);
+
+		result = isc_time_nowplusinterval(&abs_timeout, &shutdown_timeout);
+		INSIST(result == ISC_R_SUCCESS);
+
+		WAITUNTIL(&sctx->cond, &sctx->mutex, &abs_timeout);
+	}
+
+	result = ISC_R_SUCCESS;
+
+cleanup:
 	UNLOCK(&sctx->mutex);
+	return result;
 }
 
 /**

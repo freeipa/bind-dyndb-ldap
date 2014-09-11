@@ -43,7 +43,7 @@ enum sync_state {
 };
 
 isc_result_t
-sync_ctx_init(isc_mem_t *mctx, isc_task_t *task, sync_ctx_t **sctxp) ATTR_NONNULLS ATTR_CHECKRESULT;
+sync_ctx_init(isc_mem_t *mctx, ldap_instance_t *inst, sync_ctx_t **sctxp) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 void
 sync_ctx_free(sync_ctx_t **statep);
@@ -60,14 +60,14 @@ sync_task_add(sync_ctx_t *sctx, isc_task_t *task) ATTR_NONNULLS ATTR_CHECKRESULT
 isc_result_t
 sync_barrier_wait(sync_ctx_t *sctx, const char *inst_name) ATTR_NONNULLS ATTR_CHECKRESULT;
 
-void ATTR_NONNULLS
-sync_concurr_limit_wait(sync_ctx_t *sctx) ATTR_NONNULLS;
-
-void ATTR_NONNULLS
-sync_concurr_limit_signal(sync_ctx_t *sctx) ATTR_NONNULLS;
+isc_result_t
+sync_concurr_limit_wait(sync_ctx_t *sctx) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 void
-sync_event_wait(sync_ctx_t *sctx, isc_event_t *ev) ATTR_NONNULLS;
+sync_concurr_limit_signal(sync_ctx_t *sctx) ATTR_NONNULLS;
+
+isc_result_t
+sync_event_wait(sync_ctx_t *sctx, isc_event_t *ev) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 void
 sync_event_signal(sync_ctx_t *sctx, isc_event_t *ev) ATTR_NONNULLS;

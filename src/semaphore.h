@@ -28,7 +28,7 @@
 
 /* Multiplier for to user-defined connection parameter 'timeout'. */
 #define SEM_WAIT_TIMEOUT_MUL 6 /* times */
-extern isc_interval_t semaphore_wait_timeout;
+extern isc_interval_t conn_wait_timeout;
 
 /*
  * Semaphore can be "acquired" multiple times. However, it has a maximum
@@ -47,7 +47,9 @@ typedef struct semaphore	semaphore_t;
 isc_result_t	semaphore_init(semaphore_t *sem, int value) ATTR_NONNULLS ATTR_CHECKRESULT;
 void		semaphore_destroy(semaphore_t *sem) ATTR_NONNULLS;
 void		semaphore_wait(semaphore_t *sem) ATTR_NONNULLS;
-isc_result_t	semaphore_wait_timed(semaphore_t *sem) ATTR_NONNULLS ATTR_CHECKRESULT;
+isc_result_t	semaphore_wait_timed(semaphore_t *sem,
+				     const isc_interval_t * const timeout)
+				     ATTR_NONNULLS ATTR_CHECKRESULT;
 void		semaphore_signal(semaphore_t *sem) ATTR_NONNULLS;
 
 #endif /* !_LD_SEMAPHORE_H_ */

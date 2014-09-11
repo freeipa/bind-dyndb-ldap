@@ -108,4 +108,6 @@ isc_result_t activate_zones(isc_task_t *task, ldap_instance_t *inst) ATTR_NONNUL
 
 isc_task_t * ldap_instance_gettask(ldap_instance_t *ldap_inst);
 
+isc_boolean_t ldap_instance_isexiting(ldap_instance_t *ldap_inst) ATTR_NONNULLS ATTR_CHECKRESULT;
+
 #endif /* !_LD_LDAP_HELPER_H_ */

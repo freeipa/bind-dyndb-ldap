@@ -404,8 +404,8 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 
 	/* Set timer for deadlock detection inside semaphore_wait_timed . */
 	CHECK(setting_get_uint("timeout", set, &uint));
-	if (semaphore_wait_timeout.seconds < uint*SEM_WAIT_TIMEOUT_MUL)
-		semaphore_wait_timeout.seconds = uint*SEM_WAIT_TIMEOUT_MUL;
+	if (conn_wait_timeout.seconds < uint*SEM_WAIT_TIMEOUT_MUL)
+		conn_wait_timeout.seconds = uint*SEM_WAIT_TIMEOUT_MUL;
 
 	CHECK(setting_get_uint("connections", set, &uint));
 	if (uint < 2) {
@@ -540,7 +540,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	ISC_LIST_INIT(ldap_inst->orig_global_forwarders.addrs);
 	ldap_inst->task = task;
 	ldap_inst->watcher = 0;
-	CHECK(sync_ctx_init(ldap_inst->mctx, task, &ldap_inst->sctx));
+	CHECK(sync_ctx_init(ldap_inst->mctx, ldap_inst, &ldap_inst->sctx));
 
 	isc_string_printf_truncate(settings_name, PRINT_BUFF_SIZE,
 				   SETTING_SET_NAME_LOCAL " for database %s",
@@ -4104,7 +4104,7 @@ ldap_pool_getconnection(ldap_pool_t *pool, ldap_connection_t ** conn)
 	REQUIRE(conn != NULL && *conn == NULL);
 	ldap_conn = *conn;
 
-	CHECK(semaphore_wait_timed(&pool->conn_semaphore));
+	CHECK(semaphore_wait_timed(&pool->conn_semaphore, &conn_wait_timeout));
 	/* Following assertion is necessary to convince clang static analyzer
 	 * that the loop is always entered. */
 	REQUIRE(pool->connections > 0);
@@ -4762,7 +4762,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	/* Lock syncrepl queue to prevent zone, config and resource records
 	 * from racing with each other. */
 	if (action == update_zone || action == update_config)
-		sync_event_wait(inst->sctx, wait_event);
+		CHECK(sync_event_wait(inst->sctx, wait_event));
 
 cleanup:
 	if (dns_name_dynamic(&entry_name))
@@ -4771,9 +4771,11 @@ cleanup:
 		dns_name_free(&entry_origin, inst->mctx);
 	if (zone_ptr != NULL)
 		dns_zone_detach(&zone_ptr);
-	if (result != ISC_R_SUCCESS) {
+	if (result != ISC_R_SUCCESS)
 		log_error_r("syncrepl_update failed for object '%s'",
 			    entry->dn);
+	if (wait_event == NULL) {
+		/* Event was not sent */
 		sync_concurr_limit_signal(inst->sctx);
 
 		if (dbname != NULL)
@@ -4885,7 +4887,7 @@ int ldap_sync_search_entry (
 	if (inst->exiting)
 		return LDAP_SUCCESS;
 
-	sync_concurr_limit_wait(inst->sctx);
+	CHECK(sync_concurr_limit_wait(inst->sctx));
 	CHECK(ldap_entry_create(inst->mctx, ls->ls_ld, msg, &entry));
 	syncrepl_update(inst, entry, phase);
 #ifdef RBTDB_DEBUG
@@ -5156,4 +5158,10 @@ isc_task_t *
 ldap_instance_gettask(ldap_instance_t *ldap_inst)
 {
 	return ldap_inst->task;
+}
+
+isc_boolean_t
+ldap_instance_isexiting(ldap_instance_t *ldap_inst)
+{
+	return ldap_inst->exiting;
 }
