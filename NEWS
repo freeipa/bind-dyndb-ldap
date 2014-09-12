@@ -1,3 +1,7 @@
+5.3
+====
+[1] Internal locking was reworked to prevent crashes and deadlocks.
+
 5.2
 ====
 [1] Kerberos ticket expiration is now handled correctly.
