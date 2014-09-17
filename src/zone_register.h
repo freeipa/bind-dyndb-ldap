@@ -46,8 +46,7 @@ zr_get_zone_dbs(zone_register_t *zr, dns_name_t *name, dns_db_t **ldapdbp,
 		dns_db_t **rbtdbp) ATTR_NONNULL(1, 2) ATTR_CHECKRESULT;
 
 isc_result_t
-zr_get_zone_dn(zone_register_t *zr, dns_name_t *name, const char **dn,
-	       dns_name_t *matched_name) ATTR_NONNULLS ATTR_CHECKRESULT;
+zr_get_zone_dn(zone_register_t *zr, dns_name_t *name, const char **dn) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
 zr_get_zone_ptr(zone_register_t * const zr, dns_name_t * const name,

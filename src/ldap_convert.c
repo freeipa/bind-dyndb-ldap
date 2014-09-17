@@ -300,37 +300,33 @@ cleanup:
 }
 
 isc_result_t
-dnsname_to_dn(zone_register_t *zr, dns_name_t *name, ld_string_t *target)
+dnsname_to_dn(zone_register_t *zr, dns_name_t *name, dns_name_t *zone,
+	      ld_string_t *target)
 {
 	isc_result_t result;
 	int label_count;
 	const char *zone_dn = NULL;
 	char *dns_str = NULL;
 	char *escaped_name = NULL;
+	int dummy;
+	dns_name_t labels;
+	unsigned int common_labels;
+	dns_namereln_t namereln;
+
 
 	REQUIRE(zr != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(target != NULL);
 
 	isc_mem_t * mctx = zr_get_mctx(zr);
+	str_clear(target);
 
 	/* Find the DN of the zone we belong to. */
-	{
-		DECLARE_BUFFERED_NAME(zone);
-		int dummy;
-		unsigned int common_labels;
+	CHECK(zr_get_zone_dn(zr, zone, &zone_dn));
 
-		INIT_BUFFERED_NAME(zone);
-
-		CHECK(zr_get_zone_dn(zr, name, &zone_dn, &zone));
-
-		dns_name_fullcompare(name, &zone, &dummy, &common_labels);
+	namereln = dns_name_fullcompare(name, zone, &dummy, &common_labels);
+	if (namereln != dns_namereln_equal) {
 		label_count = dns_name_countlabels(name) - common_labels;
-	}
-
-	str_clear(target);
-	if (label_count > 0) {
-		dns_name_t labels;
 
 		dns_name_init(&labels, NULL);
 		dns_name_getlabelsequence(name, 0, label_count, &labels);

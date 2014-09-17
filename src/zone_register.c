@@ -406,33 +406,26 @@ isc_result_t
 zr_del_zone(zone_register_t *zr, dns_name_t *origin)
 {
 	isc_result_t result;
-	zone_info_t *zinfo = NULL;
 
 	REQUIRE(zr != NULL);
 	REQUIRE(origin != NULL);
 
 	RWLOCK(&zr->rwlock, isc_rwlocktype_write);
 
-	result = dns_rbt_findname(zr->rbt, origin, 0, NULL, (void **)&zinfo);
-	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
-		/* We are done */
-		result = ISC_R_SUCCESS;
-		goto cleanup;
-	} else if (result != ISC_R_SUCCESS) {
-		goto cleanup;
-	}
-
 	CHECK(dns_rbt_deletename(zr->rbt, origin, ISC_FALSE));
 
 cleanup:
 	RWUNLOCK(&zr->rwlock, isc_rwlocktype_write);
 
+	if (result == ISC_R_NOTFOUND)
+		result = ISC_R_SUCCESS;
+
 	return result;
 }
 
 /*
- * Find a zone containing 'name' within in the zone register 'zr'. If an
- * exact or partial match is found, the pointer to the LDAP DB and internal
+ * Find a zone with 'name' within in the zone register 'zr'. If an
+ * exact match is found, the pointer to the LDAP DB and internal
  * RBT DB is attached to ldapdbp or rbtdbp respectively. Caller is responsible
  * for detaching the database pointer.
  *
@@ -448,6 +441,7 @@ zr_get_zone_dbs(zone_register_t *zr, dns_name_t *name, dns_db_t **ldapdbp,
 
 	REQUIRE(zr != NULL);
 	REQUIRE(name != NULL);
+	REQUIRE(ldapdbp != NULL || rbtdbp != NULL);
 
 	if (!dns_name_isabsolute(name)) {
 		log_bug("trying to find zone with a relative name");
@@ -456,19 +450,17 @@ zr_get_zone_dbs(zone_register_t *zr, dns_name_t *name, dns_db_t **ldapdbp,
 
 	RWLOCK(&zr->rwlock, isc_rwlocktype_read);
 
-	result = dns_rbt_findname(zr->rbt, name, 0, NULL, &zinfo);
-	if (result == DNS_R_PARTIALMATCH)
-		result = ISC_R_SUCCESS;
-	if (result == ISC_R_SUCCESS) {
-		dns_db_attach(((zone_info_t *)zinfo)->ldapdb, &ldapdb);
-		if (ldapdbp != NULL)
-			dns_db_attach(ldapdb, ldapdbp);
-		if (rbtdbp != NULL)
-			dns_db_attach(ldapdb_get_rbtdb(ldapdb), rbtdbp);
-	}
+	CHECK(dns_rbt_findname(zr->rbt, name, 0, NULL, &zinfo));
+	dns_db_attach(((zone_info_t *)zinfo)->ldapdb, &ldapdb);
+	if (ldapdbp != NULL)
+		dns_db_attach(ldapdb, ldapdbp);
+	if (rbtdbp != NULL)
+		dns_db_attach(ldapdb_get_rbtdb(ldapdb), rbtdbp);
 
+cleanup:
 	RWUNLOCK(&zr->rwlock, isc_rwlocktype_read);
-	if (ldapdb)
+
+	if (ldapdb != NULL)
 		dns_db_detach(&ldapdb);
 
 	return result;
@@ -483,8 +475,7 @@ zr_get_zone_dbs(zone_register_t *zr, dns_name_t *name, dns_db_t **ldapdbp,
  * The function returns ISC_R_SUCCESS in case of exact or partial match.
  */
 isc_result_t
-zr_get_zone_dn(zone_register_t *zr, dns_name_t *name, const char **dn,
-	       dns_name_t *matched_name)
+zr_get_zone_dn(zone_register_t *zr, dns_name_t *name, const char **dn)
 {
 	isc_result_t result;
 	void *zinfo = NULL;
@@ -492,7 +483,6 @@ zr_get_zone_dn(zone_register_t *zr, dns_name_t *name, const char **dn,
 	REQUIRE(zr != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(dn != NULL && *dn == NULL);
-	REQUIRE(matched_name != NULL);
 
 	if (!dns_name_isabsolute(name)) {
 		log_bug("trying to find zone with a relative name");
@@ -501,9 +491,7 @@ zr_get_zone_dn(zone_register_t *zr, dns_name_t *name, const char **dn,
 
 	RWLOCK(&zr->rwlock, isc_rwlocktype_read);
 
-	result = dns_rbt_findname(zr->rbt, name, 0, matched_name, &zinfo);
-	if (result == DNS_R_PARTIALMATCH)
-		result = ISC_R_SUCCESS;
+	result = dns_rbt_findname(zr->rbt, name, 0, NULL, &zinfo);
 	if (result == ISC_R_SUCCESS)
 		*dn = ((zone_info_t *)zinfo)->dn;
 
