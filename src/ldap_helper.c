@@ -5102,7 +5102,9 @@ ldap_syncrepl_watcher(isc_threadarg_t arg)
 			continue;
 		}
 
-		log_debug(1, "Sending initial syncrepl lookup");
+		log_info("LDAP instance '%s' is being synchronized, "
+			 "please ignore message 'all zones loaded'",
+			 inst->db_name);
 		ret = ldap_sync_init(ldap_sync, LDAP_SYNC_REFRESH_AND_PERSIST);
 		/* TODO: error handling, set tainted flag & do full reload? */
 		if (ret != LDAP_SUCCESS) {
