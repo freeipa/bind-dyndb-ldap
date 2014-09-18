@@ -5,6 +5,13 @@
 #include "fwd_register.h"
 #include "util.h"
 
+/**
+ * The forwarding register is a red-black tree that stores dns names
+ * of all active forward zones managed by this LDAP instance.
+ *
+ * It is not necessary to store inactive zones in RBT because forward zones
+ * do not have any state.
+ */
 struct fwd_register {
 	isc_mem_t	*mctx;
 	isc_rwlock_t	rwlock;
@@ -65,29 +72,11 @@ isc_result_t
 fwdr_add_zone(fwd_register_t *fwdr, dns_name_t *name)
 {
 	isc_result_t result;
-	void *dummy = NULL;
 
 	REQUIRE(fwdr != NULL);
-	REQUIRE(name != NULL);
-
-	if (!dns_name_isabsolute(name)) {
-		log_bug("forward zone with bad origin");
-		return ISC_R_FAILURE;
-	}
+	REQUIRE(dns_name_isabsolute(name));
 
 	RWLOCK(&fwdr->rwlock, isc_rwlocktype_write);
-
-	/*
-	 * First make sure the node doesn't exist. Partial matches mean
-	 * there are also child zones in the LDAP database which is allowed.
-	 */
-	result = dns_rbt_findname(fwdr->rbt, name, 0, NULL, &dummy);
-	if (result != ISC_R_NOTFOUND && result != DNS_R_PARTIALMATCH) {
-		if (result == ISC_R_SUCCESS)
-			result = ISC_R_EXISTS;
-		log_error_r("failed to add forward zone to the forwarding register");
-		goto cleanup;
-	}
 
 	CHECK(dns_rbt_addname(fwdr->rbt, name, FORWARDING_SET_MARK));
 
@@ -101,25 +90,19 @@ isc_result_t
 fwdr_del_zone(fwd_register_t *fwdr, dns_name_t *name)
 {
 	isc_result_t result;
-	void *dummy = NULL;
 
 	REQUIRE(fwdr != NULL);
-	REQUIRE(name != NULL);
+	REQUIRE(dns_name_isabsolute(name));
 
 	RWLOCK(&fwdr->rwlock, isc_rwlocktype_write);
-
-	result = dns_rbt_findname(fwdr->rbt, name, 0, NULL, (void **)&dummy);
-	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
-		/* We are done */
-		CLEANUP_WITH(ISC_R_SUCCESS);
-	} else if (result != ISC_R_SUCCESS) {
-		goto cleanup;
-	}
 
 	CHECK(dns_rbt_deletename(fwdr->rbt, name, ISC_FALSE));
 
 cleanup:
 	RWUNLOCK(&fwdr->rwlock, isc_rwlocktype_write);
+
+	if (result == ISC_R_NOTFOUND)
+		result = ISC_R_SUCCESS;
 
 	return result;
 }
@@ -131,16 +114,16 @@ fwdr_zone_ispresent(fwd_register_t *fwdr, dns_name_t *name) {
 	void *dummy = NULL;
 
 	REQUIRE(fwdr != NULL);
-	REQUIRE(name != NULL);
+	REQUIRE(dns_name_isabsolute(name));
 
 	RWLOCK(&fwdr->rwlock, isc_rwlocktype_read);
 
-	result = dns_rbt_findname(fwdr->rbt, name, 0, NULL, (void **)&dummy);
-	if (result == DNS_R_PARTIALMATCH)
-		CLEANUP_WITH(ISC_R_NOTFOUND);
+	result = dns_rbt_findname(fwdr->rbt, name, 0, NULL, &dummy);
 
-cleanup:
 	RWUNLOCK(&fwdr->rwlock, isc_rwlocktype_read);
+
+	if (result == DNS_R_PARTIALMATCH)
+		result = ISC_R_NOTFOUND;
 
 	return result;
 }
