@@ -1653,6 +1653,7 @@ ldap_parse_fwd_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 {
 	const char *dn;
 	dns_name_t name;
+	ldap_valuelist_t values;
 	isc_boolean_t iszone;
 	char name_txt[DNS_NAME_FORMATSIZE];
 	isc_result_t result;
@@ -1667,20 +1668,31 @@ ldap_parse_fwd_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	CHECK(dn_to_dnsname(inst->mctx, dn, &name, NULL, &iszone));
 	INSIST(iszone == ISC_TRUE);
 
+	CHECK(ldap_entry_getvalues(entry, "idnsZoneActive", &values));
+	if (HEAD(values) != NULL &&
+	    strcasecmp(HEAD(values)->value, "TRUE") != 0) {
+		/* Zone is not active */
+		result = ldap_delete_zone2(inst, &name, ISC_TRUE, ISC_FALSE);
+		goto cleanup;
+	}
+
+	/* Zone is active */
 	result = configure_zone_forwarders(entry, inst, &name);
 	if (result != ISC_R_DISABLED && result != ISC_R_SUCCESS) {
 		log_error_r("forward zone '%s': could not configure forwarding", dn);
 		goto cleanup;
 	}
 
-	result = fwdr_zone_ispresent(inst->fwd_register, &name);
-	if (result == ISC_R_NOTFOUND) {
-		CHECK(fwdr_add_zone(inst->fwd_register, &name));
+	result = fwdr_add_zone(inst->fwd_register, &name);
+	if (result == ISC_R_SUCCESS) {
 		dns_name_format(&name, name_txt, DNS_NAME_FORMATSIZE);
 		log_info("forward zone '%s': loaded", name_txt);
+	} else if (result != ISC_R_EXISTS) {
+		dns_name_format(&name, name_txt, DNS_NAME_FORMATSIZE);
+		log_error_r("failed to add forward zone '%s' "
+			    "to the forwarding register", name_txt);
+		goto cleanup;
 	}
-	else if (result != ISC_R_SUCCESS)
-		log_error_r("forward zone '%s': could not read forwarding register", dn);
 
 cleanup:
 	if (dns_name_dynamic(&name))
@@ -4250,8 +4262,6 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	dns_name_t prevname;
 	dns_name_t currname;
 	ldap_entry_t *entry = pevent->entry;
-	ldap_valuelist_t values;
-	isc_boolean_t zone_active = ISC_FALSE;
 	isc_boolean_t iszone;
 
 	mctx = pevent->mctx;
@@ -4263,20 +4273,16 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	CHECK(dn_to_dnsname(inst->mctx, pevent->dn, &currname, NULL, &iszone));
 	INSIST(iszone == ISC_TRUE);
 
-	if (!SYNCREPL_DEL(pevent->chgtype)) {
-		CHECK(ldap_entry_getvalues(entry, "idnsZoneActive", &values));
-		if (HEAD(values) != NULL &&
-		    strcasecmp(HEAD(values)->value, "TRUE") == 0)
-			zone_active = ISC_TRUE;
-	}
-
-	if (zone_active) {
+	if (SYNCREPL_DEL(pevent->chgtype)) {
+		CHECK(ldap_delete_zone(inst, pevent->dn, ISC_TRUE, ISC_FALSE));
+	} else {
 		CHECK(ldap_entry_getclass(entry, &objclass));
 		if (objclass & LDAP_ENTRYCLASS_MASTER)
 			CHECK(ldap_parse_master_zoneentry(entry, NULL, inst,
 							  task));
 		else if (objclass & LDAP_ENTRYCLASS_FORWARD)
 			CHECK(ldap_parse_fwd_zoneentry(entry, inst));
+	}
 
 		/* This code is disabled because we don't have UUID->DN database yet.
 		 if (SYNCREPL_MODDN(pevent->chgtype)) {
@@ -4304,10 +4310,6 @@ update_zone(isc_task_t *task, isc_event_t *event)
 			}
 		}
 		*/
-	} else {
-		CHECK(ldap_delete_zone(inst, pevent->dn, ISC_TRUE, ISC_FALSE));
-	}
-
 cleanup:
 	if (inst != NULL) {
 		sync_concurr_limit_signal(inst->sctx);
