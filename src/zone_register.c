@@ -39,7 +39,7 @@
 #include "settings.h"
 #include "rbt_helper.h"
 
-/*
+/**
  * The zone register is a red-black tree that maps a dns name of a zone to the
  * zone's pointer and it's LDAP DN. Synchronization is done by the zr_*
  * functions. The data stored in this structure is needed for conversion of
@@ -108,7 +108,7 @@ zr_get_mctx(zone_register_t *zr) {
 	return zr->mctx;
 }
 
-/*
+/**
  * Create a new zone register.
  */
 isc_result_t
@@ -323,7 +323,7 @@ cleanup:
 	return result;
 }
 
-/*
+/**
  * Delete a zone info structure. The two arguments are of type void * so the
  * function can be used as a node deleter for the red-black tree.
  */
@@ -348,7 +348,30 @@ delete_zone_info(void *arg1, void *arg2)
 	SAFE_MEM_PUT_PTR(mctx, zinfo);
 }
 
-/*
+/**
+ * Find a zone in ZR with origin exactly matching 'name'.
+ *
+ * @pre Zone registed is locked.
+ */
+static isc_result_t
+getzinfo(zone_register_t * const zr, dns_name_t *name, zone_info_t **zinfo) {
+	isc_result_t result;
+	void *data = NULL;
+
+	REQUIRE(zr != NULL);
+	REQUIRE(dns_name_isabsolute(name));
+	REQUIRE(zinfo != NULL && *zinfo == NULL);
+
+	result = dns_rbt_findname(zr->rbt, name, 0, NULL, &data);
+	if (result == ISC_R_SUCCESS)
+		*zinfo = data;
+	else if (result == DNS_R_PARTIALMATCH)
+		result = ISC_R_NOTFOUND;
+
+	return result;
+}
+
+/**
  * Add 'zone' to the zone register 'zr' with LDAP DN 'dn'. Origin of the zone
  * must be absolute and the zone cannot already be in the zone register.
  */
@@ -360,17 +383,13 @@ zr_add_zone(zone_register_t * const zr, dns_db_t * const ldapdb,
 	isc_result_t result;
 	dns_name_t *name;
 	zone_info_t *new_zinfo = NULL;
-	void *dummy = NULL;
+	zone_info_t *dummy = NULL;
 
 	REQUIRE(zr != NULL);
 	REQUIRE(raw != NULL);
 	REQUIRE(dn != NULL);
 
 	name = dns_zone_getorigin(raw);
-	if (!dns_name_isabsolute(name)) {
-		log_bug("zone with bad origin");
-		return ISC_R_FAILURE;
-	}
 
 	RWLOCK(&zr->rwlock, isc_rwlocktype_write);
 
@@ -378,8 +397,8 @@ zr_add_zone(zone_register_t * const zr, dns_db_t * const ldapdb,
 	 * First make sure the node doesn't exist. Partial matches mean
 	 * there are also child zones in the LDAP database which is allowed.
 	 */
-	result = dns_rbt_findname(zr->rbt, name, 0, NULL, &dummy);
-	if (result != ISC_R_NOTFOUND && result != DNS_R_PARTIALMATCH) {
+	result = getzinfo(zr, name, &dummy);
+	if (result != ISC_R_NOTFOUND) {
 		if (result == ISC_R_SUCCESS)
 			result = ISC_R_EXISTS;
 		log_error_r("failed to add zone to the zone register");
@@ -423,11 +442,12 @@ cleanup:
 	return result;
 }
 
-/*
+/**
  * Find a zone with 'name' within in the zone register 'zr'. If an
  * exact match is found, the pointer to the LDAP DB and internal
- * RBT DB is attached to ldapdbp or rbtdbp respectively. Caller is responsible
- * for detaching the database pointer.
+ * RBT DB is attached to ldapdbp or rbtdbp respectively.
+ *
+ * @remark Caller is responsible for detaching the database pointer.
  *
  * Either ldapdbp or rbtdbp can be NULL.
  */
@@ -436,22 +456,17 @@ zr_get_zone_dbs(zone_register_t *zr, dns_name_t *name, dns_db_t **ldapdbp,
 		dns_db_t **rbtdbp)
 {
 	isc_result_t result;
-	void *zinfo = NULL;
+	zone_info_t *zinfo = NULL;
 	dns_db_t *ldapdb = NULL;
 
 	REQUIRE(zr != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(ldapdbp != NULL || rbtdbp != NULL);
 
-	if (!dns_name_isabsolute(name)) {
-		log_bug("trying to find zone with a relative name");
-		return ISC_R_FAILURE;
-	}
-
 	RWLOCK(&zr->rwlock, isc_rwlocktype_read);
 
-	CHECK(dns_rbt_findname(zr->rbt, name, 0, NULL, &zinfo));
-	dns_db_attach(((zone_info_t *)zinfo)->ldapdb, &ldapdb);
+	CHECK(getzinfo(zr, name, &zinfo));
+	dns_db_attach(zinfo->ldapdb, &ldapdb);
 	if (ldapdbp != NULL)
 		dns_db_attach(ldapdb, ldapdbp);
 	if (rbtdbp != NULL)
@@ -466,34 +481,27 @@ cleanup:
 	return result;
 }
 
-/*
- * Find the closest match to zone with origin 'name' in the zone register 'zr'.
- * The 'matched_name' will be set to the name that was matched while finding
- * 'name' in the red-black tree. The 'dn' will be set to the LDAP DN that
- * corresponds to the registered zone.
+/**
+ * Find zone with origin 'name' in the zone register 'zr'.
+ * The 'dn' will be set to the LDAP DN that corresponds to the registered zone.
  *
- * The function returns ISC_R_SUCCESS in case of exact or partial match.
+ * The function returns ISC_R_SUCCESS in case of exact match on zone origin.
  */
 isc_result_t
 zr_get_zone_dn(zone_register_t *zr, dns_name_t *name, const char **dn)
 {
 	isc_result_t result;
-	void *zinfo = NULL;
+	zone_info_t *zinfo = NULL;
 
 	REQUIRE(zr != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(dn != NULL && *dn == NULL);
 
-	if (!dns_name_isabsolute(name)) {
-		log_bug("trying to find zone with a relative name");
-		return ISC_R_FAILURE;
-	}
-
 	RWLOCK(&zr->rwlock, isc_rwlocktype_read);
 
-	result = dns_rbt_findname(zr->rbt, name, 0, NULL, &zinfo);
+	result = getzinfo(zr, name, &zinfo);
 	if (result == ISC_R_SUCCESS)
-		*dn = ((zone_info_t *)zinfo)->dn;
+		*dn = zinfo->dn;
 
 	RWUNLOCK(&zr->rwlock, isc_rwlocktype_read);
 
@@ -524,14 +532,9 @@ zr_get_zone_ptr(zone_register_t * const zr, dns_name_t * const name,
 	REQUIRE(rawp == NULL || *rawp == NULL);
 	REQUIRE(securep == NULL || *securep == NULL);
 
-	if (!dns_name_isabsolute(name)) {
-		log_bug("trying to find zone with a relative name");
-		return ISC_R_FAILURE;
-	}
-
 	RWLOCK(&zr->rwlock, isc_rwlocktype_read);
 
-	result = dns_rbt_findname(zr->rbt, name, 0, NULL, (void *)&zinfo);
+	result = getzinfo(zr, name, &zinfo);
 	if (result == ISC_R_SUCCESS) {
 		if (rawp != NULL)
 			dns_zone_attach(zinfo->raw, rawp);
@@ -553,22 +556,17 @@ isc_result_t
 zr_get_zone_settings(zone_register_t *zr, dns_name_t *name, settings_set_t **set)
 {
 	isc_result_t result;
-	void *zinfo = NULL;
+	zone_info_t *zinfo = NULL;
 
 	REQUIRE(zr != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(set != NULL && *set == NULL);
 
-	if (!dns_name_isabsolute(name)) {
-		log_bug("trying to find zone with a relative name");
-		return ISC_R_FAILURE;
-	}
-
 	RWLOCK(&zr->rwlock, isc_rwlocktype_read);
 
-	result = dns_rbt_findname(zr->rbt, name, 0, NULL, &zinfo);
+	result = getzinfo(zr, name, &zinfo);
 	if (result == ISC_R_SUCCESS)
-		*set = ((zone_info_t *)zinfo)->settings;
+		*set = zinfo->settings;
 
 	RWUNLOCK(&zr->rwlock, isc_rwlocktype_read);
 
