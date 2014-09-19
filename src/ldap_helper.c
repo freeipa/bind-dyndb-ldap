@@ -1087,16 +1087,21 @@ publish_zone(isc_task_t *task, ldap_instance_t *inst, dns_zone_t *zone)
 		if (zone_in_view == zone) {
 			/* Zone is already published in the right view. */
 			CLEANUP_WITH(ISC_R_SUCCESS);
-		} else {
+		} else if (view_in_zone != inst->view) {
+			/* Un-published inactive zone will have
+			 * inst->view in zone but will not be present
+			 * in the view itself. */
 			dns_zone_log(zone, ISC_LOG_ERROR, "zone->view doesn't "
 				     "match data in the view");
 			CLEANUP_WITH(ISC_R_UNEXPECTED);
 		}
-	} else if (zone_in_view != NULL) {
+	}
+	if (zone_in_view != NULL) {
 		dns_zone_log(zone, ISC_LOG_ERROR, "cannot publish zone: view "
 			     "already contains another zone with this name");
 		CLEANUP_WITH(ISC_R_UNEXPECTED);
-	} /* else if (zone_in_view == NULL && view_in_zone == NULL)
+	} /* else if (zone_in_view == NULL &&
+		      (view_in_zone == NULL || view_in_zone == inst->view))
 	     Publish the zone. */
 
 	run_exclusive_enter(inst, &lock_state);
@@ -1166,7 +1171,7 @@ cleanup:
 }
 
 /**
- * Add all zones in zone register to DNS view specified in inst->view
+ * Add all active zones in zone register to DNS view specified in inst->view
  * and load zones.
  */
 isc_result_t
@@ -1176,19 +1181,33 @@ activate_zones(isc_task_t *task, ldap_instance_t *inst) {
 	DECLARE_BUFFERED_NAME(name);
 	unsigned int published_cnt = 0;
 	unsigned int total_cnt = 0;
+	unsigned int active_cnt = 0;
+	settings_set_t *settings;
+	isc_boolean_t active;
 
 	INIT_BUFFERED_NAME(name);
 	for(result = zr_rbt_iter_init(inst->zone_register, &iter, &name);
 	    result == ISC_R_SUCCESS;
 	    dns_name_reset(&name), result = rbt_iter_next(&iter, &name)) {
+		settings = NULL;
+		result = zr_get_zone_settings(inst->zone_register, &name, &settings);
+		INSIST(result == ISC_R_SUCCESS);
+		result = setting_get_bool("active", settings, &active);
+		INSIST(result == ISC_R_SUCCESS);
+
 		++total_cnt;
-		result = activate_zone(task, inst, &name);
-		if (result == ISC_R_SUCCESS)
-			++published_cnt;
+		if (active == ISC_TRUE) {
+			++active_cnt;
+			result = activate_zone(task, inst, &name);
+			if (result == ISC_R_SUCCESS)
+				++published_cnt;
+		}
 	};
 
-	log_info("%u zones from LDAP instance '%s' loaded (%u zones defined)",
-		 published_cnt, inst->db_name, total_cnt);
+	log_info("%u zones from LDAP instance '%s' loaded (%u zones defined, "
+		 "%u inactive, %u failed to load)", published_cnt,
+		 inst->db_name, total_cnt, total_cnt - active_cnt,
+		 active_cnt - published_cnt);
 	return result;
 }
 
@@ -1373,6 +1392,53 @@ ldap_delete_zone(ldap_instance_t *inst, const char *dn, isc_boolean_t lock,
 cleanup:
 	if (dns_name_dynamic(&name))
 		dns_name_free(&name, inst->mctx);
+
+	return result;
+}
+
+/**
+ * Remove zone from view but let the zone object intact. The same zone object
+ * can be re-published later using publish_zone().
+ *
+ * @warning
+ * This function removes zone from view but the zone->view pointer will stay
+ * unchanged and will reference the old view.
+ * It works like that because dns_zone_setview() doesn't work with NULL view.
+ * I hope it will not break something...
+ */
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+unpublish_zone(ldap_instance_t *inst, dns_name_t *name, const char *dn) {
+	isc_result_t result;
+	isc_result_t lock_state = ISC_R_IGNORE;
+	dns_zone_t *raw = NULL;
+	dns_zone_t *secure = NULL;
+	dns_zone_t *zone_in_view = NULL;
+	isc_boolean_t freeze = ISC_FALSE;
+
+	CHECK(zr_get_zone_ptr(inst->zone_register, name, &raw, &secure));
+
+	run_exclusive_enter(inst, &lock_state);
+	if (inst->view->frozen) {
+		freeze = ISC_TRUE;
+		dns_view_thaw(inst->view);
+	}
+	CHECK(dns_view_findzone(inst->view, name, &zone_in_view));
+	INSIST(zone_in_view == raw || zone_in_view == secure);
+	CHECK(delete_forwarding_table(inst, name, "zone", dn));
+	CHECK(dns_zt_unmount(inst->view->zonetable, zone_in_view));
+
+cleanup:
+	if (freeze)
+		dns_view_freeze(inst->view);
+	run_exclusive_exit(inst, lock_state);
+	if (result != ISC_R_SUCCESS)
+		log_error_r("zone '%s' un-publication failed", dn);
+	if (raw != NULL)
+		dns_zone_detach(&raw);
+	if (secure != NULL)
+		dns_zone_detach(&secure);
+	if (zone_in_view != NULL)
+		dns_zone_detach(&zone_in_view);
 
 	return result;
 }
@@ -2291,7 +2357,9 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 	isc_boolean_t new_zone = ISC_FALSE;
 	isc_boolean_t want_secure = ISC_FALSE;
 	isc_boolean_t configured = ISC_FALSE;
+	isc_boolean_t activity_changed;
 	isc_boolean_t iszone;
+	isc_boolean_t isactive = ISC_FALSE;
 	settings_set_t *zone_settings = NULL;
 	isc_boolean_t ldap_writeback;
 	isc_boolean_t data_changed = ISC_FALSE; /* GCC */
@@ -2393,17 +2461,40 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 		CHECK(dns_diff_apply(&diff, rbtdb, version));
 		dns_db_closeversion(ldapdb, &version, ISC_TRUE);
 		dns_zone_markdirty(raw);
+	} else {
+		/* It is necessary to release lock before calling load_zone()
+		 * otherwise it will deadlock on newversion() call
+		 * in journal roll-forward process! */
+		dns_db_closeversion(ldapdb, &version, ISC_FALSE);
 	}
+	configured = ISC_TRUE;
+
+	/* Detect active/inactive zone and activity changes */
+	result = setting_update_from_ldap_entry("active", zone_settings,
+						"idnsZoneActive", entry);
+	if (result == ISC_R_SUCCESS) {
+		activity_changed = ISC_TRUE;
+	} else if (result == ISC_R_IGNORE) {
+		activity_changed = ISC_FALSE;
+	} else
+		goto cleanup;
+	CHECK(setting_get_bool("active", zone_settings, &isactive));
 
 	/* Do zone load only if the initial LDAP synchronization is done. */
-	if (sync_state == sync_finished) {
-		toview = (want_secure == ISC_TRUE) ? secure : raw;
-		if (new_zone == ISC_TRUE) {
+	if (sync_state != sync_finished)
+		goto cleanup;
+
+	toview = (want_secure == ISC_TRUE) ? secure : raw;
+	if (isactive == ISC_TRUE) {
+		if (new_zone == ISC_TRUE || activity_changed == ISC_TRUE)
 			CHECK(publish_zone(task, inst, toview));
-			configured = ISC_TRUE;
-		}
-		if (data_changed == ISC_TRUE || olddb != NULL)
+		if (data_changed == ISC_TRUE || olddb != NULL ||
+		    activity_changed == ISC_TRUE)
 			CHECK(load_zone(toview));
+	} else if (activity_changed == ISC_TRUE) { /* Zone was deactivated */
+		CHECK(unpublish_zone(inst, &name, entry->dn));
+		dns_zone_log(toview, ISC_LOG_INFO, "zone deactivated "
+			     "and removed from view");
 	}
 
 cleanup:
@@ -2416,11 +2507,11 @@ cleanup:
 		dns_journal_destroy(&journal);
 	if (ldapdb != NULL)
 		dns_db_detach(&ldapdb);
-	if (new_zone == ISC_TRUE && configured == ISC_FALSE &&
-	    result != ISC_R_SUCCESS) {
+	if (new_zone == ISC_TRUE && configured == ISC_FALSE) {
 		/* Failure in ACL parsing or so. */
 		log_error_r("zone '%s': publishing failed, rolling back due to",
 			    entry->dn);
+		/* TODO: verify this */
 		result = ldap_delete_zone2(inst, &name, ISC_TRUE, ISC_FALSE);
 		if (result != ISC_R_SUCCESS)
 			log_error_r("zone '%s': rollback failed: ", entry->dn);

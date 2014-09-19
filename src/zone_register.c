@@ -46,6 +46,11 @@
  * a dns name to DN and to get a pointer of a zone when we need to make changes
  * to it. We could use dns_view_findzone() for this, but that way we would not
  * have any assurance that the found zone is really managed by us.
+ *
+ * ZR contains all zones defined in LDAP including disabled zones
+ * (idnsZoneActive = FALSE). Iterators return all zones including disabled ones.
+ * Disabled zones are identified by "active" boolean = FALSE in settings_set_t
+ * of the particular zone.
  */
 
 struct zone_register {
@@ -81,6 +86,7 @@ static void delete_zone_info(void *arg1, void *arg2);
  * These structures are templates. They will be copied for each zone instance.
  */
 static const setting_t zone_settings[] = {
+	{ "active",			default_boolean(0)	},
 	{ "dyn_update",			no_default_boolean	},
 	{ "update_policy",		no_default_string	},
 	{ "allow_query",		no_default_string	},
