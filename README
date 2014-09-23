@@ -156,9 +156,20 @@ Attributes:
 	transfers from multiple masters to single slave.
 
 * idnsZoneActive
-        Boolean which speicifies if particular DNS zone should be loaded
-        or not. This option is not supported in versions >= 4.0.
-        https://fedorahosted.org/bind-dyndb-ldap/ticket/127
+        Boolean which speicifies if particular DNS zone should be visible
+        to clients or not. This attribute can be changed at run-time.
+
+        Inactive zones are loaded into memory in the same way as active zones.
+        The only difference is that inactive zones are not added to DNS view
+        used by bind-dyndb-ldap.
+
+        Zone will be re-added to DNS view if idnsActiveZone attribute is
+        changed to TRUE so the change should be almost immediate.
+
+        Usual zone maintenance (serial number maintenance, DNSSEC in-line
+        signing etc.) is done for all zones, no matter if the zone
+        is active or not. This allows us to maintain zone journal so IXFR
+        works correctly even after zone re-activation.
 
 * nSEC3PARAMRecord
 	NSEC3PARAM resource record definition according to RFC5155.
