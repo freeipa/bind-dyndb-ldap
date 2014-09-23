@@ -1,3 +1,9 @@
+6.0
+====
+[1] idnsZoneActive attribute is supported again and zones can be activated
+    and deactivated at run-time.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/127
+
 5.3
 ====
 [1] Internal locking was reworked to prevent crashes and deadlocks.
