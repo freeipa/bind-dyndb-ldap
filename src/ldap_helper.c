@@ -1017,7 +1017,7 @@ cleanup:
  * @warning Never call this on raw part of in-line secure zone.
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-load_zone(dns_zone_t *zone) {
+load_zone(dns_zone_t *zone, isc_boolean_t log) {
 	isc_result_t result;
 	isc_boolean_t zone_dynamic;
 	isc_uint32_t serial;
@@ -1036,15 +1036,18 @@ load_zone(dns_zone_t *zone) {
 	}
 
 	CHECK(dns_zone_getserial2(raw, &serial));
-	dns_zone_log(raw, ISC_LOG_INFO, "loaded serial %u", serial);
+	if (log == ISC_TRUE)
+		dns_zone_log(raw, ISC_LOG_INFO, "loaded serial %u", serial);
 	if (zone != NULL) {
 		result = dns_zone_getserial2(zone, &serial);
-		if (result == ISC_R_SUCCESS)
+		if (result == ISC_R_SUCCESS && log == ISC_TRUE)
 			dns_zone_log(zone, ISC_LOG_INFO, "loaded serial %u",
 				     serial);
 		/* in-line secure zone is loaded asynchonously in background */
 		else if (result == DNS_R_NOTLOADED) {
-			dns_zone_log(zone, ISC_LOG_INFO, "signing in progress");
+			if (log == ISC_TRUE)
+				dns_zone_log(zone, ISC_LOG_INFO,
+					     "signing in progress");
 			result = ISC_R_SUCCESS;
 		} else
 			goto cleanup;
@@ -1154,7 +1157,7 @@ activate_zone(isc_task_t *task, ldap_instance_t *inst, dns_name_t *name) {
 		goto cleanup;
 	}
 
-	CHECK(load_zone(toview));
+	CHECK(load_zone(toview, ISC_TRUE));
 	if (secure != NULL) {
 		CHECK(zr_get_zone_settings(inst->zone_register, name,
 					   &zone_settings));
@@ -2491,9 +2494,7 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 	if (isactive == ISC_TRUE) {
 		if (new_zone == ISC_TRUE || activity_changed == ISC_TRUE)
 			CHECK(publish_zone(task, inst, toview));
-		if (data_changed == ISC_TRUE || olddb != NULL ||
-		    activity_changed == ISC_TRUE)
-			CHECK(load_zone(toview));
+		CHECK(load_zone(toview, ISC_FALSE));
 	} else if (activity_changed == ISC_TRUE) { /* Zone was deactivated */
 		CHECK(unpublish_zone(inst, &name, entry->dn));
 		dns_zone_log(toview, ISC_LOG_INFO, "zone deactivated "
@@ -4668,9 +4669,9 @@ cleanup:
 			     "reload triggered by change in '%s'",
 			     pevent->dn);
 		if (secure != NULL)
-			result = load_zone(secure);
+			result = load_zone(secure, ISC_TRUE);
 		else if (raw != NULL)
-			result = load_zone(raw);
+			result = load_zone(raw, ISC_TRUE);
 		if (result == ISC_R_SUCCESS || result == DNS_R_UPTODATE ||
 		    result == DNS_R_DYNAMIC || result == DNS_R_CONTINUE) {
 			/* zone reload succeeded, fire current event again */
