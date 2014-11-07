@@ -1204,10 +1204,13 @@ activate_zones(isc_task_t *task, ldap_instance_t *inst) {
 		}
 	};
 
-	log_info("%u zones from LDAP instance '%s' loaded (%u zones defined, "
-		 "%u inactive, %u failed to load)", published_cnt,
+	log_info("%u master zones from LDAP instance '%s' loaded (%u zones "
+		 "defined, %u inactive, %u failed to load)", published_cnt,
 		 inst->db_name, total_cnt, total_cnt - active_cnt,
 		 active_cnt - published_cnt);
+	if (total_cnt < 1)
+		log_info("0 master zones is suspicious number, please check "
+			 "access control instructions on LDAP server");
 	return result;
 }
 
