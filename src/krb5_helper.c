@@ -15,7 +15,7 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
-#define _BSD_SOURCE
+#define _POSIX_C_SOURCE 200112L /* setenv */
 
 #include <isc/util.h>
 #include <string.h>
