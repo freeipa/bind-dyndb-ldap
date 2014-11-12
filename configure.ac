@@ -65,6 +65,8 @@ fi
 CFLAGS="$BIND9_CFLAGS $CFLAGS"
 
 # Checks for libraries.
+AC_CHECK_LIB([isc], [isc_dir_open], [],
+	AC_MSG_ERROR([Install BIND9 ISC development files]))
 AC_CHECK_LIB([dns], [dns_name_init], [],
 	AC_MSG_ERROR([Install BIND9 development files]))
 AC_CHECK_LIB([ldap], [ldap_initialize], [],
@@ -84,6 +86,21 @@ int main(void) {
     AC_DEFINE_UNQUOTED([LIBDNS_VERSION_MAJOR], [$LIBDNS_VERSION_MAJOR],
     [Define libdns version])],
 [AC_MSG_ERROR([Can't obtain libdns version.])],
+[AC_MSG_ERROR([Cross compiling is not supported.])]
+)
+
+dnl isc__errno2result() is typically not present in standard header files
+AC_MSG_CHECKING([isc__errno2result availability in header files])
+AC_TRY_RUN([
+#include <isc/errno2result.h>
+int main(void) {
+	isc__errno2result(0);
+	return 0;
+}],
+[AC_MSG_RESULT([yes])],
+[AC_MSG_ERROR([
+ Can't find isc__errno2result() or header isc/errno2result.h:
+ Please install bind-lite-devel package or similar.])],
 [AC_MSG_ERROR([Cross compiling is not supported.])]
 )
 
