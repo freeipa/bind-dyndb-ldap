@@ -1753,15 +1753,15 @@ ldap_parse_fwd_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	}
 
 	result = fwdr_add_zone(inst->fwd_register, &name);
-	if (result == ISC_R_SUCCESS) {
-		dns_name_format(&name, name_txt, DNS_NAME_FORMATSIZE);
-		log_info("forward zone '%s': loaded", name_txt);
-	} else if (result != ISC_R_EXISTS) {
+	if (result != ISC_R_EXISTS && result != ISC_R_SUCCESS) {
 		dns_name_format(&name, name_txt, DNS_NAME_FORMATSIZE);
 		log_error_r("failed to add forward zone '%s' "
 			    "to the forwarding register", name_txt);
 		goto cleanup;
 	}
+	result = ISC_R_SUCCESS;
+	dns_name_format(&name, name_txt, DNS_NAME_FORMATSIZE);
+	log_info("forward zone '%s': loaded", name_txt);
 
 cleanup:
 	if (dns_name_dynamic(&name))
