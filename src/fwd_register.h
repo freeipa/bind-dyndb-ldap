@@ -4,6 +4,9 @@
 #include <dns/rbt.h>
 #include <dns/result.h>
 
+#include "util.h"
+#include "rbt_helper.h"
+
 #define FORWARDING_SET_MARK ((void *)1)
 /*
 #if FORWARDING_SET_MARK == NULL

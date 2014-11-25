@@ -4794,7 +4794,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	CHECKED_MEM_STRDUP(mctx, entry->dn, dn);
 	CHECKED_MEM_STRDUP(mctx, inst->db_name, dbname);
 
-	/* TODO: handle config objects properly - via UUID database */
+	/* TODO: handle object class inference properly - via UUID database */
 	CHECK(setting_get_str("base", inst->local_settings, &ldap_base));
 	CHECK(ldap_dn_compare(ldap_base, entry->dn, &isbase));
 	if (isbase == ISC_TRUE) {
@@ -4812,15 +4812,9 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 			/* deleted entry doesn't contain objectClass, so
 			 * we need to find if the entry is zone or not
 			 * in other way */
-			result = fwdr_zone_ispresent(inst->fwd_register,
-						     &entry_name);
-			if (result == ISC_R_SUCCESS)
-				class = LDAP_ENTRYCLASS_FORWARD;
-			else if (iszone == ISC_TRUE)
-				class = (LDAP_ENTRYCLASS_MASTER |
-					 LDAP_ENTRYCLASS_RR);
-			else
-				class = LDAP_ENTRYCLASS_RR;
+			CHECK(ldap_entry_guessclass(&entry_name, iszone,
+						    inst->fwd_register,
+						    &class));
 			break;
 		}
 	}
