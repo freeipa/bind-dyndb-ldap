@@ -25,3 +25,7 @@ Makefile.in
 .project
 .cproject
 .settings
+
+# Python
+*.pyc
+__pycache__

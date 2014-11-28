@@ -1,0 +1,33 @@
+Release Engineering
+===================
+Latest cheat sheet is available on:
+https://fedorahosted.org/bind-dyndb-ldap/wiki/ReleaseProcess
+
+This directory contains assorted set of tools related to release enginnering.
+All scripts should be run from root of the source tree.
+
+NOTE!
+Scripts can make changes in local repo so all changes should be carefully
+reviewed before git push!
+
+Final push to remore repo has to be done manually.
+
+
+User scripts
+------------
+
+bumpver.py
+~~~~~~~~~~
+Increments version number in configure.ac and SPEC file and creates a signed
+tag for current release.
+
+tracvers.py
+~~~~~~~~~~~
+Creates Trac version for each Git tag.
+
+
+Auxiliary scripts
+-----------------
+These scripts are not intended for usage from command line:
+- srcversion.py
+- trac.py
