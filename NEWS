@@ -1,3 +1,17 @@
+6.1
+====
+[1] Crash caused by interaction between forward and master zones was fixed.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/145
+
+[2] DNS NOTIFY messages are sent after any modification to the zone.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/144
+
+[3] Misleading error message about forward zones during reconnect was fixed.
+
+[4] Informational message about number of defined/loaded zones was improved.
+
+[5] Various build system improvements.
+
 6.0
 ====
 [1] idnsZoneActive attribute is supported again and zones can be activated
