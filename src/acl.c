@@ -37,6 +37,8 @@
  * PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "config.h"
+
 #include <isccfg/aclconf.h>
 #include <isccfg/cfg.h>
 #include <isccfg/namedconf.h>
@@ -47,9 +49,11 @@
 #include <isc/mem.h>
 #include <isc/once.h>
 #include <isc/result.h>
+#include <isc/types.h>
 #include <isc/util.h>
 
 #include <dns/fixedname.h>
+#include <dns/forward.h>
 #include <dns/log.h>
 #include <dns/rdatatype.h>
 #include <dns/ssu.h>
@@ -604,7 +608,12 @@ cleanup:
  *
  */
 isc_result_t
-acl_parse_forwarder(const char *forwarder_str, isc_mem_t *mctx, isc_sockaddr_t **sa)
+acl_parse_forwarder(const char *forwarder_str, isc_mem_t *mctx,
+#if LIBDNS_VERSION_MAJOR < 140
+		isc_sockaddr_t **fw)
+#else /* LIBDNS_VERSION_MAJOR >= 140 */
+		dns_forwarder_t **fw)
+#endif
 {
 	isc_result_t result = ISC_R_SUCCESS;
 	cfg_parser_t *parser = NULL;
@@ -614,11 +623,12 @@ acl_parse_forwarder(const char *forwarder_str, isc_mem_t *mctx, isc_sockaddr_t *
 	const cfg_obj_t *faddresses;
 	const cfg_listelt_t *element;
 	const cfg_obj_t *forwarder;
+	isc_sockaddr_t addr;
 
 	in_port_t port = 53;
 
 	REQUIRE(forwarder_str != NULL);
-	REQUIRE(sa != NULL && *sa == NULL);
+	REQUIRE(fw != NULL && *fw == NULL);
 
 	/* add semicolon and brackets as necessary for parser */
 	if (!index(forwarder_str, ';'))
@@ -637,10 +647,17 @@ acl_parse_forwarder(const char *forwarder_str, isc_mem_t *mctx, isc_sockaddr_t *
 	}
 
 	forwarder = cfg_listelt_value(element);
-	CHECKED_MEM_GET_PTR(mctx, *sa);
-	**sa = *cfg_obj_assockaddr(forwarder);
-	if (isc_sockaddr_getport(*sa) == 0)
-		isc_sockaddr_setport(*sa, port);
+	CHECKED_MEM_GET_PTR(mctx, *fw);
+	addr = *cfg_obj_assockaddr(forwarder);
+	if (isc_sockaddr_getport(&addr) == 0)
+		isc_sockaddr_setport(&addr, port);
+#if LIBDNS_VERSION_MAJOR < 140
+	**fw = addr;
+#else /* LIBDNS_VERSION_MAJOR >= 140 */
+	(*fw)->addr = addr;
+	(*fw)->dscp = cfg_obj_getdscp(forwarder);
+#endif
+
 
 cleanup:
 	if (forwarders_cfg != NULL)

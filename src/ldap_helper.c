@@ -20,6 +20,8 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
+#include "config.h"
+
 #include <dns/dynamic_db.h>
 #include <dns/diff.h>
 #include <dns/journal.h>
@@ -142,6 +144,13 @@ struct ldap_auth_pair {
 	enum ldap_auth value;	/* Value actually passed to ldap_bind(). */
 	char *name;	/* String representation used in configuration file */
 };
+
+/* BIND 9.10 changed forwarder representation in struct dns_forwarders */
+#if LIBDNS_VERSION_MAJOR < 140
+	#define inst_fwdlist(inst) ((inst)->orig_global_forwarders.addrs)
+#else /* LIBDNS_VERSION_MAJOR >= 140 */
+	#define inst_fwdlist(inst) ((inst)->orig_global_forwarders.fwdrs)
+#endif
 
 /* These are typedefed in ldap_helper.h */
 struct ldap_instance {
@@ -537,7 +546,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	view = dns_dyndb_get_view(dyndb_args);
 	dns_view_attach(view, &ldap_inst->view);
 	ldap_inst->zmgr = dns_dyndb_get_zonemgr(dyndb_args);
-	ISC_LIST_INIT(ldap_inst->orig_global_forwarders.addrs);
+	ISC_LIST_INIT(inst_fwdlist(ldap_inst));
 	ldap_inst->task = task;
 	ldap_inst->watcher = 0;
 	CHECK(sync_ctx_init(ldap_inst->mctx, ldap_inst, &ldap_inst->sctx));
@@ -574,16 +583,21 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	result = dns_fwdtable_find(ldap_inst->view->fwdtable, dns_rootname,
 				   &orig_global_forwarders);
 	if (result == ISC_R_SUCCESS) {
-		isc_sockaddr_t *addr;
-		isc_sockaddr_t *new_addr;
-		for (addr = ISC_LIST_HEAD(orig_global_forwarders->addrs);
-		     addr != NULL;
-		     addr = ISC_LIST_NEXT(addr, link)) {
-			CHECKED_MEM_GET_PTR(mctx, new_addr);
-			*new_addr = *addr;
-			ISC_LINK_INIT(new_addr, link);
-			ISC_LIST_APPEND(ldap_inst->orig_global_forwarders.addrs,
-					new_addr, link);
+#if LIBDNS_VERSION_MAJOR < 140
+		isc_sockaddr_t *fwdr;
+		isc_sockaddr_t *new_fwdr;
+		for (fwdr = ISC_LIST_HEAD(orig_global_forwarders->addrs);
+#else /* LIBDNS_VERSION_MAJOR >= 140 */
+		dns_forwarder_t *fwdr;
+		dns_forwarder_t *new_fwdr;
+		for (fwdr = ISC_LIST_HEAD(orig_global_forwarders->fwdrs);
+#endif
+		     fwdr != NULL;
+		     fwdr = ISC_LIST_NEXT(fwdr, link)) {
+			CHECKED_MEM_GET_PTR(mctx, new_fwdr);
+			*new_fwdr = *fwdr;
+			ISC_LINK_INIT(new_fwdr, link);
+			ISC_LIST_APPEND(inst_fwdlist(ldap_inst), new_fwdr, link);
 		}
 		ldap_inst->orig_global_forwarders.fwdpolicy =
 				orig_global_forwarders->fwdpolicy;
@@ -621,7 +635,11 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 {
 	ldap_instance_t *ldap_inst;
 	const char *db_name;
-	isc_sockaddr_t *addr;
+#if LIBDNS_VERSION_MAJOR < 140
+	isc_sockaddr_t *fwdr;
+#else /* LIBDNS_VERSION_MAJOR >= 140 */
+	dns_forwarder_t *fwdr;
+#endif
 
 	REQUIRE(ldap_instp != NULL);
 
@@ -656,10 +674,10 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 
 	DESTROYLOCK(&ldap_inst->kinit_lock);
 
-	while (!ISC_LIST_EMPTY(ldap_inst->orig_global_forwarders.addrs)) {
-		addr = ISC_LIST_HEAD(ldap_inst->orig_global_forwarders.addrs);
-		ISC_LIST_UNLINK(ldap_inst->orig_global_forwarders.addrs, addr, link);
-		SAFE_MEM_PUT_PTR(ldap_inst->mctx, addr);
+	while (!ISC_LIST_EMPTY(inst_fwdlist(ldap_inst))) {
+		fwdr = ISC_LIST_HEAD(inst_fwdlist(ldap_inst));
+		ISC_LIST_UNLINK(inst_fwdlist(ldap_inst), fwdr, link);
+		SAFE_MEM_PUT_PTR(ldap_inst->mctx, fwdr);
 	}
 
 	settings_set_free(&ldap_inst->global_settings);
@@ -1479,7 +1497,11 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 	isc_result_t lock_state = ISC_R_IGNORE;
 	ldap_valuelist_t values;
 	ldap_value_t *value;
-	isc_sockaddrlist_t addrs;
+#if LIBDNS_VERSION_MAJOR < 140
+	isc_sockaddrlist_t fwdrs;
+#else /* LIBDNS_VERSION_MAJOR >= 140 */
+	dns_forwarderlist_t fwdrs;
+#endif
 	isc_boolean_t is_global_config;
 	isc_boolean_t fwdtbl_deletion_requested = ISC_TRUE;
 	isc_boolean_t fwdtbl_update_requested = ISC_FALSE;
@@ -1498,7 +1520,7 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 	dns_fwdpolicy_t fwdpolicy = dns_fwdpolicy_first;
 
 	REQUIRE(entry != NULL && inst != NULL && name != NULL);
-	ISC_LIST_INIT(addrs);
+	ISC_LIST_INIT(fwdrs);
 	dns_fixedname_init(&foundname);
 	if (dns_name_equal(name, dns_rootname)) {
 		is_global_config = ISC_TRUE;
@@ -1549,7 +1571,7 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 				  msg_forwarders_not_def);
 			if (is_global_config) {
 				ISC_LIST_INIT(values);
-				addrs = inst->orig_global_forwarders.addrs;
+				fwdrs = inst_fwdlist(inst);
 				fwdpolicy = inst->orig_global_forwarders.fwdpolicy;
 			} else {
 				CLEANUP_WITH(ISC_R_DISABLED);
@@ -1563,24 +1585,34 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 		  msg_forward_policy);
 
 	for (value = HEAD(values); value != NULL; value = NEXT(value, link)) {
-		isc_sockaddr_t *addr = NULL;
+#if LIBDNS_VERSION_MAJOR < 140
+		isc_sockaddr_t *fwdr = NULL;
+#else /* LIBDNS_VERSION_MAJOR >= 140 */
+		dns_forwarder_t *fwdr = NULL;
+#endif
 		char forwarder_txt[ISC_SOCKADDR_FORMATSIZE];
 
-		if (acl_parse_forwarder(value->value, inst->mctx, &addr)
+		if (acl_parse_forwarder(value->value, inst->mctx, &fwdr)
 				!= ISC_R_SUCCESS) {
 			log_error("%s '%s': could not parse forwarder '%s'",
 					msg_obj_type, dn, value->value);
 			continue;
 		}
 
-		ISC_LINK_INIT(addr, link);
-		ISC_LIST_APPEND(addrs, addr, link);
-		isc_sockaddr_format(addr, forwarder_txt, ISC_SOCKADDR_FORMATSIZE);
+		ISC_LINK_INIT(fwdr, link);
+		ISC_LIST_APPEND(fwdrs, fwdr, link);
+		isc_sockaddr_format(
+#if LIBDNS_VERSION_MAJOR < 140
+				fwdr,
+#else /* LIBDNS_VERSION_MAJOR >= 140 */
+				&fwdr->addr,
+#endif
+				forwarder_txt, ISC_SOCKADDR_FORMATSIZE);
 		log_debug(5, "%s '%s': adding forwarder '%s'", msg_obj_type,
 			  dn, forwarder_txt);
 	}
 
-	if (fwdpolicy != dns_fwdpolicy_none && ISC_LIST_EMPTY(addrs)) {
+	if (fwdpolicy != dns_fwdpolicy_none && ISC_LIST_EMPTY(fwdrs)) {
 		log_debug(5, "%s '%s': all idnsForwarders are invalid%s",
 			  msg_obj_type, dn, msg_use_global_fwds);
 		CLEANUP_WITH(ISC_R_UNEXPECTEDTOKEN);
@@ -1596,17 +1628,31 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 				    &old_setting);
 	if (result == ISC_R_SUCCESS &&
 	   (dns_name_equal(name, dns_fixedname_name(&foundname)) == ISC_TRUE)) {
+#if LIBDNS_VERSION_MAJOR < 140
 		isc_sockaddr_t *s1, *s2;
+#else /* LIBDNS_VERSION_MAJOR >= 140 */
+		dns_forwarder_t *s1, *s2;
+#endif
 
 		if (fwdpolicy != old_setting->fwdpolicy)
 			fwdtbl_update_requested = ISC_TRUE;
 
 		/* Check address lists item by item. */
-		for (s1 = ISC_LIST_HEAD(addrs), s2 = ISC_LIST_HEAD(old_setting->addrs);
+#if LIBDNS_VERSION_MAJOR < 140
+		for (s1 = ISC_LIST_HEAD(fwdrs), s2 = ISC_LIST_HEAD(old_setting->addrs);
+#else /* LIBDNS_VERSION_MAJOR >= 140 */
+		for (s1 = ISC_LIST_HEAD(fwdrs), s2 = ISC_LIST_HEAD(old_setting->fwdrs);
+#endif
 		     s1 != NULL && s2 != NULL && !fwdtbl_update_requested;
 		     s1 = ISC_LIST_NEXT(s1, link), s2 = ISC_LIST_NEXT(s2, link))
-			if (!isc_sockaddr_equal(s1, s2))
-				fwdtbl_update_requested = ISC_TRUE;
+#if LIBDNS_VERSION_MAJOR < 140
+		if (!isc_sockaddr_equal(s1, s2)) {
+#else /* LIBDNS_VERSION_MAJOR >= 140 */
+		if (!isc_sockaddr_equal(&s1->addr, &s2->addr) ||
+		    s1->dscp != s2->dscp) {
+#endif
+			fwdtbl_update_requested = ISC_TRUE;
+		}
 
 		if (!fwdtbl_update_requested && ((s1 != NULL) || (s2 != NULL)))
 			fwdtbl_update_requested = ISC_TRUE;
@@ -1638,7 +1684,13 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 
 		/* Something was changed - set forward table up. */
 		CHECK(delete_forwarding_table(inst, name, msg_obj_type, dn));
-		result = dns_fwdtable_add(inst->view->fwdtable, name, &addrs, fwdpolicy);
+#if LIBDNS_VERSION_MAJOR < 140
+		result = dns_fwdtable_add(inst->view->fwdtable, name, &fwdrs,
+					  fwdpolicy);
+#else /* LIBDNS_VERSION_MAJOR >= 140 */
+		result = dns_fwdtable_addfwd(inst->view->fwdtable, name, &fwdrs,
+					     fwdpolicy);
+#endif
 		if (result != ISC_R_SUCCESS)
 			log_error_r("%s '%s': forwarding table update failed",
 				    msg_obj_type, dn);
@@ -1654,13 +1706,17 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 	}
 
 cleanup:
-	if (ISC_LIST_HEAD(addrs) !=
-	    ISC_LIST_HEAD(inst->orig_global_forwarders.addrs)) {
-		while(!ISC_LIST_EMPTY(addrs)) {
-			isc_sockaddr_t *addr = NULL;
-			addr = ISC_LIST_HEAD(addrs);
-			ISC_LIST_UNLINK(addrs, addr, link);
-			SAFE_MEM_PUT_PTR(inst->mctx, addr);
+	if (ISC_LIST_HEAD(fwdrs) !=
+	    ISC_LIST_HEAD(inst_fwdlist(inst))) {
+		while(!ISC_LIST_EMPTY(fwdrs)) {
+#if LIBDNS_VERSION_MAJOR < 140
+			isc_sockaddr_t *fwdr = NULL;
+#else /* LIBDNS_VERSION_MAJOR >= 140 */
+			dns_forwarder_t *fwdr = NULL;
+#endif
+			fwdr = ISC_LIST_HEAD(fwdrs);
+			ISC_LIST_UNLINK(fwdrs, fwdr, link);
+			SAFE_MEM_PUT_PTR(inst->mctx, fwdr);
 		}
 	}
 	if (fwdtbl_deletion_requested) {

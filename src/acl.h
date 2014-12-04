@@ -47,6 +47,11 @@ acl_from_ldap(isc_mem_t *mctx, const char *aclstr, acl_type_t type,
 
 isc_result_t
 acl_parse_forwarder(const char *forwarders_str, isc_mem_t *mctx,
-		    isc_sockaddr_t **sa) ATTR_NONNULLS ATTR_CHECKRESULT;
+#if LIBDNS_VERSION_MAJOR < 140
+		isc_sockaddr_t **fw)
+#else /* LIBDNS_VERSION_MAJOR >= 140 */
+		dns_forwarder_t **fw)
+#endif
+ATTR_NONNULLS ATTR_CHECKRESULT;
 
 #endif /* !_LD_ACL_H_ */

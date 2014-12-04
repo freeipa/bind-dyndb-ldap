@@ -198,12 +198,18 @@ detach(dns_db_t **dbp)
 
 /* !!! This could be required for optimizations (like on-disk cache). */
 static isc_result_t
+#if LIBDNS_VERSION_MAJOR < 140
 beginload(dns_db_t *db, dns_addrdatasetfunc_t *addp, dns_dbload_t **dbloadp)
 {
 
 	UNUSED(db);
 	UNUSED(addp);
 	UNUSED(dbloadp);
+#else /* LIBDNS_VERSION_MAJOR >= 140 */
+beginload(dns_db_t *db, dns_rdatacallbacks_t *callbacks) {
+	UNUSED(db);
+	UNUSED(callbacks);
+#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 
 	fatal_error("ldapdb: method beginload() should never be called");
 
@@ -218,11 +224,17 @@ beginload(dns_db_t *db, dns_addrdatasetfunc_t *addp, dns_dbload_t **dbloadp)
 
 /* !!! This could be required for optimizations (like on-disk cache). */
 static isc_result_t
+#if LIBDNS_VERSION_MAJOR < 140
 endload(dns_db_t *db, dns_dbload_t **dbloadp)
 {
 
 	UNUSED(db);
 	UNUSED(dbloadp);
+#else /* LIBDNS_VERSION_MAJOR >= 140 */
+endload(dns_db_t *db, dns_rdatacallbacks_t *callbacks) {
+	UNUSED(db);
+	UNUSED(callbacks);
+#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 
 	fatal_error("ldapdb: method endload() should never be called");
 
@@ -230,6 +242,17 @@ endload(dns_db_t *db, dns_dbload_t **dbloadp)
 	return ISC_R_SUCCESS;
 }
 
+#if LIBDNS_VERSION_MAJOR >= 140
+static isc_result_t
+serialize(dns_db_t *db, dns_dbversion_t *version, FILE *file)
+{
+	ldapdb_t *ldapdb = (ldapdb_t *) db;
+
+	REQUIRE(VALID_LDAPDB(ldapdb));
+
+	return dns_db_serialize(ldapdb->rbtdb, version, file);
+}
+#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 
 /* !!! This could be required for optimizations (like on-disk cache). */
 static isc_result_t
@@ -780,7 +803,7 @@ getrrsetstats(dns_db_t *db) {
 }
 #endif /* LIBDNS_VERSION_MAJOR >= 45 */
 
-#if LIBDNS_VERSION_MAJOR >= 82
+#if LIBDNS_VERSION_MAJOR >= 82 && LIBDNS_VERSION_MAJOR < 140
 static isc_result_t
 rpz_enabled(dns_db_t *db, dns_rpz_st_t *st)
 {
@@ -804,7 +827,29 @@ rpz_findips(dns_rpz_zone_t *rpz, dns_rpz_type_t rpz_type,
 	dns_db_rpz_findips(rpz, rpz_type, zone, ldapdb->rbtdb, version,
 			   ardataset, st, query_qname);
 }
-#endif /* LIBDNS_VERSION_MAJOR >= 82 */
+#endif /* LIBDNS_VERSION_MAJOR >= 82 && LIBDNS_VERSION_MAJOR < 140 */
+
+#if LIBDNS_VERSION_MAJOR >= 140
+void
+rpz_attach(dns_db_t *db, dns_rpz_zones_t *rpzs, dns_rpz_num_t rpz_num)
+{
+	ldapdb_t *ldapdb = (ldapdb_t *) db;
+
+	REQUIRE(VALID_LDAPDB(ldapdb));
+
+	dns_db_rpz_attach(ldapdb->rbtdb, rpzs, rpz_num);
+}
+
+isc_result_t
+rpz_ready(dns_db_t *db)
+{
+	ldapdb_t *ldapdb = (ldapdb_t *) db;
+
+	REQUIRE(VALID_LDAPDB(ldapdb));
+
+	return dns_db_rpz_ready(ldapdb->rbtdb);
+}
+#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 
 #if LIBDNS_VERSION_MAJOR >= 90
 static isc_result_t
@@ -837,11 +882,36 @@ findext(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 }
 #endif /* LIBDNS_VERSION_MAJOR >= 90 */
 
+#if LIBDNS_VERSION_MAJOR >= 140
+isc_result_t
+setcachestats(dns_db_t *db, isc_stats_t *stats)
+{
+	ldapdb_t *ldapdb = (ldapdb_t *) db;
+
+	REQUIRE(VALID_LDAPDB(ldapdb));
+
+	return dns_db_setcachestats(ldapdb->rbtdb, stats);
+}
+
+unsigned int
+hashsize(dns_db_t *db)
+{
+	ldapdb_t *ldapdb = (ldapdb_t *) db;
+
+	REQUIRE(VALID_LDAPDB(ldapdb));
+
+	return dns_db_hashsize(ldapdb->rbtdb);
+}
+#endif /* LIBDNS_VERSION_MAJOR >= 140 */
+
 static dns_dbmethods_t ldapdb_methods = {
 	attach,
 	detach,
 	beginload,
 	endload,
+#if LIBDNS_VERSION_MAJOR >= 140
+	serialize, /* see dns_db_serialize(), implementation is not mandatory */
+#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 	dump,
 	currentversion,
 	newversion,
@@ -880,14 +950,22 @@ static dns_dbmethods_t ldapdb_methods = {
 #endif /* LIBDNS_VERSION_MAJOR >= 50 */
 	getrrsetstats,
 #endif /* LIBDNS_VERSION_MAJOR >= 45 */
-#if LIBDNS_VERSION_MAJOR >= 82
+#if LIBDNS_VERSION_MAJOR >= 82 && LIBDNS_VERSION_MAJOR < 140
 	rpz_enabled,
 	rpz_findips,
-#endif /* LIBDNS_VERSION_MAJOR >= 82 */
+#endif /* LIBDNS_VERSION_MAJOR >= 82 && LIBDNS_VERSION_MAJOR < 140 */
+#if LIBDNS_VERSION_MAJOR >= 140
+	rpz_attach,
+	rpz_ready,
+#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 #if LIBDNS_VERSION_MAJOR >= 90
 	findnodeext,
-	findext
+	findext,
 #endif /* LIBDNS_VERSION_MAJOR >= 90 */
+#if LIBDNS_VERSION_MAJOR >= 140
+	setcachestats,
+	hashsize
+#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 };
 
 isc_result_t ATTR_NONNULLS
