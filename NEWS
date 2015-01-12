@@ -1,3 +1,8 @@
+7.0
+====
+[1] Support for BIND 9.10 was added.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/139
+
 6.1
 ====
 [1] Crash caused by interaction between forward and master zones was fixed.
