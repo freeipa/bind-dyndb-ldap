@@ -57,23 +57,22 @@ example zone ldif is available in the doc directory.
 	value "dyn_update" from plugin configuration will be used.
 
 * idnsAllowQuery
-	Specifies BIND9 zone ACL element. This attribute can be set multiple
-	times and are merged together to the one ACL.
+	Specifies BIND9 zone ACL element as one string.
 
-	Example:
-		idnsAllowQuery: 127.0.0.1
-		idnsAllowQuery: ::1
-		idnsAllowQuery: 192.168.1.0/24
+	Example 1:      idnsAllowQuery: 192.0.2.1;
+	In the first example above, only the client with 192.0.2.1 IP address
+	is allowed to query records from the zone.
 
-	In the example above clients with 127.0.0.1 and ::1 IP addresses and
-	clients from the 192.168.1.0/24 network are allowed to obtain records
-	from the zone.
+	Example 2:      idnsAllowQuery: !192.0.2.33; 192.0.2.0/24;
+	In the second example, queries from client 192.0.2.33 are refused
+	but queries from all other clients in the 192.0.2.0/24 network
+	are allowed.
 
 	You can specify IPv4/IPv6 address, IPv4/IPv6 network address in CIDR
-	format and "any" or "none" keywords. The "!" prefix (for example
-	!192.168.1.0/24) means negation of the ACL element.
+	format, and "any" or "none" keywords. The "!" prefix (for example
+	!192.0.2.33) means negation of the ACL element.
 
-	If not set then zone inherits global allow-query from named.conf.
+	If not set, then zone inherits global allow-query from named.conf.
 
 * idnsAllowTransfer
 	Uses same format as idnsAllowQuery. Allows zone transfers for matching
