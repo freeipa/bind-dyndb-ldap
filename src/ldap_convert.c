@@ -193,6 +193,30 @@ cleanup:
 }
 
 /**
+ * Evaluate if DN has/does not have expected format with one or two components
+ * and error out if a mismatch is detected.
+ *
+ * @param[in] prefix      Prefix for error messages, usually a function name.
+ * @param[in] dn
+ * @param[in] dniszone    Boolean returned by dn_to_dnsname for given DN.
+ * @param[in] classiszone ISC_TRUE if DN should be a zone, ISC_FALSE otherwise.
+ * @retval ISC_R_SUCCESS or ISC_R_UNEXPECTED if values do not match.
+ */
+isc_result_t
+dn_want_zone(const char * const prefix, const char * const dn,
+	     isc_boolean_t dniszone, isc_boolean_t classiszone) {
+	if (dniszone != classiszone) {
+		log_error("%s: object '%s' does%s have a zone object class "
+			  "but DN format suggests that it is%s a zone",
+			  prefix, dn, classiszone ? "" : " not",
+			  dniszone ? "" : " not");
+		return ISC_R_UNEXPECTED;
+	}
+
+	return ISC_R_SUCCESS;
+}
+
+/**
  * WARNING! This function is used to mangle input from network
  *          and it is security sensitive.
  *

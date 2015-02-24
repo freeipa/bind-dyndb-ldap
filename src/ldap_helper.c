@@ -4856,6 +4856,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	CHECK(ldap_dn_compare(ldap_base, entry->dn, &isbase));
 	if (isbase == ISC_TRUE) {
 		class = LDAP_ENTRYCLASS_CONFIG;
+		iszone = ISC_FALSE;
 	} else {
 		CHECK(dn_to_dnsname(inst->mctx, dn, &entry_name, &entry_origin,
 				    &iszone));
@@ -4925,6 +4926,8 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 		result = ISC_R_NOTIMPLEMENTED;
 		goto cleanup;
 	}
+	CHECK(dn_want_zone(__func__, dn, iszone,
+			   ISC_TF(class & (LDAP_ENTRYCLASS_MASTER | LDAP_ENTRYCLASS_FORWARD))));
 
 	/* All events for single zone are handled by one task, so we don't
 	 * need to spend time with normal records. */

@@ -42,6 +42,10 @@ isc_result_t dn_to_dnsname(isc_mem_t *mctx, const char *dn,
 			   isc_boolean_t *iszone)
 			   ATTR_NONNULL(1, 2, 3) ATTR_CHECKRESULT;
 
+isc_result_t dn_want_zone(const char * const prefix, const char * const dn,
+			  isc_boolean_t dniszone, isc_boolean_t classiszone)
+			  ATTR_NONNULLS ATTR_CHECKRESULT;
+
 isc_result_t dnsname_to_dn(zone_register_t *zr, dns_name_t *name, dns_name_t *zone,
 			   ld_string_t *target) ATTR_NONNULLS ATTR_CHECKRESULT;
 
