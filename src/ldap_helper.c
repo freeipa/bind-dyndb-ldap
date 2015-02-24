@@ -967,6 +967,7 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 	const char *dn = entry->dn;
 	isc_result_t result;
 	isc_result_t orig_result;
+	isc_result_t lock_result;
 	ldap_valuelist_t values;
 	ldap_value_t *value;
 	isc_sockaddrlist_t addrs;
@@ -1144,7 +1145,13 @@ cleanup:
 		log_debug(5, "%s '%s': forwarder table was updated: %s",
 			  msg_obj_type, dn, dns_result_totext(result));
 		orig_result = result;
+		lock_result = isc_task_beginexclusive(inst->task);
+		/* dns_view_flushcache() has to be always locked no matter what */
+		RUNTIME_CHECK(lock_result == ISC_R_SUCCESS ||
+			      lock_result == ISC_R_LOCKBUSY);
 		result = dns_view_flushcache(inst->view);
+		if (lock_result == ISC_R_SUCCESS)
+			isc_task_endexclusive(inst->task);
 		if (result == ISC_R_SUCCESS)
 			result = orig_result;
 	}
