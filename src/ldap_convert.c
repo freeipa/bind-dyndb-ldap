@@ -3,11 +3,13 @@
  */
 
 #include <isc/buffer.h>
+#include <isc/hex.h>
 #include <isc/mem.h>
 #include <isc/util.h>
 #include <isc/string.h>
 
 #include <dns/name.h>
+#include <dns/rdata.h>
 #include <dns/result.h>
 #include <dns/types.h>
 
@@ -378,11 +380,18 @@ ldap_attribute_to_rdatatype(const char *ldap_attribute, dns_rdatatype_t *rdtype)
 
 	/* Does attribute name end with RECORD_SUFFIX? */
 	if (strcasecmp(ldap_attribute + len - LDAP_RDATATYPE_SUFFIX_LEN,
-		       LDAP_RDATATYPE_SUFFIX))
+		       LDAP_RDATATYPE_SUFFIX) == 0) {
+		region.base = ldap_attribute;
+		region.length = len - LDAP_RDATATYPE_SUFFIX_LEN;
+	/* Does attribute name start with with UNKNOWN_PREFIX? */
+	} else if (strncasecmp(ldap_attribute,
+			      LDAP_RDATATYPE_UNKNOWN_PREFIX,
+			      LDAP_RDATATYPE_UNKNOWN_PREFIX_LEN) == 0) {
+		region.base = ldap_attribute + LDAP_RDATATYPE_UNKNOWN_PREFIX_LEN;
+		region.length = len - LDAP_RDATATYPE_UNKNOWN_PREFIX_LEN;
+	} else
 		return ISC_R_UNEXPECTED;
 
-	region.base = ldap_attribute;
-	region.length = len - LDAP_RDATATYPE_SUFFIX_LEN;
 	result = dns_rdatatype_fromtext(rdtype, (isc_textregion_t *)&region);
 	if (result != ISC_R_SUCCESS)
 		log_error_r("dns_rdatatype_fromtext() failed for attribute '%s'",
@@ -391,20 +400,60 @@ ldap_attribute_to_rdatatype(const char *ldap_attribute, dns_rdatatype_t *rdtype)
 	return result;
 }
 
+/**
+ * Convert DNS rdata type to LDAP attribute name.
+ *
+ * @param[in]  rdtype
+ * @param[out] target   Output buffer with \0 terminated attribute name.
+ * @param[in]  size     Target size.
+ * @param[in]  unknown  ISC_TRUE = use generic syntax "UnknownRecord;TYPE65333",
+ *                      ISC_FALSE = use type-specific mnemonic like "ARecord"
+ */
 isc_result_t
 rdatatype_to_ldap_attribute(dns_rdatatype_t rdtype, char *target,
-			    unsigned int size)
+			    unsigned int size, isc_boolean_t unknown)
 {
 	isc_result_t result;
 	char rdtype_str[DNS_RDATATYPE_FORMATSIZE];
 
-	dns_rdatatype_format(rdtype, rdtype_str, DNS_RDATATYPE_FORMATSIZE);
-	CHECK(isc_string_copy(target, size, rdtype_str));
-	CHECK(isc_string_append(target, size, LDAP_RDATATYPE_SUFFIX));
-
-	return ISC_R_SUCCESS;
+	if (unknown) {
+		/* "UnknownRecord;TYPE65333" */
+		CHECK(isc_string_copy(target, size,
+				      LDAP_RDATATYPE_UNKNOWN_PREFIX));
+		snprintf(rdtype_str, sizeof(rdtype_str), "TYPE%u", rdtype);
+		CHECK(isc_string_append(target, size, rdtype_str));
+	} else {
+		/* "ARecord" */
+		dns_rdatatype_format(rdtype, rdtype_str, DNS_RDATATYPE_FORMATSIZE);
+		CHECK(isc_string_copy(target, size, rdtype_str));
+		CHECK(isc_string_append(target, size, LDAP_RDATATYPE_SUFFIX));
+	}
 
 cleanup:
 	return result;
 }
 
+/**
+ * Convert rdata to generic (RFC 3597) format.
+ */
+isc_result_t
+rdata_to_generic(dns_rdata_t *rdata, isc_buffer_t *target)
+{
+	isc_result_t result;
+	isc_region_t rdata_reg;
+	char buf[sizeof("\\# 65535")];
+
+	dns_rdata_toregion(rdata, &rdata_reg);
+	REQUIRE(rdata_reg.length <= 65535);
+
+	result = isc_string_printf(buf, sizeof(buf), "\\# %u", rdata_reg.length);
+	INSIST(result == ISC_R_SUCCESS);
+	isc_buffer_putstr(target, buf);
+	if (rdata_reg.length != 0U) {
+		isc_buffer_putstr(target, " ");
+		CHECK(isc_hex_totext(&rdata_reg, 0, "", target));
+	}
+
+cleanup:
+	return result;
+}

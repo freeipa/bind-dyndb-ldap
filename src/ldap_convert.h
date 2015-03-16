@@ -13,8 +13,10 @@
 #include "types.h"
 
 #define LDAP_ATTR_FORMATSIZE 32 /* "expected" maximum attribute name length */
-#define LDAP_RDATATYPE_SUFFIX     "Record"
-#define LDAP_RDATATYPE_SUFFIX_LEN (sizeof(LDAP_RDATATYPE_SUFFIX) - 1)
+#define LDAP_RDATATYPE_SUFFIX		"Record"
+#define LDAP_RDATATYPE_SUFFIX_LEN	(sizeof(LDAP_RDATATYPE_SUFFIX) - 1)
+#define LDAP_RDATATYPE_UNKNOWN_PREFIX	"UnknownRecord;"
+#define LDAP_RDATATYPE_UNKNOWN_PREFIX_LEN	(sizeof(LDAP_RDATATYPE_UNKNOWN_PREFIX) - 1)
 
 /*
  * Convert LDAP DN 'dn', to dns_name_t 'target'. 'target' needs to be
@@ -39,7 +41,12 @@ isc_result_t ldap_attribute_to_rdatatype(const char *ldap_record,
 
 isc_result_t
 rdatatype_to_ldap_attribute(dns_rdatatype_t rdtype, char *target,
-			    unsigned int size) ATTR_NONNULLS ATTR_CHECKRESULT;
+			    unsigned int size, isc_boolean_t unknown)
+			    ATTR_NONNULLS ATTR_CHECKRESULT;
+
+isc_result_t
+rdata_to_generic(dns_rdata_t *rdata, isc_buffer_t *target)
+		ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t dn_to_text(const char *dn, ld_string_t *target,
 			ld_string_t *origin) ATTR_NONNULL(1, 2) ATTR_CHECKRESULT;

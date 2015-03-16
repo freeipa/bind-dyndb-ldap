@@ -591,14 +591,11 @@ deleterdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	dns_fixedname_t fname;
 	dns_name_t *zname = NULL;
 	isc_boolean_t empty_node;
-	char attr_name[LDAP_ATTR_FORMATSIZE];
-	dns_rdatalist_t fake_rdlist; /* required by remove_values_from_ldap */
 	isc_result_t result;
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
 
 	dns_fixedname_init(&fname);
-	dns_rdatalist_init(&fake_rdlist);
 	zname = dns_db_origin(ldapdb->rbtdb);
 
 	result = dns_db_deleterdataset(ldapdb->rbtdb, node, version, type,
@@ -616,10 +613,8 @@ deleterdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 		CHECK(remove_entry_from_ldap(dns_fixedname_name(&fname), zname,
 					     ldapdb->ldap_inst));
 	} else {
-		CHECK(rdatatype_to_ldap_attribute(type, attr_name,
-						  LDAP_ATTR_FORMATSIZE));
-		CHECK(remove_attr_from_ldap(dns_fixedname_name(&fname), zname,
-					    ldapdb->ldap_inst, attr_name));
+		CHECK(remove_rdtype_from_ldap(dns_fixedname_name(&fname), zname,
+					    ldapdb->ldap_inst, type));
 	}
 
 cleanup:

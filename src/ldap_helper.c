@@ -300,10 +300,15 @@ static isc_result_t handle_connection_error(ldap_instance_t *ldap_inst,
 static isc_result_t ldap_rdttl_to_ldapmod(isc_mem_t *mctx,
 		dns_rdatalist_t *rdlist, LDAPMod **changep) ATTR_NONNULLS ATTR_CHECKRESULT;
 static isc_result_t ldap_rdatalist_to_ldapmod(isc_mem_t *mctx,
-		dns_rdatalist_t *rdlist, LDAPMod **changep, int mod_op) ATTR_NONNULLS ATTR_CHECKRESULT;
+		dns_rdatalist_t *rdlist, LDAPMod **changep, int mod_op,
+		isc_boolean_t unknown) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 static isc_result_t ldap_rdata_to_char_array(isc_mem_t *mctx,
-		dns_rdata_t *rdata_head, char ***valsp) ATTR_NONNULLS ATTR_CHECKRESULT;
+					     dns_rdata_t *rdata_head,
+					     isc_boolean_t unknown,
+					     char ***valsp)
+					     ATTR_NONNULLS ATTR_CHECKRESULT;
+
 static void free_char_array(isc_mem_t *mctx, char ***valsp) ATTR_NONNULLS;
 static isc_result_t modify_ldap_common(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_inst,
 		dns_rdatalist_t *rdlist, int mod_op, isc_boolean_t delete_node) ATTR_NONNULLS ATTR_CHECKRESULT;
@@ -2994,6 +2999,15 @@ reconnect:
 	return result;
 }
 
+/**
+ * Apply LDAP modifications.
+ *
+ * @retval ISC_R_SUCCESS
+ * @retval DNS_R_UNKNOWN = LDAP_OBJECT_CLASS_VIOLATION
+ *                       or LDAP_INSUFFICIENT_ACCESS. Most likely an attribute
+ *                       for a DNS RR type cannot be added because it is not
+ *                       present in the LDAP schema.
+ */
 isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn, LDAPMod **mods,
 		isc_boolean_t delete_node)
@@ -3084,6 +3098,10 @@ retry:
 	}
 
 	log_ldap_error(ldap_conn->handle, "while %s entry '%s'", operation_str, dn);
+	/* attempt to manipulate attribute failed - likely a unknown RR type */
+	if (err_code == LDAP_OBJECT_CLASS_VIOLATION
+	    || err_code == LDAP_INSUFFICIENT_ACCESS) /* this is for 389 DS */
+		CLEANUP_WITH(DNS_R_UNKNOWN);
 
 	/* do not error out if we are trying to delete an
 	 * unexisting attribute */
@@ -3144,9 +3162,15 @@ cleanup:
 	return result;
 }
 
+/**
+ * @param[in]  rdlist
+ * @param[out] changep
+ * @param[in]  mod_op  LDAP operation as integer used in LDAPMod.
+ * @param[in]  generic Use generic (RFC 3597) syntax.
+ */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_rdatalist_to_ldapmod(isc_mem_t *mctx, dns_rdatalist_t *rdlist,
-			  LDAPMod **changep, int mod_op)
+			  LDAPMod **changep, int mod_op, isc_boolean_t unknown)
 {
 	isc_result_t result;
 	LDAPMod *change = NULL;
@@ -3154,8 +3178,9 @@ ldap_rdatalist_to_ldapmod(isc_mem_t *mctx, dns_rdatalist_t *rdlist,
 
 	CHECK(ldap_mod_create(mctx, &change));
 	CHECK(rdatatype_to_ldap_attribute(rdlist->type, change->mod_type,
-					  LDAP_ATTR_FORMATSIZE));
-	CHECK(ldap_rdata_to_char_array(mctx, HEAD(rdlist->rdata), &vals));
+					  LDAP_ATTR_FORMATSIZE, unknown));
+	CHECK(ldap_rdata_to_char_array(mctx, HEAD(rdlist->rdata), unknown,
+				       &vals));
 
 	change->mod_op = mod_op;
 	change->mod_values = vals;
@@ -3169,9 +3194,15 @@ cleanup:
 	return result;
 }
 
+/**
+ * Convert list of DNS Rdata to array of LDAP values.
+ *
+ * @param[in]  unknown  ISC_TRUE  = use generic (RFC 3597) format,
+ *                      ISC_FALSE = use record-specific syntax (if available).
+ */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
-			 char ***valsp)
+			 isc_boolean_t unknown, char ***valsp)
 {
 	isc_result_t result;
 	char **vals;
@@ -3193,12 +3224,16 @@ ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
 
 	rdata = rdata_head;
 	for (i = 0; i < rdata_count && rdata != NULL; i++) {
-		DECLARE_BUFFER(buffer, DNS_RDATA_MAXLENGTH);
+		DECLARE_BUFFER(buffer, /* RFC 3597 format is hex string */
+			       DNS_RDATA_MAXLENGTH * 2 + sizeof("\\# 65535 "));
 		isc_region_t region;
 
 		/* Convert rdata to text. */
 		INIT_BUFFER(buffer);
-		CHECK(dns_rdata_totext(rdata, NULL, &buffer));
+		if (unknown == ISC_FALSE)
+			CHECK(dns_rdata_totext(rdata, NULL, &buffer));
+		else
+			CHECK(rdata_to_generic(rdata, &buffer));
 		isc_buffer_usedregion(&buffer, &region);
 
 		/* Now allocate the string with the right size. */
@@ -3333,6 +3368,7 @@ modify_ldap_common(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_in
 	char *zone_dn = NULL;
 	settings_set_t *zone_settings = NULL;
 	int af; /* address family */
+	isc_boolean_t unknown_type = ISC_FALSE;
 
 	/*
 	 * Find parent zone entry and check if Dynamic Update is allowed.
@@ -3351,6 +3387,7 @@ modify_ldap_common(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_in
 	}
 
 	CHECK(dn_to_dnsname(mctx, zone_dn, &zone_name, NULL, NULL));
+	INSIST(dns_name_equal(zone, &zone_name) == ISC_TRUE);
 
 	result = zr_get_zone_settings(ldap_inst->zone_register, &zone_name,
 				      &zone_settings);
@@ -3370,13 +3407,22 @@ modify_ldap_common(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_in
 		goto cleanup;
 	}
 
-	CHECK(ldap_rdatalist_to_ldapmod(mctx, rdlist, &change[0], mod_op));
 	if (mod_op == LDAP_MOD_ADD) {
 		/* for now always replace the ttl on add */
 		CHECK(ldap_rdttl_to_ldapmod(mctx, rdlist, &change[1]));
 	}
 
-	CHECK(ldap_modify_do(ldap_inst, str_buf(owner_dn), change, delete_node));
+	/* First, try to store data into named attribute like "URIRecord".
+	 * If that fails, try to store the data into "UnknownRecord;TYPE256". */
+	unknown_type = ISC_FALSE;
+	do {
+		ldap_mod_free(mctx, &change[0]);
+		CHECK(ldap_rdatalist_to_ldapmod(mctx, rdlist, &change[0],
+						mod_op, unknown_type));
+		result = ldap_modify_do(ldap_inst, str_buf(owner_dn), change,
+					delete_node);
+		unknown_type = !unknown_type; /* try again with unknown type */
+	} while (result == DNS_R_UNKNOWN && unknown_type == ISC_TRUE);
 
 	/* Keep the PTR of corresponding A/AAAA record synchronized. */
 	if (rdlist->type == dns_rdatatype_a || rdlist->type == dns_rdatatype_aaaa) {
@@ -3393,6 +3439,7 @@ modify_ldap_common(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_in
 		log_debug(3, "sync PTR is enabled for zone '%s'", zone_dn);
 
 		af = (rdlist->type == dns_rdatatype_a) ? AF_INET : AF_INET6;
+		/* Following call will not work if A/AAAA records are unknown. */
 		result = sync_ptr_init(mctx, ldap_inst->view->zonetable,
 				       ldap_inst->zone_register, owner, af,
 				       change[0]->mod_values[0], rdlist->ttl,
@@ -3430,22 +3477,35 @@ remove_values_from_ldap(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ld
 				  delete_node);
 }
 
+/**
+ * Delete named attribute 'URIRecord'
+ * and equivalent attribute 'UnknownRecord;TYPE256' too.
+ */
 isc_result_t
-remove_attr_from_ldap(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_inst,
-		      const char *attr) {
+remove_rdtype_from_ldap(dns_name_t *owner, dns_name_t *zone,
+		      ldap_instance_t *ldap_inst, dns_rdatatype_t type) {
+	char attr[LDAP_ATTR_FORMATSIZE];
 	LDAPMod *change[2] = { NULL };
 	ld_string_t *dn = NULL;
 	isc_result_t result;
+	isc_boolean_t unknown_type = ISC_FALSE;
 
 	CHECK(str_new(ldap_inst->mctx, &dn));
-
-	CHECK(ldap_mod_create(ldap_inst->mctx, &change[0]));
-	change[0]->mod_op = LDAP_MOD_DELETE;
-	CHECK(isc_string_copy(change[0]->mod_type, LDAP_ATTR_FORMATSIZE, attr));
-	change[0]->mod_vals.modv_strvals = NULL; /* delete all values from given attribute */
-
 	CHECK(dnsname_to_dn(ldap_inst->zone_register, owner, zone, dn));
-	CHECK(ldap_modify_do(ldap_inst, str_buf(dn), change, ISC_FALSE));
+
+	do {
+		CHECK(ldap_mod_create(ldap_inst->mctx, &change[0]));
+		change[0]->mod_op = LDAP_MOD_DELETE;
+		/* delete all values from given attribute */
+		change[0]->mod_vals.modv_strvals = NULL;
+		CHECK(rdatatype_to_ldap_attribute(type, attr, sizeof(attr),
+						  unknown_type));
+		CHECK(isc_string_copy(change[0]->mod_type, LDAP_ATTR_FORMATSIZE,
+				      attr));
+		CHECK(ldap_modify_do(ldap_inst, str_buf(dn), change, ISC_FALSE));
+		ldap_mod_free(ldap_inst->mctx, &change[0]);
+		unknown_type = !unknown_type;
+	} while (unknown_type == ISC_TRUE);
 
 cleanup:
 	ldap_mod_free(ldap_inst->mctx, &change[0]);

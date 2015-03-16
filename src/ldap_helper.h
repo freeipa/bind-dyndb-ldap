@@ -59,8 +59,9 @@ remove_values_from_ldap(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ld
 		dns_rdatalist_t *rdlist, isc_boolean_t delete_node) ATTR_NONNULLS;
 
 isc_result_t
-remove_attr_from_ldap(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_inst,
-		      const char *attr) ATTR_NONNULLS;
+remove_rdtype_from_ldap(dns_name_t *owner, dns_name_t *zone,
+		      ldap_instance_t *ldap_inst, dns_rdatatype_t type)
+		      ATTR_NONNULLS;
 
 isc_result_t
 remove_entry_from_ldap(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_inst) ATTR_NONNULLS;
