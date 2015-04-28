@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+#
+# Copyright (C) 2014  bind-dyndb-ldap authors; see COPYING for license
+#
 
 import logging
 import os

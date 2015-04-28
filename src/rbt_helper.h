@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2013-2014  bind-dyndb-ldap authors; see COPYING for license
+ */
+
 #ifndef _LD_RBT_HELPER_H_
 #define _LD_RBT_HELPER_H_
 

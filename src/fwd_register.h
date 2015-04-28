@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2013-2014  bind-dyndb-ldap authors; see COPYING for license
+ */
+
 #ifndef _LD_FWD_REGISTER_H_
 #define _LD_FWD_REGISTER_H_
 

@@ -1,4 +1,7 @@
 #!/usr/bin/env python
+#
+# Copyright (C) 2014  bind-dyndb-ldap authors; see COPYING for license
+#
 
 """
 Interface for version information in bind-dyndb-ldap source tree.
