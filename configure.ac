@@ -73,6 +73,8 @@ AC_CHECK_LIB([ldap], [ldap_initialize], [],
 	AC_MSG_ERROR([Install OpenLDAP development files]))
 AC_CHECK_LIB([krb5], [krb5_cc_initialize], [],
 	AC_MSG_ERROR([Install Kerberos 5 development files]))
+AC_CHECK_LIB([uuid], [uuid_unparse], [],
+	AC_MSG_ERROR([Install UUID library development files]))
 
 # Check version of libdns
 AC_MSG_CHECKING([libdns version])

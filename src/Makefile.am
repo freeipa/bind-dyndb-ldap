@@ -13,6 +13,7 @@ HDRS =				\
 	ldap_helper.h		\
 	lock.h			\
 	log.h			\
+	mldap.h			\
 	rbt_helper.h		\
 	semaphore.h		\
 	settings.h		\
@@ -37,6 +38,7 @@ ldap_la_SOURCES =		\
 	ldap_helper.c		\
 	lock.c			\
 	log.c			\
+	mldap.c			\
 	rbt_helper.c		\
 	semaphore.c		\
 	settings.c		\
