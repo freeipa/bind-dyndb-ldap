@@ -12,6 +12,7 @@
 #include <isc/boolean.h>
 #include <isc/net.h>
 #include <isc/result.h>
+#include <isc/util.h>
 
 #include <dns/db.h>
 #include <dns/enumclass.h>
