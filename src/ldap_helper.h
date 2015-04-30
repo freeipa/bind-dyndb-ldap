@@ -55,25 +55,6 @@ void free_rdatalist(isc_mem_t *mctx, dns_rdatalist_t *rdlist) ATTR_NONNULLS;
  * Free all dynamically allocated memory inside rdlist.
  */
 
-isc_result_t ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
-				  dns_name_t *name, dns_name_t *origin,
-				  ldapdb_rdatalist_t *rdatalist)
-				  ATTR_NONNULL(1, 2, 3, 5);
-/*
- * ldapdb_rdatalist_get
- *
- * Find all RRs in ldap database with specified name and return them in
- * rdatalist.
- *
- * XXX Add partial match handling.
- *
- * Possible errors include:
- *
- * ISC_R_NOMEMORY
- * ISC_R_NOTFOUND
- * DNS_R_PARTIALMATCH
- */
-
 isc_result_t
 new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		  const char * const *argv, dns_dyndb_arguments_t *dyndb_args,

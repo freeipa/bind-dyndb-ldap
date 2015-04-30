@@ -316,11 +316,6 @@ static isc_result_t ldap_reconnect(ldap_instance_t *ldap_inst,
 		ldap_connection_t *ldap_conn, isc_boolean_t force) ATTR_NONNULLS ATTR_CHECKRESULT;
 static isc_result_t handle_connection_error(ldap_instance_t *ldap_inst,
 		ldap_connection_t *ldap_conn, isc_boolean_t force) ATTR_NONNULLS;
-static isc_result_t ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
-		   ldap_qresult_t **ldap_qresultp, const char *base, int scope, char **attrs,
-		   int attrsonly, const char *filter, ...) ATTR_NONNULL(1, 3, 4, 8) ATTR_CHECKRESULT;
-static isc_result_t ldap_query_create(isc_mem_t *mctx, ldap_qresult_t **ldap_qresultp) ATTR_NONNULLS ATTR_CHECKRESULT;
-static void ldap_query_free(isc_boolean_t prepare_reuse, ldap_qresult_t **ldap_qresultp) ATTR_NONNULLS;
 
 /* Functions for writing to LDAP. */
 static isc_result_t ldap_modify_do(ldap_instance_t *ldap_inst,
@@ -2747,55 +2742,6 @@ cleanup:
 	return result;
 }
 
-isc_result_t
-ldapdb_rdatalist_get(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_name_t *name,
-		     dns_name_t *origin, ldapdb_rdatalist_t *rdatalist)
-{
-	isc_result_t result;
-	ldap_qresult_t *ldap_qresult = NULL;
-	ldap_entry_t *entry;
-	ld_string_t *string = NULL;
-	const char *fake_mname = NULL;
-
-	REQUIRE(ldap_inst != NULL);
-	REQUIRE(name != NULL);
-	REQUIRE(rdatalist != NULL);
-
-	/* Perform ordinary LDAP query */
-	INIT_LIST(*rdatalist);
-	CHECK(str_new(mctx, &string));
-	CHECK(dnsname_to_dn(ldap_inst->zone_register, name, origin, string));
-
-	CHECK(ldap_query(ldap_inst, NULL, &ldap_qresult, str_buf(string),
-			 LDAP_SCOPE_BASE, NULL, 0, "(objectClass=idnsRecord)"));
-
-	if (EMPTY(ldap_qresult->ldap_entries)) {
-		result = ISC_R_NOTFOUND;
-		goto cleanup;
-	}
-
-	CHECK(setting_get_str("fake_mname", ldap_inst->local_settings,
-			      &fake_mname));
-	for (entry = HEAD(ldap_qresult->ldap_entries);
-		entry != NULL;
-		entry = NEXT(entry, link)) {
-		CHECK(ldap_parse_rrentry(mctx, entry, origin, fake_mname,
-					 rdatalist));
-	}
-
-	if (EMPTY(*rdatalist))
-		result = ISC_R_NOTFOUND;
-
-cleanup:
-	ldap_query_free(ISC_FALSE, &ldap_qresult);
-	str_destroy(&string);
-
-	if (result != ISC_R_SUCCESS)
-		ldapdb_rdatalist_destroy(mctx, rdatalist);
-
-	return result;
-}
-
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 add_soa_record(isc_mem_t *mctx, dns_name_t *origin,
 	       ldap_entry_t *entry, ldapdb_rdatalist_t *rdatalist,
@@ -2881,164 +2827,6 @@ cleanup:
 		isc_mem_put(mctx, rdatamem.base, rdatamem.length);
 
 	return result;
-}
-
-/**
- * @param ldap_conn    A LDAP connection structure obtained via ldap_get_connection().
- * @param ldap_qresult New ldap_qresult structure will be allocated and pointer
- *                     to it will be returned through this parameter. The result
- *                     has to be freed by caller via ldap_query_free().
- */
-static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-ldap_query(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
-	   ldap_qresult_t **ldap_qresultp, const char *base, int scope, char **attrs,
-	   int attrsonly, const char *filter, ...)
-{
-	va_list ap;
-	isc_result_t result;
-	ldap_qresult_t *ldap_qresult = NULL;
-	int cnt;
-	int ret;
-	int ldap_err_code;
-	int once = 0;
-	isc_boolean_t autoconn = (ldap_conn == NULL);
-
-	REQUIRE(ldap_inst != NULL);
-	REQUIRE(base != NULL);
-	REQUIRE(ldap_qresultp != NULL && *ldap_qresultp == NULL);
-
-	CHECK(ldap_query_create(ldap_inst->mctx, &ldap_qresult));
-	if (autoconn)
-		CHECK(ldap_pool_getconnection(ldap_inst->pool, &ldap_conn));
-
-	va_start(ap, filter);
-	result = str_vsprintf(ldap_qresult->query_string, filter, ap);
-	va_end(ap);
-	if (result != ISC_R_SUCCESS)
-		goto cleanup;
-
-	log_debug(2, "querying '%s' with '%s'", base,
-		  str_buf(ldap_qresult->query_string));
-
-	if (ldap_conn->handle == NULL) {
-		/*
-		 * handle can be NULL when the first connection to LDAP wasn't
-		 * successful
-		 * TODO: handle this case inside ldap_pool_getconnection()?
-		 */
-		CHECK(handle_connection_error(ldap_inst, ldap_conn, ISC_FALSE));
-	}
-
-retry:
-	ret = ldap_search_ext_s(ldap_conn->handle, base, scope,
-				str_buf(ldap_qresult->query_string),
-				attrs, attrsonly, NULL, NULL, NULL,
-				LDAP_NO_LIMIT, &ldap_qresult->result);
-	if (ret == 0) {
-		ldap_conn->tries = 0;
-		cnt = ldap_count_entries(ldap_conn->handle, ldap_qresult->result);
-		log_debug(2, "entry count: %d", cnt);
-
-		result = ldap_entrylist_create(ldap_conn->mctx,
-					       ldap_conn->handle,
-					       ldap_qresult->result,
-					       &ldap_qresult->ldap_entries);
-		if (result != ISC_R_SUCCESS) {
-			log_error("failed to save LDAP query results");
-			goto cleanup;
-		}
-		/* LDAP call suceeded, errors from ldap_entrylist_create() will be
-		 * handled in cleanup section */
-
-	} else { /* LDAP error - continue with error handler */
-		result = ISC_R_FAILURE;
-		ret = ldap_get_option(ldap_conn->handle, LDAP_OPT_RESULT_CODE,
-					  (void *)&ldap_err_code);
-		if (ret == LDAP_OPT_SUCCESS && ldap_err_code == LDAP_NO_SUCH_OBJECT) {
-			result = ISC_R_NOTFOUND;
-		} else if (!once) {
-			/* some error happened during ldap_search, try to recover */
-			once++;
-			result = handle_connection_error(ldap_inst, ldap_conn,
-							 ISC_FALSE);
-			if (result == ISC_R_SUCCESS)
-				goto retry;
-		}
-	}
-
-cleanup:
-	if (autoconn)
-		ldap_pool_putconnection(ldap_inst->pool, &ldap_conn);
-	if (result != ISC_R_SUCCESS) {
-		ldap_query_free(ISC_FALSE, &ldap_qresult);
-	} else {
-		*ldap_qresultp = ldap_qresult;
-	}
-	return result;
-}
-
-/**
- * Allocate and initialize new ldap_qresult structure.
- * @param[out] ldap_qresultp Newly allocated ldap_qresult structure.
- * @return ISC_R_SUCCESS or ISC_R_NOMEMORY (from CHECKED_MEM_GET_PTR)
- */
-static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-ldap_query_create(isc_mem_t *mctx, ldap_qresult_t **ldap_qresultp) {
-	ldap_qresult_t *ldap_qresult = NULL;
-	isc_result_t result;
-
-	CHECKED_MEM_GET_PTR(mctx, ldap_qresult);
-	ZERO_PTR(ldap_qresult);
-	ldap_qresult->mctx = mctx;
-	INIT_LIST(ldap_qresult->ldap_entries);
-	CHECK(str_new(mctx, &ldap_qresult->query_string));
-
-	*ldap_qresultp = ldap_qresult;
-	return ISC_R_SUCCESS;
-
-cleanup:
-	if (ldap_qresult != NULL) {
-		str_destroy(&ldap_qresult->query_string);
-		SAFE_MEM_PUT_PTR(mctx, ldap_qresult);
-	}
-
-	return result;
-}
-
-/**
- * Free LDAP query result. Can free the whole structure or internal parts only.
- * Freeing internal parts is suitable before reusing the structure.
- * @param[in] prepare_reuse ISC_TRUE implies freeing internal parts,
- *                          but not the whole structure.
- * @param[in,out] ldap_qresultp Pointer to freed query. Will be set to NULL
- *                              if prepare_reuse == ISC_FALSE.
- */
-static void ATTR_NONNULLS
-ldap_query_free(isc_boolean_t prepare_reuse, ldap_qresult_t **ldap_qresultp)
-{
-	ldap_qresult_t *qresult;
-	REQUIRE(ldap_qresultp != NULL);
-
-	qresult = *ldap_qresultp;
-
-	if (qresult == NULL)
-		return;
-
-	if (qresult->result) {
-		ldap_msgfree(qresult->result);
-		qresult->result = NULL;
-	}
-
-	ldap_entrylist_destroy(qresult->mctx, &qresult->ldap_entries);
-
-	if (prepare_reuse) {
-		str_clear(qresult->query_string);
-		INIT_LIST(qresult->ldap_entries);
-	} else { /* free the whole structure */
-		str_destroy(&qresult->query_string);
-		SAFE_MEM_PUT_PTR(qresult->mctx, qresult);
-		*ldap_qresultp = NULL;
-	}
 }
 
 /* FIXME: Tested with SASL/GSSAPI/KRB5 only */
@@ -3806,9 +3594,9 @@ cleanup:
 }
 
 /**
- * Check if PTR record's value in LDAP == name of the modified A/AAAA record.
+ * Check if PTR record's value in RBTDB == name of the modified A/AAAA record.
  * Update will be refused if the PTR name contains multiple PTR records or
- * if the value in LDAP != expected name.
+ * if the value in RBTDB != expected name.
  *
  * @param[in] a_name     Name of modified A/AAAA record.
  * @param[in] a_name_str Name of modified A/AAAA record as NUL terminated string.
@@ -3854,7 +3642,6 @@ ldap_sync_ptr_validate(ldap_instance_t *ldap_inst, dns_name_t *a_name,
 		       dns_name_t *zone_name, int mod_op,
 		       isc_boolean_t *delete_node) {
 	isc_result_t result;
-	isc_mem_t *mctx = ldap_inst->mctx;
 
 	char ptr_name_str[DNS_NAME_FORMATSIZE+1];
 	isc_boolean_t ptr_found;
@@ -3862,64 +3649,80 @@ ldap_sync_ptr_validate(ldap_instance_t *ldap_inst, dns_name_t *a_name,
 	char ptr_rdata_str[DNS_NAME_FORMATSIZE+1];
 	isc_boolean_t ptr_a_equal = ISC_FALSE; /* GCC requires initialization */
 
-	ldapdb_rdatalist_t ldap_rdlist;
-	dns_rdatalist_t *ptr_rdlist = NULL;
+	dns_db_t *rbtdb = NULL;
+	dns_dbnode_t *ptr_node = NULL;
+	dns_fixedname_t found_name;
+	dns_rdatasetiter_t *rdataset_it = NULL;
+	dns_rdataset_t rdataset;
+	dns_rdata_t rdata;
 
-	ISC_LIST_INIT(ldap_rdlist);
+	dns_fixedname_init(&found_name);
+	dns_rdataset_init(&rdataset);
+	dns_rdata_init(&rdata);
 
 	REQUIRE(mod_op == LDAP_MOD_DELETE || mod_op == LDAP_MOD_ADD);
 	REQUIRE(a_name_str != NULL);
+	REQUIRE(delete_node != NULL);
 
-	/* Find PTR entry in LDAP. */
-	ptr_found = ISC_FALSE;
-	result = ldapdb_rdatalist_get(mctx, ldap_inst, ptr_name,
-				      zone_name, &ldap_rdlist);
+	/* Find PTR RR in database. */
+	CHECK(zr_get_zone_dbs(ldap_inst->zone_register, zone_name, NULL, &rbtdb));
 
-	*delete_node = ISC_FALSE;
-	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {
-		log_error_r(SYNCPTR_FMTPRE "failed in ldapdb_rdatalist_get()",
-			    SYNCPTR_FMTPOST);
-		goto cleanup;
+	result = dns_db_find(rbtdb, ptr_name, NULL, dns_rdatatype_ptr,
+			     DNS_DBFIND_NOWILD, 0, &ptr_node,
+			     dns_fixedname_name(&found_name), &rdataset, NULL);
+	switch (result) {
+		case ISC_R_SUCCESS:
+			INSIST(dns_name_equal(dns_fixedname_name(&found_name),
+					      ptr_name) == ISC_TRUE);
+			ptr_found = ISC_TRUE;
+			break;
+
+		case DNS_R_NXDOMAIN:
+		case DNS_R_NXRRSET:
+		case DNS_R_EMPTYNAME:
+			ptr_found = ISC_FALSE;
+			/* PTR RR does not exist */
+			break;
+
+		default:
+			/* something unexpected happened */
+			log_error_r(SYNCPTR_FMTPRE "failed in dns_db_find()",
+				    SYNCPTR_FMTPOST);
+			goto cleanup;
 	}
 
 	/* Find the value of PTR entry. */
-	if (result == ISC_R_SUCCESS) {
-		result = ldapdb_rdatalist_findrdatatype(&ldap_rdlist,
-							dns_rdatatype_ptr,
-							&ptr_rdlist);
-		if (result == ISC_R_SUCCESS && HEAD(ptr_rdlist->rdata) != NULL) {
-			if (HEAD(ptr_rdlist->rdata) != TAIL(ptr_rdlist->rdata)) {
-				dns_name_format(ptr_name, ptr_name_str,
-						DNS_NAME_FORMATSIZE);
-				append_trailing_dot(ptr_name_str,
-						    sizeof(ptr_name_str));
-				log_error(SYNCPTR_FMTPRE
-					  "failed: multiple PTR records under "
-					  "name '%s' are not supported",
-					  SYNCPTR_FMTPOST, ptr_name_str);
-				CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
-			}
-			dns_rdata_tostruct(HEAD(ptr_rdlist->rdata), &ptr_rdata,
-					   NULL);
+	if (ptr_found == ISC_TRUE) {
+		INSIST(dns_rdataset_count(&rdataset) > 0);
+		if (dns_rdataset_count(&rdataset) != 1) {
+			dns_name_format(ptr_name, ptr_name_str,
+					DNS_NAME_FORMATSIZE);
+			append_trailing_dot(ptr_name_str, sizeof(ptr_name_str));
+			log_error(SYNCPTR_FMTPRE
+				  "failed: multiple PTR records under "
+				  "name '%s' are not supported",
+				  SYNCPTR_FMTPOST, ptr_name_str);
+			CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
+		}
+		INSIST(dns_rdataset_first(&rdataset) == ISC_R_SUCCESS);
+		dns_rdataset_current(&rdataset, &rdata);
+		CHECK(dns_rdata_tostruct(&rdata, &ptr_rdata, NULL));
 
-			ptr_found = ISC_TRUE;
-
-			/* Compare PTR value with name of the A/AAAA record. */
-			if (dns_name_isabsolute(a_name) &&
-			    dns_name_isabsolute(&ptr_rdata.ptr) &&
-			    dns_name_equal(&ptr_rdata.ptr, a_name)) {
-				ptr_a_equal = ISC_TRUE;
-			} else {
-				ptr_a_equal = ISC_FALSE;
-				dns_name_format(ptr_name, ptr_name_str,
-						DNS_NAME_FORMATSIZE);
-				append_trailing_dot(ptr_name_str,
-						    sizeof(ptr_name_str));
-				dns_name_format(&ptr_rdata.ptr, ptr_rdata_str,
-						DNS_NAME_FORMATSIZE);
-				append_trailing_dot(ptr_rdata_str,
-						    sizeof(ptr_rdata_str));
-			}
+		/* Compare PTR value with name of the A/AAAA record. */
+		if (dns_name_isabsolute(a_name) &&
+		    dns_name_isabsolute(&ptr_rdata.ptr) &&
+		    dns_name_equal(&ptr_rdata.ptr, a_name)) {
+			ptr_a_equal = ISC_TRUE;
+		} else {
+			ptr_a_equal = ISC_FALSE;
+			dns_name_format(ptr_name, ptr_name_str,
+					DNS_NAME_FORMATSIZE);
+			append_trailing_dot(ptr_name_str,
+					    sizeof(ptr_name_str));
+			dns_name_format(&ptr_rdata.ptr, ptr_rdata_str,
+					DNS_NAME_FORMATSIZE);
+			append_trailing_dot(ptr_rdata_str,
+					    sizeof(ptr_rdata_str));
 		}
 	}
 
@@ -3937,12 +3740,14 @@ ldap_sync_ptr_validate(ldap_instance_t *ldap_inst, dns_name_t *a_name,
 				  a_name_str);
 			CLEANUP_WITH(ISC_R_UNEXPECTEDTOKEN);
 
-		} else if (HEAD(ldap_rdlist) == TAIL(ldap_rdlist)) {
-			/* Exactly one PTR record was found and rdlist contains
-			 * exactly one RRset, so the deleted PTR record
-			 * is the only RR in the node. */
-			REQUIRE(HEAD(ldap_rdlist)->type == dns_rdatatype_ptr);
-			*delete_node = ISC_TRUE;
+		} else {
+			CHECK(dns_db_allrdatasets(rbtdb, ptr_node, NULL, 0, &rdataset_it));
+			INSIST(dns_rdatasetiter_first(rdataset_it) == ISC_R_SUCCESS);
+			if (dns_rdatasetiter_next(rdataset_it) == ISC_R_NOMORE)
+				/* Exactly one PTR RR was found and node contains
+				 * exactly one RRset, so the deleted PTR record
+				 * is the only RR in the node. */
+				*delete_node = ISC_TRUE;
 		}
 
 	} else if (mod_op == LDAP_MOD_ADD && ptr_found == ISC_TRUE) {
@@ -3965,7 +3770,14 @@ ldap_sync_ptr_validate(ldap_instance_t *ldap_inst, dns_name_t *a_name,
 	result = ISC_R_SUCCESS;
 
 cleanup:
-	ldapdb_rdatalist_destroy(mctx, &ldap_rdlist);
+	if (dns_rdataset_isassociated(&rdataset))
+		dns_rdataset_disassociate(&rdataset);
+	if (rdataset_it != NULL)
+		dns_rdatasetiter_destroy(&rdataset_it);
+	if (ptr_node != NULL)
+		dns_db_detachnode(rbtdb, &ptr_node);
+	if (rbtdb != NULL)
+		dns_db_detach(&rbtdb);
 
 	return result;
 }
