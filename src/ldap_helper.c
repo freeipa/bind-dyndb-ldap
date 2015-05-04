@@ -87,6 +87,7 @@
 #include "syncptr.h"
 #include "syncrepl.h"
 #include "util.h"
+#include "zone.h"
 #include "zone_manager.h"
 #include "zone_register.h"
 #include "rbt_helper.h"
@@ -2426,8 +2427,6 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 	dns_diff_t diff;
 	dns_dbversion_t *version = NULL;
 	sync_state_t sync_state;
-	dns_journal_t *journal = NULL;
-	char *journal_filename = NULL;
 
 	REQUIRE(entry != NULL);
 	REQUIRE(inst != NULL);
@@ -2507,10 +2506,7 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 	if (!EMPTY(diff.tuples)) {
 		if (sync_state == sync_finished && new_zone == ISC_FALSE) {
 			/* write the transaction to journal */
-			journal_filename = dns_zone_getjournal(raw);
-			CHECK(dns_journal_open(inst->mctx, journal_filename,
-					       DNS_JOURNAL_CREATE, &journal));
-			CHECK(dns_journal_write_transaction(journal, &diff));
+			CHECK(zone_journal_adddiff(inst->mctx, raw, &diff));
 		}
 
 		/* commit */
@@ -2557,8 +2553,6 @@ cleanup:
 		dns_db_closeversion(ldapdb, &version, ISC_FALSE); /* rollback */
 	if (rbtdb != NULL)
 		dns_db_detach(&rbtdb);
-	if (journal != NULL)
-		dns_journal_destroy(&journal);
 	if (ldapdb != NULL)
 		dns_db_detach(&ldapdb);
 	if (new_zone == ISC_TRUE && configured == ISC_FALSE) {
@@ -3939,8 +3933,6 @@ update_record(isc_task_t *task, isc_event_t *event)
 	dns_dbnode_t *node = NULL; /* node is shared between rbtdb and ldapdb */
 	dns_rdatasetiter_t *rbt_rds_iterator = NULL;
 
-	dns_journal_t *journal = NULL;
-	char *journal_filename = NULL;
 	sync_state_t sync_state;
 
 	mctx = pevent->mctx;
@@ -3973,7 +3965,6 @@ update_record(isc_task_t *task, isc_event_t *event)
 update_restart:
 	rbtdb = NULL;
 	ldapdb = NULL;
-	journal = NULL;
 	ldapdb_rdatalist_destroy(mctx, &rdatalist);
 	CHECK(zr_get_zone_dbs(inst->zone_register, &origin, &ldapdb, &rbtdb));
 	CHECK(dns_db_newversion(ldapdb, &version));
@@ -4067,10 +4058,7 @@ update_restart:
 #endif
 		if (sync_state == sync_finished) {
 			/* write the transaction to journal */
-			journal_filename = dns_zone_getjournal(raw);
-			CHECK(dns_journal_open(mctx, journal_filename,
-					       DNS_JOURNAL_CREATE, &journal));
-			CHECK(dns_journal_write_transaction(journal, &diff));
+			CHECK(zone_journal_adddiff(inst->mctx, raw, &diff));
 		}
 		/* commit */
 		CHECK(dns_diff_apply(&diff, rbtdb, version));
@@ -4101,8 +4089,6 @@ cleanup:
 		dns_db_closeversion(ldapdb, &version, ISC_FALSE);
 	if (rbtdb != NULL)
 		dns_db_detach(&rbtdb);
-	if (journal != NULL)
-		dns_journal_destroy(&journal);
 	if (ldapdb != NULL)
 		dns_db_detach(&ldapdb);
 	if (result != ISC_R_SUCCESS && zone_found && !zone_reloaded &&
