@@ -1993,34 +1993,6 @@ cleanup:
 }
 
 /**
- * Increment SOA serial in given diff tuple and return new numeric value.
- *
- * @pre Soa_tuple operation is ADD or ADDRESIGN and RR type is SOA.
- *
- * @param[in]		method
- * @param[in,out]	soa_tuple	Latest SOA RR in diff.
- * @param[out]		new_serial	SOA serial after incrementation.
- */
-static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-update_soa_serial(dns_updatemethod_t method, dns_difftuple_t *soa_tuple,
-		  isc_uint32_t *new_serial) {
-	isc_uint32_t serial;
-
-	REQUIRE(DNS_DIFFTUPLE_VALID(soa_tuple));
-	REQUIRE(soa_tuple->op == DNS_DIFFOP_ADD ||
-		soa_tuple->op == DNS_DIFFOP_ADDRESIGN);
-	REQUIRE(soa_tuple->rdata.type == dns_rdatatype_soa);
-	REQUIRE(new_serial != NULL);
-
-	serial = dns_soa_getserial(&soa_tuple->rdata);
-	serial = dns_update_soaserial(serial, method);
-	dns_soa_setserial(serial, &soa_tuple->rdata);
-	*new_serial = serial;
-
-	return ISC_R_SUCCESS;
-}
-
-/**
  * Replace SOA serial in LDAP for given zone.
  *
  * @param[in]	inst
@@ -2268,7 +2240,6 @@ zone_sync_apex(const ldap_instance_t * const inst,
 	 * This is workaround for ISC-Bug #35080. */
 	dns_dbnode_t *node = NULL;
 	dns_difftuple_t *soa_tuple = NULL;
-	isc_boolean_t soa_tuple_alloc = ISC_FALSE;
 	isc_uint32_t curr_serial;
 
 	REQUIRE(ldap_writeback != NULL);
@@ -2304,15 +2275,8 @@ zone_sync_apex(const ldap_instance_t * const inst,
 			/* The diff doesn't contain new SOA serial
 			 * => generate new serial and write it back to LDAP. */
 			*ldap_writeback = ISC_TRUE;
-			soa_tuple_alloc = ISC_TRUE;
-			CHECK(dns_db_createsoatuple(ldapdb, version, inst->mctx,
-						    DNS_DIFFOP_DEL, &soa_tuple));
-			dns_diff_appendminimal(diff, &soa_tuple);
-			CHECK(dns_db_createsoatuple(ldapdb, version, inst->mctx,
-						    DNS_DIFFOP_ADD, &soa_tuple));
-			CHECK(update_soa_serial(dns_updatemethod_unixtime,
-						soa_tuple, new_serial));
-			dns_diff_appendminimal(diff, &soa_tuple);
+			CHECK(zone_soaserial_addtuple(inst->mctx, ldapdb,
+						      version, diff, new_serial));
 		} else if (new_zone == ISC_TRUE || sync_state != sync_finished ||
 			   isc_serial_le(dns_soa_getserial(&soa_tuple->rdata),
 					 curr_serial)) {
@@ -2320,8 +2284,8 @@ zone_sync_apex(const ldap_instance_t * const inst,
 			 * => generate new serial and write it back to LDAP.
 			 * Force serial update if we are adding a new zone. */
 			*ldap_writeback = ISC_TRUE;
-			CHECK(update_soa_serial(dns_updatemethod_unixtime,
-						soa_tuple, new_serial));
+			CHECK(zone_soaserial_updatetuple(dns_updatemethod_unixtime,
+							 soa_tuple, new_serial));
 		} else {
 			/* The diff contains new serial already
 			 * => do nothing. */
@@ -2344,8 +2308,6 @@ zone_sync_apex(const ldap_instance_t * const inst,
 	}
 
 cleanup:
-	if (soa_tuple_alloc == ISC_TRUE && soa_tuple != NULL)
-		dns_difftuple_free(&soa_tuple);
 	if (node != NULL)
 		dns_db_detachnode(rbtdb, &node);
 	if (rbt_rds_iterator != NULL)
@@ -3927,7 +3889,6 @@ update_record(isc_task_t *task, isc_event_t *event)
 	dns_db_t *rbtdb = NULL;
 	dns_db_t *ldapdb = NULL;
 	dns_diff_t diff;
-	dns_difftuple_t *soa_tuple = NULL;
 
 	dns_dbversion_t *version = NULL; /* version is shared between rbtdb and ldapdb */
 	dns_dbnode_t *node = NULL; /* node is shared between rbtdb and ldapdb */
@@ -4033,13 +3994,8 @@ update_restart:
 	/* No real change in RR data -> do not increment SOA serial. */
 	if (HEAD(diff.tuples) != NULL) {
 		if (sync_state == sync_finished) {
-			CHECK(dns_db_createsoatuple(ldapdb, version, mctx,
-						    DNS_DIFFOP_DEL, &soa_tuple));
-			dns_diff_append(&diff, &soa_tuple);
-			CHECK(dns_db_createsoatuple(ldapdb, version, mctx,
-						    DNS_DIFFOP_ADD, &soa_tuple));
-			CHECK(update_soa_serial(dns_updatemethod_unixtime,
-						soa_tuple, &serial));
+			CHECK(zone_soaserial_addtuple(mctx, ldapdb, version,
+						      &diff, &serial));
 			dns_zone_log(raw, ISC_LOG_DEBUG(5),
 				     "writing new zone serial %u to LDAP",
 				     serial);
@@ -4048,7 +4004,6 @@ update_restart:
 				dns_zone_log(raw, ISC_LOG_ERROR,
 					     "serial (%u) write back to LDAP failed",
 					     serial);
-			dns_diff_append(&diff, &soa_tuple);
 		}
 
 #if RBTDB_DEBUG >= 2
@@ -4078,8 +4033,6 @@ cleanup:
 			 count, isc_mem_inuse(mctx));
 #endif
 	dns_diff_clear(&diff);
-	if (soa_tuple != NULL)
-		dns_difftuple_free(&soa_tuple);
 	if (rbt_rds_iterator != NULL)
 		dns_rdatasetiter_destroy(&rbt_rds_iterator);
 	if (node != NULL)
