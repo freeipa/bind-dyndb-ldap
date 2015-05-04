@@ -81,6 +81,16 @@ remove_attr_from_ldap(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap
 isc_result_t
 remove_entry_from_ldap(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_inst) ATTR_NONNULLS;
 
+isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+ldap_mod_create(isc_mem_t *mctx, LDAPMod **changep);
+
+isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn, LDAPMod **mods,
+		isc_boolean_t delete_node);
+
+void ATTR_NONNULLS
+ldap_mod_free(isc_mem_t *mctx, LDAPMod **changep);
+
 settings_set_t * ldap_instance_getsettings_local(ldap_instance_t *ldap_inst) ATTR_NONNULLS;
 
 const char * ldap_instance_getdbname(ldap_instance_t *ldap_inst) ATTR_NONNULLS;
