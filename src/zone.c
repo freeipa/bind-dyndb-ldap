@@ -98,7 +98,6 @@ cleanup:
 	return result;
 }
 
-
 /**
  * Add all RRs from rdataset to the diff. Create strictly minimal diff.
  */
