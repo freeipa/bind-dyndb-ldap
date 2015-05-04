@@ -11,6 +11,7 @@
 #include <dns/rdataset.h>
 #include <dns/soa.h>
 #include <dns/types.h>
+#include <dns/soa.h>
 #include <dns/update.h>
 #include <dns/zone.h>
 
