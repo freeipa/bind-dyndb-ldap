@@ -5,6 +5,8 @@
 #include <isc/types.h>
 
 #include <dns/journal.h>
+#include <dns/rdatalist.h>
+#include <dns/rdataset.h>
 #include <dns/soa.h>
 #include <dns/update.h>
 #include <dns/zone.h>
@@ -90,5 +92,51 @@ cleanup:
 		dns_difftuple_free(&del);
 	if (add != NULL)
 		dns_difftuple_free(&add);
+	return result;
+}
+
+
+/**
+ * Add all RRs from rdataset to the diff. Create strictly minimal diff.
+ */
+isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+rdataset_to_diff(isc_mem_t *mctx, dns_diffop_t op, dns_name_t *name,
+		dns_rdataset_t *rds, dns_diff_t *diff) {
+	dns_difftuple_t *tp = NULL;
+	isc_result_t result = ISC_R_SUCCESS;
+	dns_rdata_t rdata;
+
+	for (result = dns_rdataset_first(rds);
+	     result == ISC_R_SUCCESS;
+	     result = dns_rdataset_next(rds)) {
+		dns_rdata_init(&rdata);
+		dns_rdataset_current(rds, &rdata);
+		CHECK(dns_difftuple_create(mctx, op, name, rds->ttl, &rdata,
+					   &tp));
+		dns_diff_appendminimal(diff, &tp);
+	}
+
+cleanup:
+	return result;
+}
+
+/**
+ * Add all RRs from rdatalist to the diff. Create strictly minimal diff.
+ */
+isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+rdatalist_to_diff(isc_mem_t *mctx, dns_diffop_t op, dns_name_t *name,
+		  dns_rdatalist_t *rdatalist, dns_diff_t *diff) {
+	dns_difftuple_t *tp = NULL;
+	isc_result_t result = ISC_R_SUCCESS;
+
+	for (dns_rdata_t *rd = HEAD(rdatalist->rdata);
+			  rd != NULL;
+			  rd = NEXT(rd, link)) {
+		CHECK(dns_difftuple_create(mctx, op, name, rdatalist->ttl, rd,
+					   &tp));
+		dns_diff_appendminimal(diff, &tp);
+	}
+
+cleanup:
 	return result;
 }
