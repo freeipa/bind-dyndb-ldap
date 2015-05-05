@@ -128,7 +128,6 @@ const enum_txt_assoc_t forwarder_policy_txts[] = {
  * must acquire the semaphore and the lock.
  */
 
-typedef struct ldap_qresult	ldap_qresult_t;
 typedef struct ldap_connection  ldap_connection_t;
 typedef struct ldap_pool	ldap_pool_t;
 typedef struct ldap_auth_pair	ldap_auth_pair_t;
@@ -204,16 +203,6 @@ struct ldap_connection {
 	/* For reconnection logic. */
 	isc_time_t		next_reconnect;
 	unsigned int		tries;
-};
-
-/**
- * Result from single LDAP query.
- */
-struct ldap_qresult {
-	isc_mem_t		*mctx;
-	ld_string_t		*query_string;
-	LDAPMessage		*result;
-	ldap_entrylist_t	ldap_entries;
 };
 
 /*
