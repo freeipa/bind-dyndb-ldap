@@ -1842,10 +1842,8 @@ diff_ldap_rbtdb(isc_mem_t *mctx, dns_name_t *name, ldapdb_rdatalist_t *ldap_rdat
 	     result == ISC_R_SUCCESS;
 	     result = dns_rdatasetiter_next(rbt_rds_iter)) {
 		dns_rdatasetiter_current(rbt_rds_iter, &rbt_rds);
-		result = rdataset_to_diff(mctx, DNS_DIFFOP_DEL, name, &rbt_rds,
-					  diff);
-		if (result != ISC_R_SUCCESS && result != ISC_R_NOMORE)
-			goto cleanup;
+		CHECK(rdataset_to_diff(mctx, DNS_DIFFOP_DEL, name, &rbt_rds,
+				       diff));
 		dns_rdataset_disassociate(&rbt_rds);
 	}
 

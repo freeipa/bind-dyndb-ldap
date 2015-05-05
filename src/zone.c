@@ -117,6 +117,9 @@ rdataset_to_diff(isc_mem_t *mctx, dns_diffop_t op, dns_name_t *name,
 	}
 
 cleanup:
+	if (result == ISC_R_NOMORE)
+		result = ISC_R_SUCCESS;
+
 	return result;
 }
 
