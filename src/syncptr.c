@@ -3,6 +3,7 @@
  */
 
 #include <ldap.h>
+#include <arpa/inet.h>
 #include <sys/socket.h>
 
 #include <isc/event.h>
@@ -27,8 +28,8 @@
 #define LDAPDB_EVENT_SYNCPTR	(LDAPDB_EVENTCLASS + 4)
 
 #define SYNCPTR_PREF    "PTR record synchronization "
-#define SYNCPTR_FMTPRE  SYNCPTR_PREF "(%s) for A/AAAA '%s' "
-#define SYNCPTR_FMTPOST ldap_modop_str(mod_op), a_name_str
+#define SYNCPTR_FMTPRE  SYNCPTR_PREF "(%s) for '%s A/AAAA %s' "
+#define SYNCPTR_FMTPOST ldap_modop_str(mod_op), a_name_str, ip_str
 
 /*
  * Event for asynchronous PTR record synchronization.
@@ -38,6 +39,7 @@ struct sync_ptrev {
 	ISC_EVENT_COMMON(sync_ptrev_t);
 	isc_mem_t *mctx;
 	char a_name_str[DNS_NAME_FORMATSIZE];
+	char ip_str[INET6_ADDRSTRLEN + 1];
 	DECLARE_BUFFERED_NAME(a_name);
 	DECLARE_BUFFERED_NAME(ptr_name);
 	dns_zone_t *ptr_zone;
@@ -107,8 +109,7 @@ sync_ptr_find(dns_zt_t *zonetable, zone_register_t *zone_register, const int af,
 	/* Get string with IP address from change request
 	 * and convert it to in_addr structure. */
 	if (inet_pton(af, ip_str, &ip) != 1) {
-		log_bug(SYNCPTR_PREF "could not convert IP address "
-			"from string '%s'", ip_str);
+		log_bug(SYNCPTR_PREF "could not parse IP address '%s'", ip_str);
 		CLEANUP_WITH(ISC_R_UNEXPECTED);
 	}
 
@@ -121,7 +122,7 @@ sync_ptr_find(dns_zt_t *zonetable, zone_register_t *zone_register, const int af,
 		isc_netaddr_fromin6(&isc_ip, &ip.v6);
 		break;
 	default:
-		log_bug("unsupported address family 0x%x", af);
+		log_bug(SYNCPTR_PREF ": unsupported address family 0x%x", af);
 		CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
 		break;
 	}
@@ -145,14 +146,9 @@ sync_ptr_find(dns_zt_t *zonetable, zone_register_t *zone_register, const int af,
 	result = zr_get_zone_settings(zone_register, dns_zone_getorigin(*zone),
 				      zsettings);
 	if (result != ISC_R_SUCCESS) {
-		char zone_name_str[DNS_NAME_FORMATSIZE];
-		char ptr_name_str[DNS_NAME_FORMATSIZE];
-		dns_name_format(dns_zone_getorigin(*zone), zone_name_str,
-				DNS_NAME_FORMATSIZE);
-		dns_name_format(ptr_name, ptr_name_str, DNS_NAME_FORMATSIZE);
-		log_error(SYNCPTR_PREF "refused: record '%s' belongs to zone "
-			  "'%s' which is not managed by LDAP driver",
-			  ptr_name_str, zone_name_str);
+		dns_zone_log(*zone, ISC_LOG_ERROR, SYNCPTR_PREF "refused: "
+			     "reverse zone for IP address '%s' "
+			     "is not managed by LDAP driver", ip_str);
 		CLEANUP_WITH(ISC_R_UNEXPECTED);
 	}
 
@@ -212,16 +208,16 @@ cleanup:
  * @endcode
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-sync_ptr_validate(dns_name_t *a_name, const char *a_name_str,
+sync_ptr_validate(dns_name_t *a_name, const char *a_name_str, const char *ip_str,
 		  dns_name_t *ptr_name, dns_zone_t *zone, dns_db_t *ldapdb,
 		  dns_dbversion_t *version, int mod_op,
 		  dns_rdataset_t *rdataset) {
 	isc_result_t result;
 
-	char ptr_name_str[DNS_NAME_FORMATSIZE+1];
+	char ptr_name_str[DNS_NAME_FORMATSIZE + 1];
 	isc_boolean_t ptr_found;
 	dns_rdata_ptr_t ptr_rdata;
-	char ptr_rdata_str[DNS_NAME_FORMATSIZE+1];
+	char ptr_rdata_str[DNS_NAME_FORMATSIZE + 1];
 	isc_boolean_t ptr_a_equal = ISC_FALSE; /* GCC requires initialization */
 
 	dns_dbnode_t *ptr_node = NULL;
@@ -255,8 +251,9 @@ sync_ptr_validate(dns_name_t *a_name, const char *a_name_str,
 
 		default:
 			/* something unexpected happened */
-			log_error_r(SYNCPTR_FMTPRE "failed in dns_db_find()",
-				    SYNCPTR_FMTPOST);
+			dns_zone_log(zone, ISC_LOG_ERROR,
+				     SYNCPTR_FMTPRE "failed in dns_db_find()",
+				     SYNCPTR_FMTPOST);
 			goto cleanup;
 	}
 
@@ -267,10 +264,10 @@ sync_ptr_validate(dns_name_t *a_name, const char *a_name_str,
 			dns_name_format(ptr_name, ptr_name_str,
 					DNS_NAME_FORMATSIZE);
 			append_trailing_dot(ptr_name_str, sizeof(ptr_name_str));
-			log_error(SYNCPTR_FMTPRE
-				  "failed: multiple PTR records under "
-				  "name '%s' are not supported",
-				  SYNCPTR_FMTPOST, ptr_name_str);
+			dns_zone_log(zone, ISC_LOG_ERROR, SYNCPTR_FMTPRE
+				     "failed: multiple PTR records under "
+				     "name '%s' are not supported",
+				     SYNCPTR_FMTPOST, ptr_name_str);
 			CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
 		}
 		INSIST(dns_rdataset_first(rdataset) == ISC_R_SUCCESS);
@@ -297,12 +294,13 @@ sync_ptr_validate(dns_name_t *a_name, const char *a_name_str,
 
 	if (mod_op == LDAP_MOD_DELETE) {
 		if (ptr_found == ISC_FALSE) {
-			log_debug(3, SYNCPTR_FMTPRE "skipped: no PTR records "
-				  "found", SYNCPTR_FMTPOST);
+			dns_zone_log(zone, ISC_LOG_DEBUG(3), SYNCPTR_FMTPRE
+				     "skipped: no PTR records found",
+				     SYNCPTR_FMTPOST);
 			CLEANUP_WITH(ISC_R_IGNORE);
 
 		} else if (ptr_a_equal == ISC_FALSE) {
-			log_error(SYNCPTR_FMTPRE "failed: "
+			dns_zone_log(zone, ISC_LOG_ERROR, SYNCPTR_FMTPRE "failed: "
 				  "existing PTR record '%s' contains unexpected "
 				  "value '%s' (value '%s' expected)",
 				  SYNCPTR_FMTPOST, ptr_name_str, ptr_rdata_str,
@@ -312,13 +310,14 @@ sync_ptr_validate(dns_name_t *a_name, const char *a_name_str,
 		}
 	} else if (mod_op == LDAP_MOD_ADD && ptr_found == ISC_TRUE) {
 		if (ptr_a_equal == ISC_TRUE) {
-			log_debug(3, SYNCPTR_FMTPRE "skipped: PTR record with"
-				  "desired value is already present",
-				  SYNCPTR_FMTPOST);
+			dns_zone_log(zone, ISC_LOG_DEBUG(3),
+				     SYNCPTR_FMTPRE "skipped: PTR record with "
+				     "desired value is already present",
+				     SYNCPTR_FMTPOST);
 			CLEANUP_WITH(ISC_R_IGNORE);
 
 		} else {
-			log_error(SYNCPTR_FMTPRE "failed: "
+			dns_zone_log(zone, ISC_LOG_ERROR, SYNCPTR_FMTPRE "failed: "
 				  "existing PTR record '%s' contains unexpected "
 				  "value '%s' (value '%s' or no value expected)",
 				  SYNCPTR_FMTPOST, ptr_name_str, ptr_rdata_str,
@@ -404,6 +403,8 @@ sync_ptr_init(isc_mem_t *mctx, dns_zt_t * zonetable,
 	INIT_BUFFERED_NAME(ev->ptr_name);
 	CHECK(dns_name_copy(a_name, &ev->a_name, NULL));
 	ev->mod_op = mod_op;
+	strncpy(ev->ip_str, ip_str, sizeof(ev->ip_str));
+	ev->ip_str[sizeof(ev->ip_str) - 1] = '\0';
 	ev->ptr_zone = NULL;
 
 	/**
@@ -419,21 +420,16 @@ sync_ptr_init(isc_mem_t *mctx, dns_zt_t * zonetable,
 	result = sync_ptr_find(zonetable, zone_register, af, ip_str,
 			       &ev->ptr_name, &zone_settings, &ev->ptr_zone);
 	if (result != ISC_R_SUCCESS) {
-		log_error_r(SYNCPTR_FMTPRE "refused: "
-			    "unable to find active reverse zone "
-			    "for IP address '%s'", SYNCPTR_FMTPOST, ip_str);
+		log_error_r(SYNCPTR_FMTPRE "refused: unable to find "
+			    "active reverse zone", SYNCPTR_FMTPOST);
 		CLEANUP_WITH(ISC_R_NOTFOUND);
 	}
 
 	CHECK(setting_get_bool("dyn_update", zone_settings, &zone_dyn_update));
 	if (!zone_dyn_update) {
-		char zone_name_str[DNS_NAME_FORMATSIZE];
-		dns_name_format(dns_zone_getorigin(ev->ptr_zone), zone_name_str,
-				DNS_NAME_FORMATSIZE);
-		log_error(SYNCPTR_FMTPRE "refused: "
-			  "IP address '%s' belongs to reverse zone '%s' "
-			  "and dynamic updates are not allowed for that zone",
-			  SYNCPTR_FMTPOST, ip_str, zone_name_str);
+		dns_zone_log(ev->ptr_zone, ISC_LOG_ERROR,
+			     SYNCPTR_FMTPRE "refused: dynamic updates are not "
+			     "allowed for the reverse zone", SYNCPTR_FMTPOST);
 		CLEANUP_WITH(ISC_R_NOPERM);
 	}
 
@@ -481,10 +477,9 @@ sync_ptr_handler(isc_task_t *task, isc_event_t *event) {
 
 	CHECK(dns_zone_getdb(ev->ptr_zone, &ldapdb));
 	CHECK(dns_db_newversion(ldapdb, &version));
-	result = sync_ptr_validate(&ev->a_name, ev->a_name_str,
-					&ev->ptr_name,
-					ev->ptr_zone, ldapdb, version,
-					ev->mod_op, &old_rdataset);
+	result = sync_ptr_validate(&ev->a_name, ev->a_name_str, ev->ip_str,
+				   &ev->ptr_name, ev->ptr_zone, ldapdb, version,
+				   ev->mod_op, &old_rdataset);
 	if (result == ISC_R_IGNORE)
 		CLEANUP_WITH(ISC_R_SUCCESS);
 	else if (result != ISC_R_SUCCESS)
