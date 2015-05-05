@@ -8,7 +8,7 @@
 #include "util.h"
 
 isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-ldap_sync_ptr(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_zt_t * zonetable,
+sync_ptr_init(isc_mem_t *mctx, dns_zt_t * zonetable,
 	      zone_register_t *zone_register, dns_name_t *a_name, const int af,
 	      const char *ip_str, const int mod_op);
 

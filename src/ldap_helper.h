@@ -26,6 +26,7 @@
 #include "types.h"
 #include "zone_register.h"
 
+#include <isc/eventclass.h>
 #include <isc/util.h>
 
 #define LDAPDB_EVENTCLASS 		ISC_EVENTCLASS(0xDDDD)

@@ -3450,8 +3450,7 @@ modify_ldap_common(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_in
 		log_debug(3, "sync PTR is enabled for zone '%s'", zone_dn);
 
 		af = (rdlist->type == dns_rdatatype_a) ? AF_INET : AF_INET6;
-		result = ldap_sync_ptr(mctx, ldap_inst,
-				       ldap_inst->view->zonetable,
+		result = sync_ptr_init(mctx, ldap_inst->view->zonetable,
 				       ldap_inst->zone_register, owner, af,
 				       change[0]->mod_values[0], mod_op);
 	}

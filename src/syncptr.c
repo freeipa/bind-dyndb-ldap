@@ -7,6 +7,7 @@
 
 #include <isc/event.h>
 #include <isc/netaddr.h>
+#include <isc/task.h>
 #include <isc/types.h>
 
 #include <dns/byaddr.h>
@@ -23,10 +24,28 @@
 #include "zone.h"
 #include "zone_register.h"
 
+#define LDAPDB_EVENT_SYNCPTR	(LDAPDB_EVENTCLASS + 4)
 
 #define SYNCPTR_PREF    "PTR record synchronization "
 #define SYNCPTR_FMTPRE  SYNCPTR_PREF "(%s) for A/AAAA '%s' "
 #define SYNCPTR_FMTPOST ldap_modop_str(mod_op), a_name_str
+
+/*
+ * Event for asynchronous PTR record synchronization.
+ */
+typedef struct sync_ptrev sync_ptrev_t;
+struct sync_ptrev {
+	ISC_EVENT_COMMON(sync_ptrev_t);
+	isc_mem_t *mctx;
+	char a_name_str[DNS_NAME_FORMATSIZE];
+	DECLARE_BUFFERED_NAME(a_name);
+	DECLARE_BUFFERED_NAME(ptr_name);
+	dns_zone_t *ptr_zone;
+	int mod_op;
+};
+
+static void ATTR_NONNULLS
+sync_ptr_handler(isc_task_t *task, isc_event_t *ev);
 
 static const char * ATTR_CHECKRESULT
 ldap_modop_str(unsigned int mod_op) {
@@ -72,7 +91,7 @@ append_trailing_dot(char *str, unsigned int size) {
  * @retval other	 Suitable reverse zone was not found.
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-ldap_find_ptr(dns_zt_t *zonetable, zone_register_t *zone_register, const int af,
+sync_ptr_find(dns_zt_t *zonetable, zone_register_t *zone_register, const int af,
 	      const char *ip_str, dns_name_t *ptr_name,
 	      settings_set_t **zsettings, dns_zone_t **zone) {
 	isc_result_t result;
@@ -193,10 +212,10 @@ cleanup:
  * @endcode
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-ldap_sync_ptr_validate(dns_name_t *a_name, const char *a_name_str,
-		       dns_name_t *ptr_name, dns_zone_t *zone, dns_db_t *ldapdb,
-		       dns_dbversion_t *version, int mod_op,
-		       dns_rdataset_t *rdataset) {
+sync_ptr_validate(dns_name_t *a_name, const char *a_name_str,
+		  dns_name_t *ptr_name, dns_zone_t *zone, dns_db_t *ldapdb,
+		  dns_dbversion_t *version, int mod_op,
+		  dns_rdataset_t *rdataset) {
 	isc_result_t result;
 
 	char ptr_name_str[DNS_NAME_FORMATSIZE+1];
@@ -319,8 +338,27 @@ cleanup:
 	return result;
 }
 
+static void ATTR_NONNULLS
+sync_ptr_destroyev(sync_ptrev_t **eventp) {
+	sync_ptrev_t *ev = NULL;
+
+	REQUIRE(eventp != NULL);
+
+	ev = *eventp;
+	if (ev == NULL)
+		return;
+
+	if (ev->ptr_zone != NULL)
+		dns_zone_detach(&ev->ptr_zone);
+	if (ev->mctx != NULL)
+		isc_mem_detach(&ev->mctx);
+	isc_event_free((isc_event_t **)eventp);
+}
+
 /**
- * Update PTR record to match A/AAAA record.
+ * Start PTR record synchronization. Actual synchronization will be done
+ * by sync_ptr_handler() in the context of task associated with
+ * affected reverse zone.
  *
  * @pre Reverse zone allows dynamic updates.
  *
@@ -331,44 +369,42 @@ cleanup:
  * @param[in]  mod_op  LDAP_MOD_DELETE if A/AAAA record is being deleted
  *                     or LDAP_MOD_ADD if A/AAAA record is being added.
  *
- * @retval ISC_R_SUCCESS PTR record matches A/AAAA record.
+ * @retval ISC_R_SUCCESS Synchronization event was created and sent
+ *                       to affected reverse zone.
+ *                       Synchronization may fail later in sync_ptr_handler()
+ *                       call but caller will not see this error.
  * @retval other	 Synchronization failed - reverse zone doesn't exist,
- * 			 is not active, is not managed by this LDAP instance,
- * 			 old value in PTR record doesn't match a_name ...
+ * 			 is not active, or is not managed by this LDAP instance.
  */
 isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-ldap_sync_ptr(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_zt_t * zonetable,
+sync_ptr_init(isc_mem_t *mctx, dns_zt_t * zonetable,
 	      zone_register_t *zone_register, dns_name_t *a_name, const int af,
 	      const char *ip_str, const int mod_op) {
 	isc_result_t result;
 
-	char a_name_str[DNS_NAME_FORMATSIZE+1];
-
-	dns_zone_t *ptr_zone = NULL;
-	struct dns_fixedname ptr_name;
-	dns_rdataset_t old_rdataset;
-	dns_rdata_ptr_t new_ptr_rdata;
-	unsigned char new_buf[DNS_NAME_MAXWIRE];
-	isc_buffer_t new_rdatabuf;
-	dns_rdata_t new_rdata;
-
 	settings_set_t *zone_settings = NULL;
 	isc_boolean_t zone_dyn_update;
-	dns_db_t *ldapdb = NULL;
-	dns_dbversion_t *version = NULL;
+	char *a_name_str = NULL;
 
-	dns_diff_t diff;
-	dns_difftuple_t *difftp = NULL;
+	sync_ptrev_t *ev = NULL;
+	isc_task_t *task = NULL;
 
 	REQUIRE(mod_op == LDAP_MOD_DELETE || mod_op == LDAP_MOD_ADD);
 
-	dns_fixedname_init(&ptr_name);
-	dns_rdataset_init(&old_rdataset);
+	ev = (sync_ptrev_t *)isc_event_allocate(mctx, NULL,
+						LDAPDB_EVENT_SYNCPTR,
+						sync_ptr_handler, NULL,
+						sizeof(sync_ptrev_t));
+	if (ev == NULL)
+		CLEANUP_WITH(ISC_R_NOMEMORY);
 
-	DNS_RDATACOMMON_INIT(&new_ptr_rdata, dns_rdatatype_ptr, dns_rdataclass_in);
-	isc_buffer_init(&new_rdatabuf, new_buf, sizeof(new_buf));
-	dns_rdata_init(&new_rdata);
-	dns_diff_init(mctx, &diff);
+	ev->mctx = NULL;
+	isc_mem_attach(mctx, &ev->mctx);
+	INIT_BUFFERED_NAME(ev->a_name);
+	INIT_BUFFERED_NAME(ev->ptr_name);
+	CHECK(dns_name_copy(a_name, &ev->a_name, NULL));
+	ev->mod_op = mod_op;
+	ev->ptr_zone = NULL;
 
 	/**
 	 * Get string representation of PTR record value.
@@ -376,12 +412,12 @@ ldap_sync_ptr(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_zt_t * zonetable,
 	 * a_name_str = "host.example.com."
 	 * @endcode
 	 */
-	dns_name_format(a_name, a_name_str, DNS_NAME_FORMATSIZE);
-	append_trailing_dot(a_name_str, sizeof(a_name_str));
+	dns_name_format(a_name, ev->a_name_str, sizeof(ev->a_name_str));
+	append_trailing_dot(ev->a_name_str, sizeof(ev->a_name_str));
+	a_name_str = ev->a_name_str;
 
-	result = ldap_find_ptr(zonetable, zone_register, af, ip_str,
-			       dns_fixedname_name(&ptr_name),
-			       &zone_settings, &ptr_zone);
+	result = sync_ptr_find(zonetable, zone_register, af, ip_str,
+			       &ev->ptr_name, &zone_settings, &ev->ptr_zone);
 	if (result != ISC_R_SUCCESS) {
 		log_error_r(SYNCPTR_FMTPRE "refused: "
 			    "unable to find active reverse zone "
@@ -392,7 +428,7 @@ ldap_sync_ptr(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_zt_t * zonetable,
 	CHECK(setting_get_bool("dyn_update", zone_settings, &zone_dyn_update));
 	if (!zone_dyn_update) {
 		char zone_name_str[DNS_NAME_FORMATSIZE];
-		dns_name_format(dns_zone_getorigin(ptr_zone), zone_name_str,
+		dns_name_format(dns_zone_getorigin(ev->ptr_zone), zone_name_str,
 				DNS_NAME_FORMATSIZE);
 		log_error(SYNCPTR_FMTPRE "refused: "
 			  "IP address '%s' belongs to reverse zone '%s' "
@@ -401,39 +437,81 @@ ldap_sync_ptr(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_zt_t * zonetable,
 		CLEANUP_WITH(ISC_R_NOPERM);
 	}
 
-	CHECK(dns_zone_getdb(ptr_zone, &ldapdb));
+	/* Run PTR record update asynchronously. */
+	dns_zone_gettask(ev->ptr_zone, &task);
+	isc_task_sendanddetach(&task, (isc_event_t **)&ev);
+
+cleanup:
+	sync_ptr_destroyev(&ev);
+	return result;
+}
+
+/**
+ * Update PTR record to match A/AAAA record. This function is running
+ * in context of the task associated with affected reverse zone.
+ *
+ * @retval ISC_R_SUCCESS PTR record matches A/AAAA record.
+ * @retval other	 Synchronization failed: Old value in PTR record
+ *                       doesn't match A/AAAA node name, etc.
+ */
+static void ATTR_NONNULLS
+sync_ptr_handler(isc_task_t *task, isc_event_t *event) {
+	sync_ptrev_t *ev = (sync_ptrev_t *)event;
+	isc_result_t result;
+	dns_db_t *ldapdb = NULL;
+	dns_dbversion_t *version = NULL;
+
+	dns_rdataset_t old_rdataset;
+	dns_rdata_ptr_t new_ptr_rdata;
+	unsigned char new_buf[DNS_NAME_MAXWIRE];
+	isc_buffer_t new_rdatabuf;
+	dns_rdata_t new_rdata;
+
+	dns_diff_t diff;
+	dns_difftuple_t *difftp = NULL;
+
+	UNUSED(task);
+
+	dns_rdataset_init(&old_rdataset);
+
+	DNS_RDATACOMMON_INIT(&new_ptr_rdata, dns_rdatatype_ptr, dns_rdataclass_in);
+	isc_buffer_init(&new_rdatabuf, new_buf, sizeof(new_buf));
+	dns_rdata_init(&new_rdata);
+	dns_diff_init(ev->mctx, &diff);
+
+	CHECK(dns_zone_getdb(ev->ptr_zone, &ldapdb));
 	CHECK(dns_db_newversion(ldapdb, &version));
-	result = ldap_sync_ptr_validate(a_name, a_name_str,
-					dns_fixedname_name(&ptr_name),
-					ptr_zone, ldapdb, version,
-					mod_op, &old_rdataset);
+	result = sync_ptr_validate(&ev->a_name, ev->a_name_str,
+					&ev->ptr_name,
+					ev->ptr_zone, ldapdb, version,
+					ev->mod_op, &old_rdataset);
 	if (result == ISC_R_IGNORE)
 		CLEANUP_WITH(ISC_R_SUCCESS);
 	else if (result != ISC_R_SUCCESS)
-		CLEANUP_WITH(DNS_R_SERVFAIL);
+		goto cleanup;
 
 	/* Delete old PTR record if it exists in RBTDB. */
 	if (dns_rdataset_isassociated(&old_rdataset))
-		CHECK(rdataset_to_diff(mctx, DNS_DIFFOP_DEL,
-				       dns_fixedname_name(&ptr_name),
+		CHECK(rdataset_to_diff(ev->mctx, DNS_DIFFOP_DEL,
+				       &ev->ptr_name,
 				       &old_rdataset, &diff));
 
-	if (mod_op == LDAP_MOD_ADD) {
-		new_ptr_rdata.ptr = *a_name;
+	if (ev->mod_op == LDAP_MOD_ADD) {
+		new_ptr_rdata.ptr = ev->a_name;
 		CHECK(dns_rdata_fromstruct(&new_rdata, dns_rdataclass_in,
 					   dns_rdatatype_ptr, &new_ptr_rdata,
 					   &new_rdatabuf));
 		// FIXME: inherit TTL from A/AAAA record?
-		CHECK(dns_difftuple_create(mctx, DNS_DIFFOP_ADD,
-					   dns_fixedname_name(&ptr_name),
+		CHECK(dns_difftuple_create(ev->mctx, DNS_DIFFOP_ADD,
+					   &ev->ptr_name,
 					   DEFAULT_TTL, &new_rdata, &difftp));
 		dns_diff_appendminimal(&diff, &difftp);
 	}
 
 	if (!EMPTY(diff.tuples)) {
-		CHECK(zone_soaserial_addtuple(mctx, ldapdb, version, &diff,
+		CHECK(zone_soaserial_addtuple(ev->mctx, ldapdb, version, &diff,
 		      NULL));
-		CHECK(zone_journal_adddiff(mctx, ptr_zone, &diff));
+		CHECK(zone_journal_adddiff(ev->mctx, ev->ptr_zone, &diff));
 	}
 
 	CHECK(dns_diff_apply(&diff, ldapdb, version));
@@ -451,12 +529,9 @@ cleanup:
 			dns_db_closeversion(ldapdb, &version, ISC_FALSE);
 		dns_db_detach(&ldapdb);
 	}
-	if (ptr_zone != NULL)
-		dns_zone_detach(&ptr_zone);
-
-
-	return result;
+	sync_ptr_destroyev(&ev);
 }
+
 #undef SYNCPTR_PREF
 #undef SYNCPTR_FMTPRE
 #undef SYNCPTR_FMTPOST
