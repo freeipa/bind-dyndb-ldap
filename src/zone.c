@@ -45,7 +45,7 @@ cleanup:
  * @param[in,out]	soa_tuple	Latest SOA RR in diff.
  * @param[out]		new_serial	SOA serial after incrementation.
  */
-isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+isc_result_t ATTR_NONNULL(2) ATTR_CHECKRESULT
 zone_soaserial_updatetuple(dns_updatemethod_t method, dns_difftuple_t *soa_tuple,
 		  isc_uint32_t *new_serial) {
 	isc_uint32_t serial;
@@ -54,12 +54,12 @@ zone_soaserial_updatetuple(dns_updatemethod_t method, dns_difftuple_t *soa_tuple
 	REQUIRE(soa_tuple->op == DNS_DIFFOP_ADD ||
 		soa_tuple->op == DNS_DIFFOP_ADDRESIGN);
 	REQUIRE(soa_tuple->rdata.type == dns_rdatatype_soa);
-	REQUIRE(new_serial != NULL);
 
 	serial = dns_soa_getserial(&soa_tuple->rdata);
 	serial = dns_update_soaserial(serial, method);
 	dns_soa_setserial(serial, &soa_tuple->rdata);
-	*new_serial = serial;
+	if (new_serial != NULL)
+		*new_serial = serial;
 
 	return ISC_R_SUCCESS;
 }
@@ -72,7 +72,7 @@ zone_soaserial_updatetuple(dns_updatemethod_t method, dns_difftuple_t *soa_tuple
  * @param[out] diff		Diff to append delete-add tuples to.
  * @param[out] new_serial	New serial value.
  */
-isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+isc_result_t ATTR_NONNULL(1,2,3,4) ATTR_CHECKRESULT
 zone_soaserial_addtuple(isc_mem_t *mctx, dns_db_t *db,
 			dns_dbversion_t *version, dns_diff_t *diff,
 			isc_uint32_t *new_serial) {
