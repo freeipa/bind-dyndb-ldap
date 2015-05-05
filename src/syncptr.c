@@ -430,6 +430,11 @@ ldap_sync_ptr(isc_mem_t *mctx, ldap_instance_t *ldap_inst, dns_zt_t * zonetable,
 		dns_diff_appendminimal(&diff, &difftp);
 	}
 
+	if (!EMPTY(diff.tuples)) {
+		CHECK(zone_soaserial_addtuple(mctx, ldapdb, version, &diff,
+		      NULL));
+	}
+
 	CHECK(dns_diff_apply(&diff, ldapdb, version));
 	dns_db_closeversion(ldapdb, &version, ISC_TRUE);
 
