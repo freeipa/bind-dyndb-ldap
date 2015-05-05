@@ -44,6 +44,7 @@ struct sync_ptrev {
 	DECLARE_BUFFERED_NAME(ptr_name);
 	dns_zone_t *ptr_zone;
 	int mod_op;
+	dns_ttl_t ttl;
 };
 
 static void ATTR_NONNULLS
@@ -378,7 +379,7 @@ sync_ptr_destroyev(sync_ptrev_t **eventp) {
 isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 sync_ptr_init(isc_mem_t *mctx, dns_zt_t * zonetable,
 	      zone_register_t *zone_register, dns_name_t *a_name, const int af,
-	      const char *ip_str, const int mod_op) {
+	      const char *ip_str, dns_ttl_t ttl, const int mod_op) {
 	isc_result_t result;
 
 	settings_set_t *zone_settings = NULL;
@@ -406,6 +407,7 @@ sync_ptr_init(isc_mem_t *mctx, dns_zt_t * zonetable,
 	strncpy(ev->ip_str, ip_str, sizeof(ev->ip_str));
 	ev->ip_str[sizeof(ev->ip_str) - 1] = '\0';
 	ev->ptr_zone = NULL;
+	ev->ttl = ttl;
 
 	/**
 	 * Get string representation of PTR record value.
@@ -496,10 +498,9 @@ sync_ptr_handler(isc_task_t *task, isc_event_t *event) {
 		CHECK(dns_rdata_fromstruct(&new_rdata, dns_rdataclass_in,
 					   dns_rdatatype_ptr, &new_ptr_rdata,
 					   &new_rdatabuf));
-		// FIXME: inherit TTL from A/AAAA record?
 		CHECK(dns_difftuple_create(ev->mctx, DNS_DIFFOP_ADD,
 					   &ev->ptr_name,
-					   DEFAULT_TTL, &new_rdata, &difftp));
+					   ev->ttl, &new_rdata, &difftp));
 		dns_diff_appendminimal(&diff, &difftp);
 	}
 
