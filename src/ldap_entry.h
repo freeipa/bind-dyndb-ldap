@@ -76,6 +76,8 @@ struct ldap_attribute {
 #define LDAP_ENTRYCLASS_CONFIG	0x4
 #define LDAP_ENTRYCLASS_FORWARD	0x8
 
+#define DEFAULT_TTL 86400
+
 typedef unsigned char		ldap_entryclass_t;
 
 /* Max type length definitions, from lib/dns/master.c */

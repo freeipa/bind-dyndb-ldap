@@ -463,7 +463,6 @@ cleanup:
 	return result;
 }
 
-#define DEFAULT_TTL 86400
 dns_ttl_t
 ldap_entry_getttl(const ldap_entry_t *entry)
 {
@@ -492,4 +491,3 @@ ldap_entry_getttl(const ldap_entry_t *entry)
 
 	return ttl;
 }
-
