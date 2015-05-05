@@ -3442,6 +3442,13 @@ modify_ldap_common(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_in
 		result = sync_ptr_init(mctx, ldap_inst->view->zonetable,
 				       ldap_inst->zone_register, owner, af,
 				       change[0]->mod_values[0], mod_op);
+		/* Silently ignore cases where the reverse zone does not exist,
+		 * does not accept dynamic updates, or is not managed by this
+		 * driver instance. */
+		if (result == ISC_R_NOTFOUND ||
+		    result == ISC_R_NOPERM ||
+		    result == DNS_R_NOTAUTHORITATIVE)
+			result = ISC_R_SUCCESS;
 	}
 
 cleanup:

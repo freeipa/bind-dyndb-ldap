@@ -149,7 +149,7 @@ sync_ptr_find(dns_zt_t *zonetable, zone_register_t *zone_register, const int af,
 		dns_zone_log(*zone, ISC_LOG_ERROR, SYNCPTR_PREF "refused: "
 			     "reverse zone for IP address '%s' "
 			     "is not managed by LDAP driver", ip_str);
-		CLEANUP_WITH(ISC_R_UNEXPECTED);
+		CLEANUP_WITH(DNS_R_NOTAUTHORITATIVE);
 	}
 
 cleanup:
@@ -422,7 +422,7 @@ sync_ptr_init(isc_mem_t *mctx, dns_zt_t * zonetable,
 	if (result != ISC_R_SUCCESS) {
 		log_error_r(SYNCPTR_FMTPRE "refused: unable to find "
 			    "active reverse zone", SYNCPTR_FMTPOST);
-		CLEANUP_WITH(ISC_R_NOTFOUND);
+		goto cleanup;
 	}
 
 	CHECK(setting_get_bool("dyn_update", zone_settings, &zone_dyn_update));
