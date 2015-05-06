@@ -45,6 +45,12 @@ Then, to install, run this as root:
 
 This will install the file ldap.so into the <libdir>/bind/ directory.
 
+Alternatively, the latest version can be obtained from Git repository.
+You can use following commands to prepare latest source tree for compilation:
+
+$ git clone https://git.fedorahosted.org/git/bind-dyndb-ldap.git
+$ cd bind-dyndb-ldap
+$ autoreconf -fvi
 
 4. LDAP schema
 ==============
