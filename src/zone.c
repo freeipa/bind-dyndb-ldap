@@ -3,11 +3,14 @@
  */
 
 #include <isc/types.h>
+#include <isc/util.h>
 
+#include <dns/diff.h>
 #include <dns/journal.h>
 #include <dns/rdatalist.h>
 #include <dns/rdataset.h>
 #include <dns/soa.h>
+#include <dns/types.h>
 #include <dns/update.h>
 #include <dns/zone.h>
 
