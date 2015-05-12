@@ -53,6 +53,9 @@ struct ldap_entry {
 	char			*dn;
 	struct berval		*uuid;
 	ldap_entryclass_t	class;
+	DECLARE_BUFFERED_NAME(fqdn);
+	DECLARE_BUFFERED_NAME(zone_name);
+
 	ldap_attribute_t	*lastattr;
 	ldap_attributelist_t	attrs;
 	LINK(ldap_entry_t)	link;

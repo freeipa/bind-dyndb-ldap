@@ -131,6 +131,8 @@ ldap_entry_init(isc_mem_t *mctx, ldap_entry_t **entryp) {
 	ZERO_PTR(entry);
 	INIT_LIST(entry->attrs);
 	INIT_LINK(entry, link);
+	INIT_BUFFERED_NAME(entry->fqdn);
+	INIT_BUFFERED_NAME(entry->zone_name);
 
 	CHECKED_MEM_GET(mctx, entry->rdata_target_mem, DNS_RDATA_MAXLENGTH);
 	CHECK(isc_lex_create(mctx, TOKENSIZ, &entry->lex));
@@ -162,11 +164,6 @@ ldap_entry_reconstruct(isc_mem_t *mctx, zone_register_t *zr,
 	ldap_entry_t *entry = NULL;
 	ld_string_t *str = NULL;
 	metadb_node_t *node = NULL;
-	DECLARE_BUFFERED_NAME(fqdn);
-	DECLARE_BUFFERED_NAME(zone_name);
-
-	INIT_BUFFERED_NAME(fqdn);
-	INIT_BUFFERED_NAME(zone_name);
 
 	CHECK(str_new(mctx, &str));
 	result = mldap_entry_read(mldap, uuid, &node);
@@ -187,14 +184,15 @@ ldap_entry_reconstruct(isc_mem_t *mctx, zone_register_t *zr,
 		/* idnsConfig objects do not have DNS name */
 		CHECK(str_cat_char(str, ldap_base));
 	} else {
-		CHECK(mldap_dnsname_get(node, &fqdn, &zone_name));
+		CHECK(mldap_dnsname_get(node, &entry->fqdn, &entry->zone_name));
 		if ((entry->class &
 		     (LDAP_ENTRYCLASS_MASTER | LDAP_ENTRYCLASS_FORWARD)) != 0) {
-			INSIST(dns_name_equal(dns_rootname, &zone_name)
+			INSIST(dns_name_equal(dns_rootname, &entry->zone_name)
 			       == ISC_TRUE);
-			CHECK(dnsname_to_dn(zr, &fqdn, &fqdn, str));
+			CHECK(dnsname_to_dn(zr, &entry->fqdn, &entry->fqdn, str));
 		} else if ((entry->class & LDAP_ENTRYCLASS_RR) != 0) {
-			CHECK(dnsname_to_dn(zr, &fqdn, &zone_name, str));
+			CHECK(dnsname_to_dn(zr, &entry->fqdn, &entry->zone_name,
+					    str));
 		}
 	}
 	entry->dn = ldap_strdup(str_buf(str));
@@ -223,6 +221,8 @@ ldap_entry_parse(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 	char *attribute;
 	BerElement *ber = NULL;
 	ldap_entry_t *entry = NULL;
+	isc_boolean_t has_zone_dn;
+	isc_boolean_t has_zone_class;
 
 	REQUIRE(ld != NULL);
 	REQUIRE(ldap_entry != NULL);
@@ -254,6 +254,18 @@ ldap_entry_parse(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 	entry->uuid = ber_dupbv(NULL, uuid);
 	CHECK(ldap_entry_parseclass(entry, &entry->class));
 
+	if ((entry->class &
+	    (LDAP_ENTRYCLASS_MASTER | LDAP_ENTRYCLASS_FORWARD
+	     | LDAP_ENTRYCLASS_RR)) != 0)
+		CHECK(dn_to_dnsname(mctx, entry->dn, &entry->fqdn,
+				    &entry->zone_name, &has_zone_dn));
+	else
+		has_zone_dn = ISC_FALSE;
+	has_zone_class = ISC_TF(entry->class & (LDAP_ENTRYCLASS_MASTER
+						| LDAP_ENTRYCLASS_FORWARD));
+	CHECK(dn_want_zone(__func__, entry->dn, has_zone_dn, has_zone_class));
+
+
 	*entryp = entry;
 
 cleanup:
@@ -284,6 +296,10 @@ ldap_entry_destroy(isc_mem_t *mctx, ldap_entry_t **entryp)
 		ldap_memfree(entry->dn);
 	if (entry->uuid != NULL)
 		ber_bvfree(entry->uuid);
+	if (dns_name_dynamic(&entry->fqdn))
+		dns_name_free(&entry->fqdn, mctx);
+	if (dns_name_dynamic(&entry->zone_name))
+		dns_name_free(&entry->zone_name, mctx);
 	if (entry->lex != NULL) {
 		isc_lex_close(entry->lex);
 		isc_lex_destroy(&entry->lex);
