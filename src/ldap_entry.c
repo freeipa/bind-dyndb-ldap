@@ -207,7 +207,7 @@ cleanup:
  * Allocate new ldap_entry and fill it with data from LDAPMessage.
  */
 isc_result_t
-ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
+ldap_entry_parse(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 		  struct berval	*uuid, ldap_entry_t **entryp)
 {
 	isc_result_t result;

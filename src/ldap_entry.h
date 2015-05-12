@@ -103,7 +103,7 @@ ldap_entrylist_append(isc_mem_t *mctx, LDAP *ld, LDAPMessage *msg,
  * Creates ldap_entry_t from message "result" received via "ld" connection
  */
 isc_result_t
-ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
+ldap_entry_parse(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 		  struct berval	*uuid, ldap_entry_t **entryp) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t

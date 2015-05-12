@@ -4373,7 +4373,7 @@ int ldap_sync_search_entry (
 
 	CHECK(sync_concurr_limit_wait(inst->sctx));
 	if (phase == LDAP_SYNC_CAPI_ADD || phase == LDAP_SYNC_CAPI_MODIFY) {
-		CHECK(ldap_entry_create(inst->mctx, ls->ls_ld, msg, entryUUID,
+		CHECK(ldap_entry_parse(inst->mctx, ls->ls_ld, msg, entryUUID,
 					&entry));
 		CHECK(mldap_newversion(inst->mldapdb));
 		mdb_write = ISC_TRUE;
@@ -4397,6 +4397,7 @@ int ldap_sync_search_entry (
 		log_bug("syncrepl phase %x is not supported", phase);
 		CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
 	}
+
 	syncrepl_update(inst, entry, phase);
 #ifdef RBTDB_DEBUG
 	if (++count % 100 == 0)
