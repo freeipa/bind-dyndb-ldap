@@ -127,4 +127,38 @@ extern isc_boolean_t verbose_checks; /* from settings.c */
 #define ATTR_CHECKRESULT
 #endif
 
+/*
+ * Static (compile-time) assert for C:
+ * C99 doesn't require support for "sizeof" in preprocessor conditionals so
+ * we can't do something like #if (sizeof(my_struct) != 512).
+ *
+ * This macro has no runtime side affects as it just defines an enum whose name
+ * depends on the current line, and whose value will give a divide by zero error
+ * at compile time if the assertion is false.
+ *
+ * Taken from
+ * http://www.pixelbeat.org/programming/gcc/static_assert.html
+ * version 10 Feb 2015. Padraig Brady told me that it is licensed under
+ * "GNU All-Permissive License":
+ *
+ * Copying and distribution of this file, with or without modification,
+ * are permitted in any medium without royalty provided the copyright notice
+ * and this notice are preserved. This code is offered as-is,
+ * without any warranty.
+ */
+#define ASSERT_CONCAT_(a, b) a##b
+#define ASSERT_CONCAT(a, b) ASSERT_CONCAT_(a, b)
+/* These can't be used after statements in c89. */
+#ifdef __COUNTER__
+  #define STATIC_ASSERT(e, m) \
+    ;enum { ASSERT_CONCAT(static_assert_, __COUNTER__) = 1/(!!(e)) }
+#else
+  /* This can't be used twice on the same line so ensure if using in headers
+   * that the headers are not included twice (by wrapping in #ifndef...#endif)
+   * Note it doesn't cause an issue when used on same line of separate modules
+   * compiled with gcc -combine -fwhole-program.  */
+  #define STATIC_ASSERT(e, m) \
+    ;enum { ASSERT_CONCAT(assert_line_, __LINE__) = 1/(!!(e)) }
+#endif
+
 #endif /* !_LD_UTIL_H_ */
