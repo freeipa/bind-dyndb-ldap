@@ -38,6 +38,15 @@
 #include "util.h"
 #include "zone_register.h"
 
+/*
+ * ldap_entry_parseclass
+ *
+ * Get entry class (bitwise OR of the LDAP_ENTRYCLASS_*). Note that
+ * you must ldap_search for objectClass attribute!
+ */
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+ldap_entry_parseclass(ldap_entry_t *entry, ldap_entryclass_t *class);
+
 /* Represents values associated with LDAP attribute */
 static void ATTR_NONNULLS
 ldap_valuelist_destroy(isc_mem_t *mctx, ldap_valuelist_t *values)
@@ -153,7 +162,6 @@ ldap_entry_reconstruct(isc_mem_t *mctx, zone_register_t *zr,
 	ldap_entry_t *entry = NULL;
 	ld_string_t *str = NULL;
 	metadb_node_t *node = NULL;
-	ldap_entryclass_t class;
 	DECLARE_BUFFERED_NAME(fqdn);
 	DECLARE_BUFFERED_NAME(zone_name);
 
@@ -173,19 +181,19 @@ ldap_entry_reconstruct(isc_mem_t *mctx, zone_register_t *zr,
 	if (entry->uuid == NULL)
 		CLEANUP_WITH(ISC_R_NOMEMORY);
 
-	CHECK(mldap_class_get(node, &class));
+	CHECK(mldap_class_get(node, &entry->class));
 	/* create fake DN from remembered DNS names and object class */
-	if ((class & LDAP_ENTRYCLASS_CONFIG) != 0) {
+	if ((entry->class & LDAP_ENTRYCLASS_CONFIG) != 0) {
 		/* idnsConfig objects do not have DNS name */
 		CHECK(str_cat_char(str, ldap_base));
 	} else {
 		CHECK(mldap_dnsname_get(node, &fqdn, &zone_name));
-		if ((class &
+		if ((entry->class &
 		     (LDAP_ENTRYCLASS_MASTER | LDAP_ENTRYCLASS_FORWARD)) != 0) {
 			INSIST(dns_name_equal(dns_rootname, &zone_name)
 			       == ISC_TRUE);
 			CHECK(dnsname_to_dn(zr, &fqdn, &fqdn, str));
-		} else if ((class & LDAP_ENTRYCLASS_RR) != 0) {
+		} else if ((entry->class & LDAP_ENTRYCLASS_RR) != 0) {
 			CHECK(dnsname_to_dn(zr, &fqdn, &zone_name, str));
 		}
 	}
@@ -244,6 +252,7 @@ ldap_entry_parse(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 		CLEANUP_WITH(ISC_R_FAILURE);
 	}
 	entry->uuid = ber_dupbv(NULL, uuid);
+	CHECK(ldap_entry_parseclass(entry, &entry->class));
 
 	*entryp = entry;
 
@@ -426,7 +435,7 @@ cleanup:
 }
 
 isc_result_t
-ldap_entry_getclass(ldap_entry_t *entry, ldap_entryclass_t *class)
+ldap_entry_parseclass(ldap_entry_t *entry, ldap_entryclass_t *class)
 {
 	ldap_valuelist_t values;
 	ldap_value_t *val;

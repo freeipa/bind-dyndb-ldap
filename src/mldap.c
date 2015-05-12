@@ -272,7 +272,6 @@ cleanup:
 isc_result_t
 mldap_entry_create(ldap_entry_t *entry, mldapdb_t *mldap, metadb_node_t **nodep) {
 	isc_result_t result;
-	ldap_entryclass_t class;
 	metadb_node_t *node = NULL;
 	DECLARE_BUFFERED_NAME(mname);
 
@@ -283,8 +282,7 @@ mldap_entry_create(ldap_entry_t *entry, mldapdb_t *mldap, metadb_node_t **nodep)
 	ldap_uuid_to_mname(entry->uuid, &mname);
 	CHECK(metadb_writenode_create(mldap->mdb, &mname, &node));
 
-	CHECK(ldap_entry_getclass(entry, &class));
-	CHECK(mldap_class_store(class, node));
+	CHECK(mldap_class_store(entry->class, node));
 	CHECK(mldap_generation_store(mldap, node));
 
 	*nodep = node;

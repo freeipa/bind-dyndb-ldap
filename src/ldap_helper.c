@@ -2588,7 +2588,6 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
 {
 	isc_result_t result;
 	dns_rdataclass_t rdclass;
-	ldap_entryclass_t objclass;
 	dns_ttl_t ttl;
 	dns_rdatatype_t rdtype;
 	dns_rdata_t *rdata = NULL;
@@ -2601,8 +2600,7 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
 	REQUIRE(EMPTY(*rdatalist));
 
 	CHECK(str_new(mctx, &data_buf));
-	CHECK(ldap_entry_getclass(entry, &objclass));
-	if ((objclass & LDAP_ENTRYCLASS_MASTER) != 0)
+	if ((entry->class & LDAP_ENTRYCLASS_MASTER) != 0)
 		CHECK(add_soa_record(mctx, origin, entry, rdatalist, fake_mname));
 
 	rdclass = ldap_entry_getrdclass(entry);
@@ -3704,7 +3702,6 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	ldap_syncreplevent_t *pevent = (ldap_syncreplevent_t *)event;
 	isc_result_t result ;
 	ldap_instance_t *inst = NULL;
-	ldap_entryclass_t objclass;
 	isc_mem_t *mctx;
 	dns_name_t prevname;
 	dns_name_t currname;
@@ -3723,11 +3720,10 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	if (SYNCREPL_DEL(pevent->chgtype)) {
 		CHECK(ldap_delete_zone(inst, pevent->dn, ISC_TRUE, ISC_FALSE));
 	} else {
-		CHECK(ldap_entry_getclass(entry, &objclass));
-		if (objclass & LDAP_ENTRYCLASS_MASTER)
+		if (entry->class & LDAP_ENTRYCLASS_MASTER)
 			CHECK(ldap_parse_master_zoneentry(entry, NULL, inst,
 							  task));
-		else if (objclass & LDAP_ENTRYCLASS_FORWARD)
+		else if (entry->class & LDAP_ENTRYCLASS_FORWARD)
 			CHECK(ldap_parse_fwd_zoneentry(entry, inst));
 	}
 
@@ -4142,7 +4138,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 		switch (chgtype) {
 		case LDAP_SYNC_CAPI_ADD:
 		case LDAP_SYNC_CAPI_MODIFY:
-			CHECK(ldap_entry_getclass(entry, &class));
+			class = entry->class;
 			break;
 
 		default:
@@ -4356,7 +4352,6 @@ int ldap_sync_search_entry (
 	isc_result_t result;
 	metadb_node_t *node = NULL;
 	isc_boolean_t mdb_write = ISC_FALSE;
-	ldap_entryclass_t class;
 	const char *ldap_base = NULL;
 	DECLARE_BUFFERED_NAME(fqdn);
 	DECLARE_BUFFERED_NAME(zone_name);
@@ -4378,8 +4373,7 @@ int ldap_sync_search_entry (
 		CHECK(mldap_newversion(inst->mldapdb));
 		mdb_write = ISC_TRUE;
 		CHECK(mldap_entry_create(entry, inst->mldapdb, &node));
-		CHECK(ldap_entry_getclass(entry, &class));
-		if ((class & LDAP_ENTRYCLASS_CONFIG) == 0) {
+		if ((entry->class & LDAP_ENTRYCLASS_CONFIG) == 0) {
 			CHECK(dn_to_dnsname(inst->mctx, entry->dn,
 					    &fqdn, &zone_name, NULL));
 			CHECK(mldap_dnsname_store(&fqdn, &zone_name, node));

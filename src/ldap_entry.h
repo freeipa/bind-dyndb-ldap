@@ -47,10 +47,12 @@ typedef struct ldap_attribute	ldap_attribute_t;
 typedef LIST(ldap_attribute_t)	ldap_attributelist_t;
 
 /* Represents LDAP entry and it's attributes */
+typedef unsigned char		ldap_entryclass_t;
 typedef LIST(ldap_entry_t)	ldap_entrylist_t;
 struct ldap_entry {
 	char			*dn;
 	struct berval		*uuid;
+	ldap_entryclass_t	class;
 	ldap_attribute_t	*lastattr;
 	ldap_attributelist_t	attrs;
 	LINK(ldap_entry_t)	link;
@@ -77,8 +79,6 @@ struct ldap_attribute {
 #define LDAP_ENTRYCLASS_FORWARD	0x8
 
 #define DEFAULT_TTL 86400
-
-typedef unsigned char		ldap_entryclass_t;
 
 /* Max type length definitions, from lib/dns/master.c */
 #define TOKENSIZ (8*1024)
@@ -135,15 +135,6 @@ ldap_entry_nextrdtype(ldap_entry_t *entry, ldap_attribute_t **attrp,
 isc_result_t
 ldap_entry_getfakesoa(ldap_entry_t *entry, const char *fake_mname,
 		      ld_string_t *target) ATTR_NONNULLS ATTR_CHECKRESULT;
-
-/*
- * ldap_entry_getclass
- *
- * Get entry class (bitwise OR of the LDAP_ENTRYCLASS_*). Note that
- * you must ldap_search for objectClass attribute!
- */
-isc_result_t
-ldap_entry_getclass(ldap_entry_t *entry, ldap_entryclass_t *class) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
 ldap_entry_guessclass(dns_name_t *entry_name, isc_boolean_t iszone,
