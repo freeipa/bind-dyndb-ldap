@@ -9,14 +9,16 @@
 #include <stddef.h>
 #include <uuid/uuid.h>
 
+#include <isc/boolean.h>
+#include <isc/net.h>
 #include <isc/result.h>
-#include <isc/util.h>
 
 #include <dns/db.h>
 #include <dns/enumclass.h>
 #include <dns/name.h>
 #include <dns/types.h>
 
+#include "ldap_entry.h"
 #include "metadb.h"
 #include "mldap.h"
 #include "util.h"
@@ -126,4 +128,111 @@ ldap_uuid_to_mname(struct berval *beruuid, dns_name_t *nameuuid) {
 				    nameuuid, NULL) == ISC_R_SUCCESS);
 
 	return;
+}
+
+STATIC_ASSERT((sizeof(ldap_entryclass_t) <= sizeof(struct in6_addr)), \
+		"ldap_entryclass_t is too big for AAAA rdata type");
+/**
+ * ldap_entryclass_t is stored inside AAAA record type
+ */
+static isc_result_t
+mldap_class_store(ldap_entryclass_t class, metadb_node_t *node) {
+	unsigned char buff[sizeof(struct in6_addr)];
+	isc_region_t region = { .base = buff, .length = sizeof(buff) };
+	dns_rdata_t rdata;
+
+	dns_rdata_init(&rdata);
+	memset(buff, 0, sizeof(buff));
+
+	/* Bytes should be in network-order but we do not care because:
+	 * 1) It is used only internally.  2) Class is unsigned char. */
+	memcpy(buff, &class, sizeof(class));
+	dns_rdata_fromregion(&rdata, dns_rdataclass_in, dns_rdatatype_aaaa,
+			     &region);
+
+	return metadb_rdata_store(&rdata, node);
+}
+
+
+STATIC_ASSERT((sizeof(((mldapdb_t *)0)->generation) == sizeof(struct in_addr)), \
+		"mldapdb_t->generation is too big for A rdata type");
+/**
+ * mldapdb_t->generation is stored inside A record type
+ */
+static isc_result_t
+mldap_generation_store(mldapdb_t *mldap, metadb_node_t *node) {
+	isc_result_t result;
+	unsigned char buff[sizeof(mldap->generation)];
+	isc_region_t region = { .base = buff, .length = sizeof(buff) };
+	dns_rdata_t rdata;
+
+	dns_rdata_init(&rdata);
+
+	/* Bytes should be in network-order but we do not care because:
+	 * 1) It is used only internally and always compared on this machine. */
+	memcpy(buff, &mldap->generation, sizeof(mldap->generation));
+	dns_rdata_fromregion(&rdata, dns_rdataclass_in, dns_rdatatype_a, &region);
+	CHECK(metadb_rdata_store(&rdata, node));
+
+cleanup:
+	return result;
+}
+
+/**
+ * FQDN and zone name are stored inside RP record type
+ */
+isc_result_t
+mldap_dnsname_store(dns_name_t *fqdn, dns_name_t *zone, metadb_node_t *node) {
+	isc_result_t result;
+	dns_rdata_rp_t rp;
+	dns_rdata_t rdata;
+	unsigned char wirebuf[2 * DNS_NAME_MAXWIRE];
+	isc_buffer_t rdatabuf;
+
+	REQUIRE(fqdn != NULL);
+	REQUIRE(zone != NULL);
+
+	dns_rdata_init(&rdata);
+	DNS_RDATACOMMON_INIT(&rp, dns_rdatatype_rp, dns_rdataclass_in);
+	isc_buffer_init(&rdatabuf, wirebuf, sizeof(wirebuf));
+
+	/* Bytes should be in network-order but we do not care because:
+	 * 1) It is used only internally and always compared on this machine. */
+	rp.mail = *fqdn;
+	rp.text = *zone;
+	CHECK(dns_rdata_fromstruct(&rdata, dns_rdataclass_in, dns_rdatatype_rp,
+				   &rp, &rdatabuf));
+	CHECK(metadb_rdata_store(&rdata, node));
+
+cleanup:
+	return result;
+}
+
+/**
+ * Store information from LDAP entry into meta-database.
+ */
+isc_result_t
+mldap_entry_create(ldap_entry_t *entry, mldapdb_t *mldap, metadb_node_t **nodep) {
+	isc_result_t result;
+	ldap_entryclass_t class;
+	metadb_node_t *node = NULL;
+	DECLARE_BUFFERED_NAME(mname);
+
+	REQUIRE(nodep != NULL && *nodep == NULL);
+
+	INIT_BUFFERED_NAME(mname);
+
+	ldap_uuid_to_mname(entry->uuid, &mname);
+	CHECK(metadb_writenode_create(mldap->mdb, &mname, &node));
+
+	CHECK(ldap_entry_getclass(entry, &class));
+	CHECK(mldap_class_store(class, node));
+	CHECK(mldap_generation_store(mldap, node));
+
+	*nodep = node;
+
+cleanup:
+	if (result != ISC_R_SUCCESS)
+		metadb_node_close(&node);
+	return result;
 }
