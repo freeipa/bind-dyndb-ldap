@@ -80,6 +80,7 @@
 #include "ldap_helper.h"
 #include "lock.h"
 #include "log.h"
+#include "mldap.h"
 #include "semaphore.h"
 #include "settings.h"
 #include "str.h"
@@ -181,6 +182,7 @@ struct ldap_instance {
 	dns_forwarders_t	orig_global_forwarders; /* from named.conf */
 
 	sync_ctx_t		*sctx;
+	mldapdb_t		*mldapdb;
 };
 
 struct ldap_pool {
@@ -558,6 +560,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	CHECK(zr_create(mctx, ldap_inst, ldap_inst->global_settings,
 			&ldap_inst->zone_register));
 	CHECK(fwdr_create(ldap_inst->mctx, &ldap_inst->fwd_register));
+	CHECK(mldap_new(mctx, &ldap_inst->mldapdb));
 
 	CHECK(isc_mutex_init(&ldap_inst->kinit_lock));
 
@@ -651,6 +654,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	/* Unregister all zones already registered in BIND. */
 	zr_destroy(&ldap_inst->zone_register);
 	fwdr_destroy(&ldap_inst->fwd_register);
+	mldap_destroy(&ldap_inst->mldapdb);
 
 	ldap_pool_destroy(&ldap_inst->pool);
 	dns_view_detach(&ldap_inst->view);
