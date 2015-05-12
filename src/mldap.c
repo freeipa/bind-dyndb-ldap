@@ -12,8 +12,12 @@
 #include <isc/result.h>
 #include <isc/util.h>
 
+#include <dns/db.h>
+#include <dns/enumclass.h>
 #include <dns/name.h>
+#include <dns/types.h>
 
+#include "metadb.h"
 #include "mldap.h"
 #include "util.h"
 
@@ -33,6 +37,63 @@ static dns_name_t uuid_rootname =
 	{ (void *)-1, (void *)-1 },
 	{ NULL, NULL }
 };
+
+struct mldapdb {
+	isc_mem_t	*mctx;
+	metadb_t	*mdb;
+	isc_uint32_t	generation;
+};
+
+
+isc_result_t
+mldap_new(isc_mem_t *mctx, mldapdb_t **mldapp) {
+	isc_result_t result;
+	mldapdb_t *mldap = NULL;
+
+	REQUIRE(mldapp != NULL && *mldapp == NULL);
+
+	CHECKED_MEM_GET_PTR(mctx, mldap);
+	ZERO_PTR(mldap);
+	isc_mem_attach(mctx, &mldap->mctx);
+
+	CHECK(metadb_new(mctx, &mldap->mdb));
+	mldap->generation = 0;
+
+	*mldapp = mldap;
+	return result;
+
+cleanup:
+	metadb_destroy(&mldap->mdb);
+	MEM_PUT_AND_DETACH(mldap);
+	return result;
+}
+
+void
+mldap_destroy(mldapdb_t **mldapp) {
+	mldapdb_t *mldap;
+
+	REQUIRE(mldapp != NULL && *mldapp != NULL);
+
+	mldap = *mldapp;
+	if (mldap == NULL)
+		return;
+
+	metadb_destroy(&mldap->mdb);
+	MEM_PUT_AND_DETACH(mldap);
+
+	*mldapp = NULL;
+}
+
+
+isc_result_t
+mldap_newversion(mldapdb_t *mldap) {
+	return metadb_newversion(mldap->mdb);
+}
+
+void
+mldap_closeversion(mldapdb_t *mldap, isc_boolean_t commit) {
+	return metadb_closeversion(mldap->mdb, commit);
+}
 
 /**
  * Convert UUID to "01234567-89ab-cdef-0123-456789abcdef.uuid.ldap." DNS name.
