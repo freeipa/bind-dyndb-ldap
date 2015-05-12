@@ -4364,7 +4364,7 @@ int ldap_sync_search_entry (
 		return LDAP_SUCCESS;
 
 	CHECK(sync_concurr_limit_wait(inst->sctx));
-	CHECK(ldap_entry_create(inst->mctx, ls->ls_ld, msg, &entry));
+	CHECK(ldap_entry_create(inst->mctx, ls->ls_ld, msg, entryUUID, &entry));
 	syncrepl_update(inst, entry, phase);
 #ifdef RBTDB_DEBUG
 	if (++count % 100 == 0)

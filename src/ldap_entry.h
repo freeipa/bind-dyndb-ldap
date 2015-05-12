@@ -49,8 +49,8 @@ typedef LIST(ldap_attribute_t)	ldap_attributelist_t;
 typedef struct ldap_entry	ldap_entry_t;
 typedef LIST(ldap_entry_t)	ldap_entrylist_t;
 struct ldap_entry {
-	LDAPMessage		*ldap_entry;
 	char			*dn;
+	struct berval		*uuid;
 	ldap_attribute_t	*lastattr;
 	ldap_attributelist_t	attrs;
 	LINK(ldap_entry_t)	link;
@@ -104,7 +104,7 @@ ldap_entrylist_append(isc_mem_t *mctx, LDAP *ld, LDAPMessage *msg,
  */
 isc_result_t
 ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
-		  ldap_entry_t **entryp) ATTR_NONNULLS ATTR_CHECKRESULT;
+		  struct berval	*uuid, ldap_entry_t **entryp) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 void
 ldap_entry_destroy(isc_mem_t *mctx, ldap_entry_t **entryp) ATTR_NONNULLS;

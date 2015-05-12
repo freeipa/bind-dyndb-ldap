@@ -137,7 +137,7 @@ cleanup:
  */
 isc_result_t
 ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
-		  ldap_entry_t **entryp)
+		  struct berval	*uuid, ldap_entry_t **entryp)
 {
 	isc_result_t result;
 	ldap_attribute_t *attr = NULL;
@@ -151,7 +151,6 @@ ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 	REQUIRE(*entryp == NULL);
 
 	CHECK(ldap_entry_init(mctx, &entry));
-	entry->ldap_entry = ldap_entry;
 
 	for (attribute = ldap_first_attribute(ld, ldap_entry, &ber);
 	     attribute != NULL;
@@ -173,6 +172,7 @@ ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 		log_ldap_error(ld, "unable to get entry DN");
 		CLEANUP_WITH(ISC_R_FAILURE);
 	}
+	entry->uuid = ber_dupbv(NULL, uuid);
 
 	*entryp = entry;
 
@@ -202,6 +202,8 @@ ldap_entry_destroy(isc_mem_t *mctx, ldap_entry_t **entryp)
 	ldap_attributelist_destroy(mctx, &entry->attrs);
 	if (entry->dn != NULL)
 		ldap_memfree(entry->dn);
+	if (entry->uuid != NULL)
+		ber_bvfree(entry->uuid);
 	if (entry->lex != NULL) {
 		isc_lex_close(entry->lex);
 		isc_lex_destroy(&entry->lex);
