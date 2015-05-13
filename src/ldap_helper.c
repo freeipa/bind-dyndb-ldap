@@ -2283,7 +2283,6 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 {
 	const char *dn;
 	ldap_valuelist_t values;
-	dns_name_t name;
 	dns_zone_t *raw = NULL;
 	dns_zone_t *secure = NULL;
 	dns_zone_t *toview = NULL;
@@ -2293,7 +2292,6 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 	isc_boolean_t want_secure = ISC_FALSE;
 	isc_boolean_t configured = ISC_FALSE;
 	isc_boolean_t activity_changed;
-	isc_boolean_t iszone;
 	isc_boolean_t isactive = ISC_FALSE;
 	settings_set_t *zone_settings = NULL;
 	isc_boolean_t ldap_writeback;
@@ -2311,16 +2309,13 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 	REQUIRE(task == inst->task); /* For task-exclusive mode */
 
 	dns_diff_init(inst->mctx, &diff);
-	dns_name_init(&name, NULL);
 
 	/* Derive the dns name of the zone from the DN. */
 	dn = entry->dn;
-	CHECK(dn_to_dnsname(inst->mctx, dn, &name, NULL, &iszone));
-	INSIST(iszone == ISC_TRUE);
 
 	run_exclusive_enter(inst, &lock_state);
 
-	result = configure_zone_forwarders(entry, inst, &name);
+	result = configure_zone_forwarders(entry, inst, &entry->fqdn);
 	if (result != ISC_R_SUCCESS && result != ISC_R_DISABLED)
 		goto cleanup;
 
@@ -2332,9 +2327,10 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 				     == 0);
 
 	/* Check if we are already serving given zone */
-	result = zr_get_zone_ptr(inst->zone_register, &name, &raw, &secure);
+	result = zr_get_zone_ptr(inst->zone_register, &entry->fqdn,
+				 &raw, &secure);
 	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
-		CHECK(create_zone(inst, dn, &name, olddb, want_secure,
+		CHECK(create_zone(inst, dn, &entry->fqdn, olddb, want_secure,
 				  &raw, &secure));
 		new_zone = ISC_TRUE;
 		log_debug(2, "created zone %s: raw %p; secure %p", dn, raw,
@@ -2348,20 +2344,21 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 		else
 			dns_zone_log(secure, ISC_LOG_INFO,
 				     "downgrading zone to insecure");
-		CHECK(zone_security_change(entry, &name, inst, task));
+		CHECK(zone_security_change(entry, &entry->fqdn, inst, task));
 		goto cleanup;
 	} else { /* Zone exists and it's security status is unchanged. */
 		INSIST(olddb == NULL);
 	}
 
-	CHECK(zr_get_zone_settings(inst->zone_register, &name, &zone_settings));
+	CHECK(zr_get_zone_settings(inst->zone_register, &entry->fqdn,
+				   &zone_settings));
 	CHECK(zone_master_reconfigure(entry, zone_settings, raw, secure, task));
 
 	/* synchronize zone origin with LDAP */
-	CHECK(zr_get_zone_dbs(inst->zone_register, &name, &ldapdb, &rbtdb));
+	CHECK(zr_get_zone_dbs(inst->zone_register, &entry->fqdn, &ldapdb, &rbtdb));
 	CHECK(dns_db_newversion(ldapdb, &version));
 	sync_state_get(inst->sctx, &sync_state);
-	CHECK(zone_sync_apex(inst, entry, name, sync_state, new_zone,
+	CHECK(zone_sync_apex(inst, entry, entry->fqdn, sync_state, new_zone,
 			     ldapdb, rbtdb, version,
 			     &diff, &new_serial, &ldap_writeback,
 			     &data_changed));
@@ -2374,7 +2371,7 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 	if (ldap_writeback == ISC_TRUE) {
 		dns_zone_log(raw, ISC_LOG_DEBUG(5), "writing new zone serial "
 			     "%u to LDAP", new_serial);
-		result = ldap_replace_serial(inst, &name, new_serial);
+		result = ldap_replace_serial(inst, &entry->fqdn, new_serial);
 		if (result != ISC_R_SUCCESS)
 			dns_zone_log(raw, ISC_LOG_ERROR,
 				     "serial (%u) write back to LDAP failed",
@@ -2420,7 +2417,7 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 			CHECK(publish_zone(task, inst, toview));
 		CHECK(load_zone(toview, ISC_FALSE));
 	} else if (activity_changed == ISC_TRUE) { /* Zone was deactivated */
-		CHECK(unpublish_zone(inst, &name, entry->dn));
+		CHECK(unpublish_zone(inst, &entry->fqdn, entry->dn));
 		dns_zone_log(toview, ISC_LOG_INFO, "zone deactivated "
 			     "and removed from view");
 	}
@@ -2438,13 +2435,12 @@ cleanup:
 		log_error_r("zone '%s': publishing failed, rolling back due to",
 			    entry->dn);
 		/* TODO: verify this */
-		result = ldap_delete_zone2(inst, &name, ISC_TRUE, ISC_FALSE);
+		result = ldap_delete_zone2(inst, &entry->fqdn,
+					   ISC_TRUE, ISC_FALSE);
 		if (result != ISC_R_SUCCESS)
 			log_error_r("zone '%s': rollback failed: ", entry->dn);
 	}
 	run_exclusive_exit(inst, lock_state);
-	if (dns_name_dynamic(&name))
-		dns_name_free(&name, inst->mctx);
 	if (raw != NULL)
 		dns_zone_detach(&raw);
 	if (secure != NULL)
