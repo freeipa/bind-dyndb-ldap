@@ -3832,7 +3832,6 @@ update_record(isc_task_t *task, isc_event_t *event)
 	isc_boolean_t zone_reloaded = ISC_FALSE;
 	isc_uint32_t serial;
 	ldap_entry_t *entry = pevent->entry;
-	isc_boolean_t iszone;
 	const char *fake_mname = NULL;
 
 	dns_db_t *rbtdb = NULL;
@@ -3857,29 +3856,23 @@ update_record(isc_task_t *task, isc_event_t *event)
 	INIT_LIST(rdatalist);
 
 	/* Convert domain name from text to struct dns_name_t. */
-	dns_name_t name;
-	dns_name_t origin;
 	dns_name_t prevname;
 	dns_name_t prevorigin;
-	dns_name_init(&name, NULL);
-	dns_name_init(&origin, NULL);
 	dns_name_init(&prevname, NULL);
 	dns_name_init(&prevorigin, NULL);
 
 	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
-	CHECK(dn_to_dnsname(mctx, pevent->dn, &name, &origin, &iszone));
-	INSIST(iszone == ISC_FALSE);
-	CHECK(zr_get_zone_ptr(inst->zone_register, &origin, &raw, &secure));
+	CHECK(zr_get_zone_ptr(inst->zone_register, &entry->zone_name, &raw, &secure));
 	zone_found = ISC_TRUE;
 
 update_restart:
 	rbtdb = NULL;
 	ldapdb = NULL;
 	ldapdb_rdatalist_destroy(mctx, &rdatalist);
-	CHECK(zr_get_zone_dbs(inst->zone_register, &origin, &ldapdb, &rbtdb));
+	CHECK(zr_get_zone_dbs(inst->zone_register, &entry->zone_name, &ldapdb, &rbtdb));
 	CHECK(dns_db_newversion(ldapdb, &version));
 
-	CHECK(dns_db_findnode(rbtdb, &name, ISC_TRUE, &node));
+	CHECK(dns_db_findnode(rbtdb, &entry->fqdn, ISC_TRUE, &node));
 	result = dns_db_allrdatasets(rbtdb, node, version, 0, &rbt_rds_iterator);
 	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
 		goto cleanup;
@@ -3929,12 +3922,12 @@ update_restart:
 		          pevent->dn);
 		CHECK(setting_get_str("fake_mname", inst->local_settings,
 				      &fake_mname));
-		CHECK(ldap_parse_rrentry(mctx, entry, &origin, fake_mname,
+		CHECK(ldap_parse_rrentry(mctx, entry, &entry->zone_name, fake_mname,
 					 &rdatalist));
 	}
 
 	if (rbt_rds_iterator != NULL) {
-		CHECK(diff_ldap_rbtdb(mctx, &name, &rdatalist,
+		CHECK(diff_ldap_rbtdb(mctx, &entry->fqdn, &rdatalist,
 				      rbt_rds_iterator, &diff));
 		dns_rdatasetiter_destroy(&rbt_rds_iterator);
 	}
@@ -3948,7 +3941,7 @@ update_restart:
 			dns_zone_log(raw, ISC_LOG_DEBUG(5),
 				     "writing new zone serial %u to LDAP",
 				     serial);
-			result = ldap_replace_serial(inst, &origin, serial);
+			result = ldap_replace_serial(inst, &entry->zone_name, serial);
 			if (result != ISC_R_SUCCESS)
 				dns_zone_log(raw, ISC_LOG_ERROR,
 					     "serial (%u) write back to LDAP failed",
@@ -4028,12 +4021,8 @@ cleanup:
 
 	if (inst != NULL) {
 		sync_concurr_limit_signal(inst->sctx);
-		if (dns_name_dynamic(&name))
-			dns_name_free(&name, inst->mctx);
 		if (dns_name_dynamic(&prevname))
 			dns_name_free(&prevname, inst->mctx);
-		if (dns_name_dynamic(&origin))
-			dns_name_free(&origin, inst->mctx);
 		if (dns_name_dynamic(&prevorigin))
 			dns_name_free(&prevorigin, inst->mctx);
 	}
