@@ -1386,28 +1386,6 @@ cleanup:
 	return result;
 }
 
-/* Delete zone */
-static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-ldap_delete_zone(ldap_instance_t *inst, const char *dn, isc_boolean_t lock,
-		 isc_boolean_t preserve_forwarding)
-{
-	isc_result_t result;
-	isc_boolean_t iszone;
-	dns_name_t name;
-	dns_name_init(&name, NULL);
-	
-	CHECK(dn_to_dnsname(inst->mctx, dn, &name, NULL, &iszone));
-	INSIST(iszone == ISC_TRUE);
-
-	result = ldap_delete_zone2(inst, &name, lock, preserve_forwarding);
-
-cleanup:
-	if (dns_name_dynamic(&name))
-		dns_name_free(&name, inst->mctx);
-
-	return result;
-}
-
 /**
  * Remove zone from view but let the zone object intact. The same zone object
  * can be re-published later using publish_zone().
@@ -3696,21 +3674,17 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	ldap_instance_t *inst = NULL;
 	isc_mem_t *mctx;
 	dns_name_t prevname;
-	dns_name_t currname;
 	ldap_entry_t *entry = pevent->entry;
-	isc_boolean_t iszone;
 
 	mctx = pevent->mctx;
-	dns_name_init(&currname, NULL);
 	dns_name_init(&prevname, NULL);
 
 	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
 	INSIST(task == inst->task); /* For task-exclusive mode */
-	CHECK(dn_to_dnsname(inst->mctx, pevent->dn, &currname, NULL, &iszone));
-	INSIST(iszone == ISC_TRUE);
 
 	if (SYNCREPL_DEL(pevent->chgtype)) {
-		CHECK(ldap_delete_zone(inst, pevent->dn, ISC_TRUE, ISC_FALSE));
+		CHECK(ldap_delete_zone2(inst, &entry->fqdn,
+					ISC_TRUE, ISC_FALSE));
 	} else {
 		if (entry->class & LDAP_ENTRYCLASS_MASTER)
 			CHECK(ldap_parse_master_zoneentry(entry, NULL, inst,
@@ -3749,8 +3723,6 @@ cleanup:
 	if (inst != NULL) {
 		sync_concurr_limit_signal(inst->sctx);
 		sync_event_signal(inst->sctx, event);
-		if (dns_name_dynamic(&currname))
-			dns_name_free(&currname, inst->mctx);
 		if (dns_name_dynamic(&prevname))
 			dns_name_free(&prevname, inst->mctx);
 	}
