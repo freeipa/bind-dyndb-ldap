@@ -1768,52 +1768,44 @@ static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_parse_fwd_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 {
 	const char *dn;
-	dns_name_t name;
 	ldap_valuelist_t values;
-	isc_boolean_t iszone;
 	char name_txt[DNS_NAME_FORMATSIZE];
 	isc_result_t result;
 
 	REQUIRE(entry != NULL);
 	REQUIRE(inst != NULL);
 
-	dns_name_init(&name, NULL);
-
 	/* Derive the DNS name of the zone from the DN. */
 	dn = entry->dn;
-	CHECK(dn_to_dnsname(inst->mctx, dn, &name, NULL, &iszone));
-	INSIST(iszone == ISC_TRUE);
 
 	CHECK(ldap_entry_getvalues(entry, "idnsZoneActive", &values));
 	if (HEAD(values) != NULL &&
 	    strcasecmp(HEAD(values)->value, "TRUE") != 0) {
 		/* Zone is not active */
-		result = ldap_delete_zone2(inst, &name, ISC_TRUE, ISC_FALSE);
+		result = ldap_delete_zone2(inst, &entry->fqdn,
+					   ISC_TRUE, ISC_FALSE);
 		goto cleanup;
 	}
 
 	/* Zone is active */
-	result = configure_zone_forwarders(entry, inst, &name);
+	result = configure_zone_forwarders(entry, inst, &entry->fqdn);
 	if (result != ISC_R_DISABLED && result != ISC_R_SUCCESS) {
 		log_error_r("forward zone '%s': could not configure forwarding", dn);
 		goto cleanup;
 	}
 
-	result = fwdr_add_zone(inst->fwd_register, &name);
+	result = fwdr_add_zone(inst->fwd_register, &entry->fqdn);
 	if (result != ISC_R_EXISTS && result != ISC_R_SUCCESS) {
-		dns_name_format(&name, name_txt, DNS_NAME_FORMATSIZE);
+		dns_name_format(&entry->fqdn, name_txt, DNS_NAME_FORMATSIZE);
 		log_error_r("failed to add forward zone '%s' "
 			    "to the forwarding register", name_txt);
 		goto cleanup;
 	}
 	result = ISC_R_SUCCESS;
-	dns_name_format(&name, name_txt, DNS_NAME_FORMATSIZE);
+	dns_name_format(&entry->fqdn, name_txt, DNS_NAME_FORMATSIZE);
 	log_info("forward zone '%s': loaded", name_txt);
 
 cleanup:
-	if (dns_name_dynamic(&name))
-		dns_name_free(&name, inst->mctx);
-
 	return result;
 }
 
