@@ -80,6 +80,7 @@
 #include "ldap_helper.h"
 #include "lock.h"
 #include "log.h"
+#include "metadb.h"
 #include "mldap.h"
 #include "semaphore.h"
 #include "settings.h"
@@ -4353,18 +4354,37 @@ int ldap_sync_search_entry (
 	ldap_instance_t *inst = ls->ls_private;
 	ldap_entry_t *entry = NULL;
 	isc_result_t result;
+	metadb_node_t *node = NULL;
+	isc_boolean_t mdb_write = ISC_FALSE;
+	ldap_entryclass_t class;
+	DECLARE_BUFFERED_NAME(fqdn);
+	DECLARE_BUFFERED_NAME(zone_name);
+
 #ifdef RBTDB_DEBUG
 	static unsigned int count = 0;
 #endif
 
-	/* TODO: Use this for UUID->DN mapping and MODDN detection. */
-	UNUSED(entryUUID);
-
 	if (inst->exiting)
 		return LDAP_SUCCESS;
 
+	INIT_BUFFERED_NAME(fqdn);
+	INIT_BUFFERED_NAME(zone_name);
+
 	CHECK(sync_concurr_limit_wait(inst->sctx));
 	CHECK(ldap_entry_create(inst->mctx, ls->ls_ld, msg, entryUUID, &entry));
+	if (phase == LDAP_SYNC_CAPI_ADD || phase == LDAP_SYNC_CAPI_MODIFY) {
+		CHECK(mldap_newversion(inst->mldapdb));
+		mdb_write = ISC_TRUE;
+		CHECK(mldap_entry_create(entry, inst->mldapdb, &node));
+		CHECK(ldap_entry_getclass(entry, &class));
+		if ((class & LDAP_ENTRYCLASS_CONFIG) == 0) {
+			CHECK(dn_to_dnsname(inst->mctx, entry->dn,
+					    &fqdn, &zone_name, NULL));
+			CHECK(mldap_dnsname_store(&fqdn, &zone_name, node));
+		}
+		metadb_node_close(&node);
+		mldap_closeversion(inst->mldapdb, ISC_TRUE);
+	}
 	syncrepl_update(inst, entry, phase);
 #ifdef RBTDB_DEBUG
 	if (++count % 100 == 0)
@@ -4374,10 +4394,16 @@ int ldap_sync_search_entry (
 
 cleanup:
 	if (result != ISC_R_SUCCESS) {
+		if (mdb_write == ISC_TRUE)
+			mldap_closeversion(inst->mldapdb, ISC_FALSE);
 		log_error_r("ldap_sync_search_entry failed");
 		sync_concurr_limit_signal(inst->sctx);
 		/* TODO: Add 'tainted' flag to the LDAP instance. */
 	}
+	if (dns_name_dynamic(&fqdn))
+		dns_name_free(&fqdn, inst->mctx);
+	if (dns_name_dynamic(&zone_name))
+		dns_name_free(&zone_name, inst->mctx);
 
 	/* Following return code will never reach upper layers.
 	 * It is limitation in ldap_sync_init() and ldap_sync_poll()
