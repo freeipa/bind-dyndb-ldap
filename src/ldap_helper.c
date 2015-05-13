@@ -4302,6 +4302,10 @@ cleanup:
 		sync_concurr_limit_signal(inst->sctx);
 		/* TODO: Add 'tainted' flag to the LDAP instance. */
 	}
+	if (dns_name_dynamic(&fqdn))
+		dns_name_free(&fqdn, inst->mctx);
+	if (dns_name_dynamic(&zone_name))
+		dns_name_free(&zone_name, inst->mctx);
 
 	/* Following return code will never reach upper layers.
 	 * It is limitation in ldap_sync_init() and ldap_sync_poll()
