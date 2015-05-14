@@ -254,3 +254,37 @@ cleanup:
 		result = ISC_R_SUCCESS;
 	return result;
 }
+
+/**
+ * Get rdataset of given type from metaDB.
+ *
+ * Caller has to call dns_rdataset_dissociate() on the returned rdataset.
+ * Rdata will become invalid after dns_rdataset_dissociate() call.
+ *
+ * Note: It is not possible to directly return rdata without rdataset because
+ *       there would be no way how to dissociate rdataset.
+ *
+ * @pre Node was created by metadb_writenode_create() or metadb_readnode_open().
+ * @pre rdatataset is valid diassociated rdataset.
+ *
+ * @post Rdataset is an associated rdataset with exactly one rdata instance.
+ *       Rdata can be obtained using dns_rdadaset_current().
+ */
+isc_result_t
+metadb_rdataset_get(metadb_node_t *node, dns_rdatatype_t rrtype,
+		    dns_rdataset_t *rdataset) {
+	isc_result_t result;
+
+	REQUIRE(dns_rdataset_isassociated(rdataset) == ISC_FALSE);
+
+	CHECK(dns_db_findrdataset(node->rbtdb, node->dbnode, node->version,
+				  rrtype, 0, 0, rdataset, NULL));
+	/* Exactly one RR is expected in metaDB. */
+	INSIST(dns_rdataset_count(rdataset) == 1);
+	INSIST(dns_rdataset_first(rdataset) == ISC_R_SUCCESS);
+
+cleanup:
+	if (result != ISC_R_SUCCESS && dns_rdataset_isassociated(rdataset))
+		dns_rdataset_disassociate(rdataset);
+	return result;
+}
