@@ -136,6 +136,74 @@ cleanup:
 }
 
 /**
+ * Create fake LDAP entry with values from metaDB. No attributes will be
+ * present in the fake entry.
+ *
+ * @param[in]  mldap
+ * @param[in]  uuid   LDAP entry UUID
+ * @param[out] entryp Resulting entry. Caller has to free it.
+ *
+ * @warning fake entry->dn might be inaccurate
+ */
+isc_result_t
+ldap_entry_reconstruct(isc_mem_t *mctx, zone_register_t *zr,
+		       const char *ldap_base, mldapdb_t *mldap,
+		       struct berval *uuid, ldap_entry_t **entryp) {
+	isc_result_t result;
+	ldap_entry_t *entry = NULL;
+	ld_string_t *str = NULL;
+	metadb_node_t *node = NULL;
+	ldap_entryclass_t class;
+	DECLARE_BUFFERED_NAME(fqdn);
+	DECLARE_BUFFERED_NAME(zone_name);
+
+	INIT_BUFFERED_NAME(fqdn);
+	INIT_BUFFERED_NAME(zone_name);
+
+	CHECK(str_new(mctx, &str));
+	result = mldap_entry_read(mldap, uuid, &node);
+	if (result != ISC_R_SUCCESS) {
+		log_bug("protocol violation: "
+			"attempt to reconstruct non-existing entry");
+		goto cleanup;
+	}
+	CHECK(ldap_entry_init(mctx, &entry));
+
+	entry->uuid = ber_dupbv(NULL, uuid);
+	if (entry->uuid == NULL)
+		CLEANUP_WITH(ISC_R_NOMEMORY);
+
+	CHECK(mldap_class_get(node, &class));
+	/* create fake DN from remembered DNS names and object class */
+	if ((class & LDAP_ENTRYCLASS_CONFIG) != 0) {
+		/* idnsConfig objects do not have DNS name */
+		CHECK(str_cat_char(str, ldap_base));
+	} else {
+		CHECK(mldap_dnsname_get(node, &fqdn, &zone_name));
+		if ((class &
+		     (LDAP_ENTRYCLASS_MASTER | LDAP_ENTRYCLASS_FORWARD)) != 0) {
+			INSIST(dns_name_equal(dns_rootname, &zone_name)
+			       == ISC_TRUE);
+			CHECK(dnsname_to_dn(zr, &fqdn, &fqdn, str));
+		} else if ((class & LDAP_ENTRYCLASS_RR) != 0) {
+			CHECK(dnsname_to_dn(zr, &fqdn, &zone_name, str));
+		}
+	}
+	entry->dn = ldap_strdup(str_buf(str));
+	if (entry->dn == NULL)
+		CLEANUP_WITH(ISC_R_NOMEMORY);
+
+	*entryp = entry;
+
+cleanup:
+	if (result != ISC_R_SUCCESS)
+		ldap_entry_destroy(mctx, &entry);
+	metadb_node_close(&node);
+	str_destroy(&str);
+	return result;
+}
+
+/**
  * Allocate new ldap_entry and fill it with data from LDAPMessage.
  */
 isc_result_t

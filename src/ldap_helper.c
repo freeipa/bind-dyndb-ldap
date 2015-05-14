@@ -4357,6 +4357,7 @@ int ldap_sync_search_entry (
 	metadb_node_t *node = NULL;
 	isc_boolean_t mdb_write = ISC_FALSE;
 	ldap_entryclass_t class;
+	const char *ldap_base = NULL;
 	DECLARE_BUFFERED_NAME(fqdn);
 	DECLARE_BUFFERED_NAME(zone_name);
 
@@ -4371,8 +4372,9 @@ int ldap_sync_search_entry (
 	INIT_BUFFERED_NAME(zone_name);
 
 	CHECK(sync_concurr_limit_wait(inst->sctx));
-	CHECK(ldap_entry_create(inst->mctx, ls->ls_ld, msg, entryUUID, &entry));
 	if (phase == LDAP_SYNC_CAPI_ADD || phase == LDAP_SYNC_CAPI_MODIFY) {
+		CHECK(ldap_entry_create(inst->mctx, ls->ls_ld, msg, entryUUID,
+					&entry));
 		CHECK(mldap_newversion(inst->mldapdb));
 		mdb_write = ISC_TRUE;
 		CHECK(mldap_entry_create(entry, inst->mldapdb, &node));
@@ -4384,6 +4386,16 @@ int ldap_sync_search_entry (
 		}
 		metadb_node_close(&node);
 		mldap_closeversion(inst->mldapdb, ISC_TRUE);
+
+	} else if (phase == LDAP_SYNC_CAPI_DELETE) {
+		INSIST(setting_get_str("base", inst->local_settings,
+				       &ldap_base) == ISC_R_SUCCESS);
+		CHECK(ldap_entry_reconstruct(inst->mctx, inst->zone_register,
+					     ldap_base, inst->mldapdb, entryUUID,
+					     &entry));
+	} else {
+		log_bug("syncrepl phase %x is not supported", phase);
+		CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
 	}
 	syncrepl_update(inst, entry, phase);
 #ifdef RBTDB_DEBUG
@@ -4400,6 +4412,7 @@ cleanup:
 		sync_concurr_limit_signal(inst->sctx);
 		/* TODO: Add 'tainted' flag to the LDAP instance. */
 	}
+	metadb_node_close(&node);
 	if (dns_name_dynamic(&fqdn))
 		dns_name_free(&fqdn, inst->mctx);
 	if (dns_name_dynamic(&zone_name))

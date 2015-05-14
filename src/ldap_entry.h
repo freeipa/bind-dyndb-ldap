@@ -106,6 +106,11 @@ isc_result_t
 ldap_entry_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 		  struct berval	*uuid, ldap_entry_t **entryp) ATTR_NONNULLS ATTR_CHECKRESULT;
 
+isc_result_t
+ldap_entry_reconstruct(isc_mem_t *mctx, zone_register_t *zr, const char *ldap_base,
+		       mldapdb_t *mldap, struct berval *uuid,
+		       ldap_entry_t **entryp) ATTR_NONNULLS ATTR_CHECKRESULT;
+
 void
 ldap_entry_destroy(isc_mem_t *mctx, ldap_entry_t **entryp) ATTR_NONNULLS;
 
