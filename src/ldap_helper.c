@@ -4043,7 +4043,7 @@ cleanup:
 	return result;
 }
 
-static void ATTR_NONNULLS
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 {
 	isc_result_t result = ISC_R_SUCCESS;
@@ -4172,6 +4172,7 @@ cleanup:
 		if (task != NULL)
 			isc_task_detach(&task);
 	}
+	return result;
 }
 
 #define CHECK_EXIT \
@@ -4262,7 +4263,7 @@ int ldap_sync_search_entry (
 	ldap_entry_t *entry = NULL;
 	isc_result_t result;
 	metadb_node_t *node = NULL;
-	isc_boolean_t mdb_write = ISC_FALSE;
+	isc_boolean_t mldap_open = ISC_FALSE;
 	const char *ldap_base = NULL;
 
 #ifdef RBTDB_DEBUG
@@ -4272,18 +4273,21 @@ int ldap_sync_search_entry (
 	if (inst->exiting)
 		return LDAP_SUCCESS;
 
+	CHECK(mldap_newversion(inst->mldapdb));
+	mldap_open = ISC_TRUE;
+
 	CHECK(sync_concurr_limit_wait(inst->sctx));
 	if (phase == LDAP_SYNC_CAPI_ADD || phase == LDAP_SYNC_CAPI_MODIFY) {
 		CHECK(ldap_entry_parse(inst->mctx, ls->ls_ld, msg, entryUUID,
 					&entry));
-		CHECK(mldap_newversion(inst->mldapdb));
-		mdb_write = ISC_TRUE;
 		CHECK(mldap_entry_create(entry, inst->mldapdb, &node));
 		if ((entry->class & LDAP_ENTRYCLASS_CONFIG) == 0)
 			CHECK(mldap_dnsname_store(&entry->fqdn,
 						  &entry->zone_name, node));
+		/* commit new entry into metaLDAP DB before something breaks */
 		metadb_node_close(&node);
 		mldap_closeversion(inst->mldapdb, ISC_TRUE);
+		mldap_open = ISC_FALSE;
 
 	} else if (phase == LDAP_SYNC_CAPI_DELETE) {
 		INSIST(setting_get_str("base", inst->local_settings,
@@ -4291,12 +4295,16 @@ int ldap_sync_search_entry (
 		CHECK(ldap_entry_reconstruct(inst->mctx, inst->zone_register,
 					     ldap_base, inst->mldapdb, entryUUID,
 					     &entry));
+		CHECK(mldap_entry_delete(inst->mldapdb, entryUUID));
+		/* do not commit into DB until syncrepl_update finished */
 	} else {
 		log_bug("syncrepl phase %x is not supported", phase);
 		CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
 	}
 
-	syncrepl_update(inst, entry, phase);
+	CHECK(syncrepl_update(inst, entry, phase));
+	/* commit eventual deletion if the syncrepl event was sent */
+
 #ifdef RBTDB_DEBUG
 	if (++count % 100 == 0)
 		log_info("ldap_sync_search_entry: %u entries read; inuse: %zd",
@@ -4304,14 +4312,14 @@ int ldap_sync_search_entry (
 #endif
 
 cleanup:
+	metadb_node_close(&node);
+	if (mldap_open == ISC_TRUE)
+		mldap_closeversion(inst->mldapdb, ISC_TF(result == ISC_R_SUCCESS));
 	if (result != ISC_R_SUCCESS) {
-		if (mdb_write == ISC_TRUE)
-			mldap_closeversion(inst->mldapdb, ISC_FALSE);
 		log_error_r("ldap_sync_search_entry failed");
 		sync_concurr_limit_signal(inst->sctx);
 		/* TODO: Add 'tainted' flag to the LDAP instance. */
 	}
-	metadb_node_close(&node);
 
 	/* Following return code will never reach upper layers.
 	 * It is limitation in ldap_sync_init() and ldap_sync_poll()
