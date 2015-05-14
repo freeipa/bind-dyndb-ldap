@@ -307,3 +307,24 @@ mldap_entry_read(mldapdb_t *mldap, struct berval *uuid, metadb_node_t **nodep) {
 
 	return metadb_readnode_open(mldap->mdb, &mname, nodep);
 }
+
+/**
+ * Delete metaLDAP entry.
+ * All notes about metadb_writenode_open() apply equally here.
+ */
+isc_result_t
+mldap_entry_delete(mldapdb_t *mldap, struct berval *uuid) {
+	isc_result_t result;
+	metadb_node_t *node = NULL;
+	DECLARE_BUFFERED_NAME(mname);
+
+	INIT_BUFFERED_NAME(mname);
+
+	ldap_uuid_to_mname(uuid, &mname);
+
+	CHECK(metadb_writenode_open(mldap->mdb, &mname, &node));
+	CHECK(metadb_node_delete(&node));
+
+cleanup:
+	return result;
+}
