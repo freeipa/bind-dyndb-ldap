@@ -53,4 +53,7 @@ metadb_rdataset_get(metadb_node_t *node, dns_rdatatype_t rrtype,
 void ATTR_NONNULLS
 metadb_node_close(metadb_node_t **nodep);
 
+isc_result_t ATTR_NONNULLS
+metadb_node_delete(metadb_node_t **nodep);
+
 #endif /* SRC_METADB_H_ */

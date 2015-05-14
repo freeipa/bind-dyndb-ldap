@@ -9,6 +9,7 @@
 
 #include <dns/db.h>
 #include <dns/rdatalist.h>
+#include <dns/rdatasetiter.h>
 
 #include "metadb.h"
 #include "util.h"
@@ -144,6 +145,45 @@ metadb_node_close(metadb_node_t **nodep) {
 	}
 	MEM_PUT_AND_DETACH(node);
 	*nodep = NULL;
+}
+
+/**
+ * Delete all RRsets in given metaDB node.
+ */
+isc_result_t
+metadb_node_delete(metadb_node_t **nodep) {
+	isc_result_t result;
+	metadb_node_t *node;
+	dns_rdatasetiter_t *iter = NULL;
+	dns_rdataset_t rdataset;
+
+	REQUIRE(nodep != NULL && *nodep != NULL);
+	node = *nodep;
+
+	dns_rdataset_init(&rdataset);
+	CHECK(dns_db_allrdatasets(node->rbtdb, node->dbnode, node->version, 0,
+				  &iter));
+
+	for (result = dns_rdatasetiter_first(iter);
+	     result == ISC_R_SUCCESS;
+	     result = dns_rdatasetiter_next(iter)) {
+
+		dns_rdatasetiter_current(iter, &rdataset);
+		CHECK(dns_db_deleterdataset(node->rbtdb, node->dbnode,
+					    node->version, rdataset.type, 0));
+		dns_rdataset_disassociate(&rdataset);
+	}
+	if (result == ISC_R_NOMORE)
+		result = ISC_R_SUCCESS;
+
+cleanup:
+	if (dns_rdataset_isassociated(&rdataset))
+		dns_rdataset_disassociate(&rdataset);
+	if (iter != NULL)
+		dns_rdatasetiter_destroy(&iter);
+	if (result == ISC_R_SUCCESS)
+		metadb_node_close(nodep);
+	return result;
 }
 
 /**
