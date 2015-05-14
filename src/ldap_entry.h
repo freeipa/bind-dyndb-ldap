@@ -140,11 +140,6 @@ ldap_entry_getfakesoa(ldap_entry_t *entry, const char *fake_mname,
 		      ld_string_t *target) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
-ldap_entry_guessclass(dns_name_t *entry_name, isc_boolean_t iszone,
-		      fwd_register_t *fwd_register, ldap_entryclass_t *class)
-		      ATTR_NONNULLS ATTR_CHECKRESULT;
-
-isc_result_t
 ldap_attr_firstvalue(ldap_attribute_t *attr, ld_string_t *str) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 /*

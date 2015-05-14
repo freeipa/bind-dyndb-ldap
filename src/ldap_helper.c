@@ -4046,72 +4046,40 @@ cleanup:
 static void ATTR_NONNULLS
 syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 {
-	ldap_entryclass_t class = LDAP_ENTRYCLASS_NONE;
 	isc_result_t result = ISC_R_SUCCESS;
 	ldap_syncreplevent_t *pevent = NULL;
 	isc_event_t *wait_event = NULL;
-	dns_name_t entry_name;
-	dns_name_t entry_origin;
 	dns_name_t *zone_name = NULL;
 	dns_zone_t *zone_ptr = NULL;
 	char *dn = NULL;
 	char *dbname = NULL;
-	const char *ldap_base = NULL;
-	isc_boolean_t isbase;
-	isc_boolean_t iszone;
 	isc_mem_t *mctx = NULL;
 	isc_taskaction_t action = NULL;
 	isc_task_t *task = NULL;
 	sync_state_t sync_state;
+
+	REQUIRE(entry->class != LDAP_ENTRYCLASS_NONE);
 
 	log_debug(20, "syncrepl change type: " /*"none%d,"*/ "add%d, del%d, mod%d", /* moddn%d", */
 		  /* !SYNCREPL_ANY(chgtype), */ SYNCREPL_ADD(chgtype),
 		  SYNCREPL_DEL(chgtype), SYNCREPL_MOD(chgtype)/*, SYNCREPL_MODDN(chgtype) */ );
 
 	isc_mem_attach(inst->mctx, &mctx);
-	dns_name_init(&entry_name, NULL);
-	dns_name_init(&entry_origin, NULL);
 
 	CHECKED_MEM_STRDUP(mctx, entry->dn, dn);
 	CHECKED_MEM_STRDUP(mctx, inst->db_name, dbname);
 
-	/* TODO: handle object class inference properly - via UUID database */
-	CHECK(setting_get_str("base", inst->local_settings, &ldap_base));
-	CHECK(ldap_dn_compare(ldap_base, entry->dn, &isbase));
-	if (isbase == ISC_TRUE) {
-		class = LDAP_ENTRYCLASS_CONFIG;
-		iszone = ISC_FALSE;
-	} else {
-		CHECK(dn_to_dnsname(inst->mctx, dn, &entry_name, &entry_origin,
-				    &iszone));
-		switch (chgtype) {
-		case LDAP_SYNC_CAPI_ADD:
-		case LDAP_SYNC_CAPI_MODIFY:
-			class = entry->class;
-			break;
 
-		default:
-			/* deleted entry doesn't contain objectClass, so
-			 * we need to find if the entry is zone or not
-			 * in other way */
-			CHECK(ldap_entry_guessclass(&entry_name, iszone,
-						    inst->fwd_register,
-						    &class));
-			break;
-		}
-	}
-	REQUIRE(class != LDAP_ENTRYCLASS_NONE);
-
-	if (class & LDAP_ENTRYCLASS_MASTER)
-		zone_name = &entry_name;
+	if (entry->class & LDAP_ENTRYCLASS_MASTER)
+		zone_name = &entry->fqdn;
 	else
-		zone_name = &entry_origin;
+		zone_name = &entry->zone_name;
 
 	/* Process ordinary records in parallel but serialize operations on
 	 * master zone objects.
 	 * See discussion about run_exclusive_begin() function in lock.c. */
-	if ((class & LDAP_ENTRYCLASS_RR) != 0 &&
-	    (class & LDAP_ENTRYCLASS_MASTER) == 0) {
+	if ((entry->class & LDAP_ENTRYCLASS_RR) != 0 &&
+	    (entry->class & LDAP_ENTRYCLASS_MASTER) == 0) {
 		result = zr_get_zone_ptr(inst->zone_register, zone_name,
 					 &zone_ptr, NULL);
 		if (result == ISC_R_SUCCESS && dns_zone_getmgr(zone_ptr) != NULL)
@@ -4137,21 +4105,19 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	}
 	*/
 
-	if ((class & LDAP_ENTRYCLASS_CONFIG) != 0)
+	if ((entry->class & LDAP_ENTRYCLASS_CONFIG) != 0)
 		action = update_config;
-	else if ((class & LDAP_ENTRYCLASS_MASTER) != 0)
+	else if ((entry->class & LDAP_ENTRYCLASS_MASTER) != 0)
 		action = update_zone;
-	else if ((class & LDAP_ENTRYCLASS_FORWARD) != 0)
+	else if ((entry->class & LDAP_ENTRYCLASS_FORWARD) != 0)
 		action = update_zone;
-	else if ((class & LDAP_ENTRYCLASS_RR) != 0)
+	else if ((entry->class & LDAP_ENTRYCLASS_RR) != 0)
 		action = update_record;
 	else {
 		log_error("unsupported objectClass: dn '%s'", dn);
 		result = ISC_R_NOTIMPLEMENTED;
 		goto cleanup;
 	}
-	CHECK(dn_want_zone(__func__, dn, iszone,
-			   ISC_TF(class & (LDAP_ENTRYCLASS_MASTER | LDAP_ENTRYCLASS_FORWARD))));
 
 	/* All events for single zone are handled by one task, so we don't
 	 * need to spend time with normal records. */
@@ -4187,10 +4153,6 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 		CHECK(sync_event_wait(inst->sctx, wait_event));
 
 cleanup:
-	if (dns_name_dynamic(&entry_name))
-		dns_name_free(&entry_name, inst->mctx);
-	if (dns_name_dynamic(&entry_origin))
-		dns_name_free(&entry_origin, inst->mctx);
 	if (zone_ptr != NULL)
 		dns_zone_detach(&zone_ptr);
 	if (result != ISC_R_SUCCESS)

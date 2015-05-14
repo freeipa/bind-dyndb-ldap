@@ -498,32 +498,6 @@ ldap_entry_parseclass(ldap_entry_t *entry, ldap_entryclass_t *class)
 	return ISC_R_SUCCESS;
 }
 
-/**
- * Infer entry class from auxiliary information.
- *
- * This is a fallback method for cases where objectClass values
- * are not available.
- *
- * TODO: Object class information should be stored in UUID database
- * 	 (once we have it).
- */
-isc_result_t
-ldap_entry_guessclass(dns_name_t *entry_name, isc_boolean_t iszone,
-		      fwd_register_t *fwd_register, ldap_entryclass_t *class) {
-	REQUIRE(class != NULL);
-
-	if (iszone == ISC_TRUE) {
-		if (fwdr_zone_ispresent(fwd_register, entry_name)
-		    == ISC_R_SUCCESS)
-			*class = LDAP_ENTRYCLASS_FORWARD;
-		else /* master zone */
-			*class = (LDAP_ENTRYCLASS_MASTER | LDAP_ENTRYCLASS_RR);
-	} else
-		*class = LDAP_ENTRYCLASS_RR;
-
-	return ISC_R_SUCCESS;
-}
-
 isc_result_t
 ldap_attr_firstvalue(ldap_attribute_t *attr, ld_string_t *str)
 {
