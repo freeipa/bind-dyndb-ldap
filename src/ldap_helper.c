@@ -4302,8 +4302,6 @@ int ldap_sync_search_entry (
 	metadb_node_t *node = NULL;
 	isc_boolean_t mdb_write = ISC_FALSE;
 	const char *ldap_base = NULL;
-	DECLARE_BUFFERED_NAME(fqdn);
-	DECLARE_BUFFERED_NAME(zone_name);
 
 #ifdef RBTDB_DEBUG
 	static unsigned int count = 0;
@@ -4312,9 +4310,6 @@ int ldap_sync_search_entry (
 	if (inst->exiting)
 		return LDAP_SUCCESS;
 
-	INIT_BUFFERED_NAME(fqdn);
-	INIT_BUFFERED_NAME(zone_name);
-
 	CHECK(sync_concurr_limit_wait(inst->sctx));
 	if (phase == LDAP_SYNC_CAPI_ADD || phase == LDAP_SYNC_CAPI_MODIFY) {
 		CHECK(ldap_entry_parse(inst->mctx, ls->ls_ld, msg, entryUUID,
@@ -4322,11 +4317,9 @@ int ldap_sync_search_entry (
 		CHECK(mldap_newversion(inst->mldapdb));
 		mdb_write = ISC_TRUE;
 		CHECK(mldap_entry_create(entry, inst->mldapdb, &node));
-		if ((entry->class & LDAP_ENTRYCLASS_CONFIG) == 0) {
-			CHECK(dn_to_dnsname(inst->mctx, entry->dn,
-					    &fqdn, &zone_name, NULL));
-			CHECK(mldap_dnsname_store(&fqdn, &zone_name, node));
-		}
+		if ((entry->class & LDAP_ENTRYCLASS_CONFIG) == 0)
+			CHECK(mldap_dnsname_store(&entry->fqdn,
+						  &entry->zone_name, node));
 		metadb_node_close(&node);
 		mldap_closeversion(inst->mldapdb, ISC_TRUE);
 
@@ -4357,10 +4350,6 @@ cleanup:
 		/* TODO: Add 'tainted' flag to the LDAP instance. */
 	}
 	metadb_node_close(&node);
-	if (dns_name_dynamic(&fqdn))
-		dns_name_free(&fqdn, inst->mctx);
-	if (dns_name_dynamic(&zone_name))
-		dns_name_free(&zone_name, inst->mctx);
 
 	/* Following return code will never reach upper layers.
 	 * It is limitation in ldap_sync_init() and ldap_sync_poll()
