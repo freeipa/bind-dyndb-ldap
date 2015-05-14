@@ -153,6 +153,31 @@ mldap_class_store(ldap_entryclass_t class, metadb_node_t *node) {
 	return metadb_rdata_store(&rdata, node);
 }
 
+isc_result_t
+mldap_class_get(metadb_node_t *node, ldap_entryclass_t *classp) {
+	isc_result_t result;
+	dns_rdataset_t rdataset;
+	dns_rdata_t rdata;
+	isc_region_t region;
+
+	REQUIRE(classp != NULL);
+
+	dns_rdata_init(&rdata);
+	dns_rdataset_init(&rdataset);
+
+	CHECK(metadb_rdataset_get(node, dns_rdatatype_aaaa, &rdataset));
+	dns_rdataset_current(&rdataset, &rdata);
+	dns_rdata_toregion(&rdata, &region);
+	/* Bytes should be in network-order but we do not care because:
+	 * 1) It is used only internally.  2) Class is unsigned char. */
+	memcpy(classp, region.base, sizeof(*classp));
+
+cleanup:
+	if (dns_rdataset_isassociated(&rdataset))
+		dns_rdataset_disassociate(&rdataset);
+	return result;
+}
+
 
 STATIC_ASSERT((sizeof(((mldapdb_t *)0)->generation) == sizeof(struct in_addr)), \
 		"mldapdb_t->generation is too big for A rdata type");
@@ -209,6 +234,39 @@ cleanup:
 }
 
 /**
+ * Retrieve FQDN and zone name from RP record in metaDB.
+ * @param[in]  node
+ * @param[out] fqdn
+ * @param[out] zone
+ *
+ * @pre DNS names fqdn and zone have dedicated buffer.
+ */
+isc_result_t
+mldap_dnsname_get(metadb_node_t *node, dns_name_t *fqdn, dns_name_t *zone) {
+	isc_result_t result;
+	dns_rdata_rp_t rp;
+	dns_rdataset_t rdataset;
+	dns_rdata_t rdata;
+
+	REQUIRE(fqdn != NULL);
+	REQUIRE(zone != NULL);
+
+	dns_rdataset_init(&rdataset);
+	dns_rdata_init(&rdata);
+
+	CHECK(metadb_rdataset_get(node, dns_rdatatype_rp, &rdataset));
+	dns_rdataset_current(&rdataset, &rdata);
+	CHECK(dns_rdata_tostruct(&rdata, &rp, NULL));
+	CHECK(dns_name_copy(&rp.mail, fqdn, NULL));
+	CHECK(dns_name_copy(&rp.text, zone, NULL));
+
+cleanup:
+	if (dns_rdataset_isassociated(&rdataset))
+		dns_rdataset_disassociate(&rdataset);
+	return result;
+}
+
+/**
  * Store information from LDAP entry into meta-database.
  */
 isc_result_t
@@ -235,4 +293,19 @@ cleanup:
 	if (result != ISC_R_SUCCESS)
 		metadb_node_close(&node);
 	return result;
+}
+
+/**
+ * Open metaLDAP entry for reading.
+ * All notes about metadb_readnode_open() apply equally here.
+ */
+isc_result_t
+mldap_entry_read(mldapdb_t *mldap, struct berval *uuid, metadb_node_t **nodep) {
+	DECLARE_BUFFERED_NAME(mname);
+
+	INIT_BUFFERED_NAME(mname);
+
+	ldap_uuid_to_mname(uuid, &mname);
+
+	return metadb_readnode_open(mldap->mdb, &mname, nodep);
 }
