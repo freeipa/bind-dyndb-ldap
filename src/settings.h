@@ -33,7 +33,6 @@
 #define SETTING_SET_NAME_ZONE   "LDAP idnsZone object"
 
 typedef struct setting	setting_t;
-typedef struct settings_set	settings_set_t;
 
 /* Make sure that cases in get_value_ptr() are synchronized */
 typedef enum {

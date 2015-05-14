@@ -24,7 +24,7 @@
 
 #include <dns/types.h>
 
-#include "ldap_helper.h"
+#include "types.h"
 
 typedef struct db_instance db_instance_t;
 

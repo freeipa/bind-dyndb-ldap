@@ -22,10 +22,11 @@
 #define _LD_LDAP_CONVERT_H_
 
 #include <dns/types.h>
+#include <dns/rbt.h>
 #include <dns/rdatatype.h>
 
 #include "str.h"
-#include "zone_register.h"
+#include "types.h"
 
 #define LDAP_ATTR_FORMATSIZE 32 /* "expected" maximum attribute name length */
 #define LDAP_RDATATYPE_SUFFIX     "Record"

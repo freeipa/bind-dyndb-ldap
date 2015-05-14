@@ -21,7 +21,6 @@
 #ifndef _LD_ACL_H_
 #define _LD_ACL_H_
 
-#include "ldap_entry.h"
 #include "types.h"
 
 #include <dns/acl.h>

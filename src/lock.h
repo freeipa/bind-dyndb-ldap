@@ -21,8 +21,8 @@
 #ifndef LOCK_H_
 #define LOCK_H_
 
-#include "ldap_helper.h"
 #include "util.h"
+#include "types.h"
 
 void ATTR_NONNULLS
 run_exclusive_enter(ldap_instance_t *inst, isc_result_t *statep);

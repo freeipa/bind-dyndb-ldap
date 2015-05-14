@@ -48,5 +48,8 @@ typedef struct enum_txt_assoc {
 
 typedef struct ldap_instance	ldap_instance_t;
 typedef struct zone_register	zone_register_t;
+typedef struct mldapdb		mldapdb_t;
+typedef struct ldap_entry	ldap_entry_t;
+typedef struct settings_set	settings_set_t;
 
 #endif /* !_LD_TYPES_H_ */

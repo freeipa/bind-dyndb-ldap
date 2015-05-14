@@ -53,6 +53,7 @@
 #include "log.h"
 #include "util.h"
 #include "zone_manager.h"
+#include "zone_register.h"
 
 #ifdef HAVE_VISIBILITY
 #define VISIBLE __attribute__((__visibility__("default")))

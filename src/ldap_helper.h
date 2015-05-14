@@ -22,12 +22,12 @@
 #ifndef _LD_LDAP_HELPER_H_
 #define _LD_LDAP_HELPER_H_
 
-#include "settings.h"
 #include "types.h"
-#include "zone_register.h"
 
 #include <isc/eventclass.h>
 #include <isc/util.h>
+
+#include <ldap.h>
 
 #define LDAPDB_EVENTCLASS 		ISC_EVENTCLASS(0xDDDD)
 

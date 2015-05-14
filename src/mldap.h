@@ -5,10 +5,12 @@
 #ifndef SRC_MLDAP_H_
 #define SRC_MLDAP_H_
 
+#include <ldap.h>
+
 #include "metadb.h"
+#include "types.h"
 #include "util.h"
 
-typedef struct mldapdb mldapdb_t;
 
 isc_result_t ATTR_CHECKRESULT ATTR_NONNULLS
 mldap_new(isc_mem_t *mctx, mldapdb_t **dbp);

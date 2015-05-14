@@ -29,6 +29,7 @@
 #include "fwd_register.h"
 #include "util.h"
 #include "str.h"
+#include "types.h"
 
 #define LDAP_DEPRECATED 1
 #include <ldap.h>
@@ -46,7 +47,6 @@ typedef struct ldap_attribute	ldap_attribute_t;
 typedef LIST(ldap_attribute_t)	ldap_attributelist_t;
 
 /* Represents LDAP entry and it's attributes */
-typedef struct ldap_entry	ldap_entry_t;
 typedef LIST(ldap_entry_t)	ldap_entrylist_t;
 struct ldap_entry {
 	char			*dn;

@@ -22,6 +22,7 @@
 #include <isc/util.h>
 
 #include "lock.h"
+#include "ldap_helper.h"
 
 /**
  * Lock BIND dispatcher and allow only single task to run.

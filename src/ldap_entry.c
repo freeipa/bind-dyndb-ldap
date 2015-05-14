@@ -32,8 +32,11 @@
 
 #include "ldap_convert.h"
 #include "ldap_entry.h"
+#include "mldap.h"
+#include "metadb.h"
 #include "str.h"
 #include "util.h"
+#include "zone_register.h"
 
 /* Represents values associated with LDAP attribute */
 static void ATTR_NONNULLS
