@@ -220,8 +220,8 @@ cleanup:
 }
 
 /**
- * Create new "metaDB node" structure and attach current read-only version of
- * RBT DB to it.
+ * Associate "metaDB node" structure with existing node in current read-only
+ * version of RBT DB.
  *
  * @param[in]  mname Name of the node in metaDB. E.g. '1234.uuid.ldap.'
  * @param[out] nodep Resulting "metaDB node" structure. Node has to be freed
@@ -241,8 +241,7 @@ cleanup:
 }
 
 /**
- * Create new "metaDB node" structure and attach current writeable version of
- * RBT DB to it.
+ * Create new "metaDB node" in current writeable version of metaDB.
  *
  * @param[in]  mname Name of the node in metaDB. E.g. '1234.uuid.ldap.'
  * @param[out] nodep Resulting "metaDB node" structure. Node has to be freed
@@ -258,6 +257,29 @@ metadb_writenode_create(metadb_t *mdb, dns_name_t *mname, metadb_node_t **nodep)
 	INSIST(mdb->newversion != NULL);
 	dns_db_attachversion(mdb->rbtdb, mdb->newversion, &ver);
 	CHECK(metadb_node_init(mdb, ver, mname, ISC_TRUE, nodep));
+
+cleanup:
+	dns_db_closeversion(mdb->rbtdb, &ver, ISC_FALSE);
+	return result;
+}
+
+/**
+ * Open existing "metaDB node" in current writeable version of metaDB.
+ *
+ * @param[in]  mname Name of the node in metaDB. E.g. '1234.uuid.ldap.'
+ * @param[out] nodep Resulting "metaDB node" structure. Node has to be freed
+ *                   using metadb_node_close().
+ *
+ * @pre MetaDB was opened by newversion().
+ */
+isc_result_t
+metadb_writenode_open(metadb_t *mdb, dns_name_t *mname, metadb_node_t **nodep) {
+	isc_result_t result;
+	dns_dbversion_t *ver = NULL;
+
+	INSIST(mdb->newversion != NULL);
+	dns_db_attachversion(mdb->rbtdb, mdb->newversion, &ver);
+	CHECK(metadb_node_init(mdb, ver, mname, ISC_FALSE, nodep));
 
 cleanup:
 	dns_db_closeversion(mdb->rbtdb, &ver, ISC_FALSE);

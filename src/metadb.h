@@ -44,6 +44,9 @@ isc_result_t ATTR_CHECKRESULT ATTR_NONNULLS
 metadb_writenode_create(metadb_t *mdb, dns_name_t *mname, metadb_node_t **nodep);
 
 isc_result_t ATTR_CHECKRESULT ATTR_NONNULLS
+metadb_writenode_open(metadb_t *mdb, dns_name_t *mname, metadb_node_t **nodep);
+
+isc_result_t ATTR_CHECKRESULT ATTR_NONNULLS
 metadb_rdata_store(dns_rdata_t *rdata, metadb_node_t *node);
 
 isc_result_t ATTR_CHECKRESULT ATTR_NONNULLS
