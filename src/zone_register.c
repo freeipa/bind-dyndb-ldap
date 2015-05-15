@@ -35,7 +35,6 @@
 #include "util.h"
 #include "str.h"
 #include "zone_register.h"
-#include "rdlist.h"
 #include "settings.h"
 #include "rbt_helper.h"
 

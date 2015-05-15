@@ -51,7 +51,6 @@
 #include "ldap_helper.h"
 #include "ldap_convert.h"
 #include "log.h"
-#include "rdlist.h"
 #include "util.h"
 #include "zone_manager.h"
 

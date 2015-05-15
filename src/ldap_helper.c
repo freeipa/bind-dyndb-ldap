@@ -80,7 +80,6 @@
 #include "ldap_helper.h"
 #include "lock.h"
 #include "log.h"
-#include "rdlist.h"
 #include "semaphore.h"
 #include "settings.h"
 #include "str.h"
