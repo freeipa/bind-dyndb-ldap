@@ -223,7 +223,6 @@ sync_ptr_validate(dns_name_t *a_name, const char *a_name_str, const char *ip_str
 
 	dns_dbnode_t *ptr_node = NULL;
 	dns_fixedname_t found_name;
-	dns_rdatasetiter_t *rdataset_it = NULL;
 	dns_rdata_t rdata;
 
 	dns_fixedname_init(&found_name);
@@ -330,8 +329,6 @@ sync_ptr_validate(dns_name_t *a_name, const char *a_name_str, const char *ip_str
 	result = ISC_R_SUCCESS;
 
 cleanup:
-	if (rdataset_it != NULL)
-		dns_rdatasetiter_destroy(&rdataset_it);
 	if (ptr_node != NULL)
 		dns_db_detachnode(ldapdb, &ptr_node);
 
