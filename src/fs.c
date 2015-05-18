@@ -65,9 +65,7 @@ fs_dir_create(const char *dir_name)
 		 * I don't want to change umask for all threads or add locking
 		 * solely for this purpose. */
 		ret = chmod(dir_name, dir_mode);
-		if (ret == 0)
-			result = ISC_R_SUCCESS;
-		else {
+		if (ret != 0) {
 			result = isc__errno2result(errno);
 			log_error_r("unable to chmod directory '%s', "
 				    "working directory is '%s'",
