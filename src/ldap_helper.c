@@ -3671,32 +3671,6 @@ update_zone(isc_task_t *task, isc_event_t *event)
 			CHECK(ldap_parse_fwd_zoneentry(entry, inst));
 	}
 
-		/* This code is disabled because we don't have UUID->DN database yet.
-		 if (SYNCREPL_MODDN(pevent->chgtype)) {
-			if (dn_to_dnsname(inst->mctx, pevent->prevdn, &prevname, NULL)
-					== ISC_R_SUCCESS) {
-				CHECK(ldap_delete_zone(inst, pevent->prevdn,
-				      ISC_TRUE, ISC_FALSE));
-			} else {
-				log_debug(5, "update_zone: old zone wasn't managed "
-					     "by plugin, dn '%s'", pevent->prevdn);
-			}
-
-			// fill the cache with records from renamed zone //
-			if (objclass & LDAP_ENTRYCLASS_MASTER) {
-				CHECK(ldap_query(inst, NULL, &ldap_qresult_record, pevent->dn,
-						LDAP_SCOPE_ONELEVEL, attrs_record, 0,
-						"(objectClass=idnsRecord)"));
-
-				for (entry_record = HEAD(ldap_qresult_record->ldap_entries);
-						entry_record != NULL;
-						entry_record = NEXT(entry_record, link)) {
-
-					syncrepl_update(inst, entry_record, NULL);
-				}
-			}
-		}
-		*/
 cleanup:
 	if (inst != NULL) {
 		sync_concurr_limit_signal(inst->sctx);
@@ -4025,11 +3999,23 @@ cleanup:
 	return result;
 }
 
+/**
+ * Create asynchronous ISC event to execute update_config()/zone()/record()
+ * in a task associated with affected DNS zone.
+ *
+ * @param[in,out] entryp  (Possibly fake) LDAP entry to parse.
+ * @param[in]     chgtype One of LDAP_SYNC_CAPI_ADD/MODIFY/DELETE.
+ *
+ * @pre entryp is valid LDAP entry with class, DNS names, DN, etc.
+ *
+ * @post entryp is NULL.
+ */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
+syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 {
 	isc_result_t result = ISC_R_SUCCESS;
 	ldap_syncreplevent_t *pevent = NULL;
+	ldap_entry_t *entry = NULL;
 	isc_event_t *wait_event = NULL;
 	dns_name_t *zone_name = NULL;
 	dns_zone_t *zone_ptr = NULL;
@@ -4040,17 +4026,18 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	isc_task_t *task = NULL;
 	sync_state_t sync_state;
 
+	REQUIRE(entryp != NULL);
+	entry = *entryp;
 	REQUIRE(entry->class != LDAP_ENTRYCLASS_NONE);
 
-	log_debug(20, "syncrepl change type: " /*"none%d,"*/ "add%d, del%d, mod%d", /* moddn%d", */
-		  /* !SYNCREPL_ANY(chgtype), */ SYNCREPL_ADD(chgtype),
-		  SYNCREPL_DEL(chgtype), SYNCREPL_MOD(chgtype)/*, SYNCREPL_MODDN(chgtype) */ );
+	log_debug(20, "syncrepl_update change type: add%d, del%d, mod%d",
+		  SYNCREPL_ADD(chgtype), SYNCREPL_DEL(chgtype),
+		  SYNCREPL_MOD(chgtype));
 
 	isc_mem_attach(inst->mctx, &mctx);
 
 	CHECKED_MEM_STRDUP(mctx, entry->dn, dn);
 	CHECKED_MEM_STRDUP(mctx, inst->db_name, dbname);
-
 
 	if (entry->class & LDAP_ENTRYCLASS_MASTER)
 		zone_name = &entry->fqdn;
@@ -4128,6 +4115,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t *entry, int chgtype)
 	pevent->entry = entry;
 	wait_event = (isc_event_t *)pevent;
 	isc_task_send(task, (isc_event_t **)&pevent);
+	*entryp = NULL; /* event handler will deallocate the LDAP entry */
 
 	/* Lock syncrepl queue to prevent zone, config and resource records
 	 * from racing with each other. */
@@ -4150,7 +4138,7 @@ cleanup:
 			isc_mem_free(mctx, dn);
 		if (mctx != NULL)
 			isc_mem_detach(&mctx);
-		ldap_entry_destroy(inst->mctx, &entry);
+		ldap_entry_destroy(inst->mctx, entryp);
 		if (task != NULL)
 			isc_task_detach(&task);
 	}
@@ -4242,11 +4230,13 @@ int ldap_sync_search_entry (
 	ldap_sync_refresh_t		phase ) {
 
 	ldap_instance_t *inst = ls->ls_private;
-	ldap_entry_t *entry = NULL;
+	ldap_entry_t *old_entry = NULL;
+	ldap_entry_t *new_entry = NULL;
 	isc_result_t result;
 	metadb_node_t *node = NULL;
 	isc_boolean_t mldap_open = ISC_FALSE;
 	const char *ldap_base = NULL;
+	isc_boolean_t modrdn = ISC_FALSE;
 
 #ifdef RBTDB_DEBUG
 	static unsigned int count = 0;
@@ -4259,33 +4249,67 @@ int ldap_sync_search_entry (
 	mldap_open = ISC_TRUE;
 
 	CHECK(sync_concurr_limit_wait(inst->sctx));
-	if (phase == LDAP_SYNC_CAPI_ADD || phase == LDAP_SYNC_CAPI_MODIFY) {
-		CHECK(ldap_entry_parse(inst->mctx, ls->ls_ld, msg, entryUUID,
-					&entry));
-		CHECK(mldap_entry_create(entry, inst->mldapdb, &node));
-		if ((entry->class & LDAP_ENTRYCLASS_CONFIG) == 0)
-			CHECK(mldap_dnsname_store(&entry->fqdn,
-						  &entry->zone_name, node));
-		/* commit new entry into metaLDAP DB before something breaks */
-		metadb_node_close(&node);
-		mldap_closeversion(inst->mldapdb, ISC_TRUE);
-		mldap_open = ISC_FALSE;
+	log_debug(20, "ldap_sync_search_entry phase: %x", phase);
 
-	} else if (phase == LDAP_SYNC_CAPI_DELETE) {
+	/* MODIFY can be rename: get old name from metaDB */
+	if (phase == LDAP_SYNC_CAPI_DELETE || phase == LDAP_SYNC_CAPI_MODIFY) {
 		INSIST(setting_get_str("base", inst->local_settings,
 				       &ldap_base) == ISC_R_SUCCESS);
 		CHECK(ldap_entry_reconstruct(inst->mctx, inst->zone_register,
 					     ldap_base, inst->mldapdb, entryUUID,
-					     &entry));
+					     &old_entry));
+	}
+	if (phase == LDAP_SYNC_CAPI_ADD || phase == LDAP_SYNC_CAPI_MODIFY) {
+		CHECK(ldap_entry_parse(inst->mctx, ls->ls_ld, msg, entryUUID,
+				       &new_entry));
+	}
+	/* detect type of modification */
+	if (phase == LDAP_SYNC_CAPI_MODIFY) {
+		if (old_entry->class != new_entry->class)
+			log_error("unsupported operation: "
+				  "object class in object '%s' changed: "
+				  "rndc reload might be necessary",
+				  new_entry->dn);
+		if ((old_entry->class & LDAP_ENTRYCLASS_CONFIG) == 0)
+			modrdn = !(dns_name_equal(&old_entry->zone_name,
+						  &new_entry->zone_name)
+				   && dns_name_equal(&old_entry->fqdn,
+						     &new_entry->fqdn));
+		if (modrdn == ISC_TRUE) {
+			log_debug(1, "detected entry rename: DN '%s' -> '%s'",
+				  old_entry->dn, new_entry->dn);
+			if (old_entry->class != LDAP_ENTRYCLASS_RR)
+				log_bug("LDAP MODRDN is supported only for "
+					"records, not zones or configs; DN '%s' "
+					"rndc reload might be necessary",
+					new_entry->dn);
+		}
+	}
+	if (phase == LDAP_SYNC_CAPI_DELETE || modrdn == ISC_TRUE) {
+		/* delete old entry from zone and metaDB */
+		CHECK(syncrepl_update(inst, &old_entry, LDAP_SYNC_CAPI_DELETE));
 		CHECK(mldap_entry_delete(inst->mldapdb, entryUUID));
-		/* do not commit into DB until syncrepl_update finished */
-	} else {
+	}
+	if (phase == LDAP_SYNC_CAPI_ADD || phase == LDAP_SYNC_CAPI_MODIFY) {
+		/* store new state into metaDB */
+		CHECK(mldap_entry_create(new_entry, inst->mldapdb, &node));
+		if ((new_entry->class & LDAP_ENTRYCLASS_CONFIG) == 0)
+			CHECK(mldap_dnsname_store(&new_entry->fqdn,
+						  &new_entry->zone_name, node));
+		/* commit new entry into metaLDAP DB before something breaks */
+		metadb_node_close(&node);
+		mldap_closeversion(inst->mldapdb, ISC_TRUE);
+		mldap_open = ISC_FALSE;
+		/* re-add entry under new DN, if necessary */
+		CHECK(syncrepl_update(inst, &new_entry,
+		                      (modrdn == ISC_TRUE)
+					      ? LDAP_SYNC_CAPI_ADD : phase));
+	}
+	if (phase != LDAP_SYNC_CAPI_ADD && phase != LDAP_SYNC_CAPI_MODIFY &&
+	    phase != LDAP_SYNC_CAPI_DELETE) {
 		log_bug("syncrepl phase %x is not supported", phase);
 		CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
 	}
-
-	CHECK(syncrepl_update(inst, entry, phase));
-	/* commit eventual deletion if the syncrepl event was sent */
 
 #ifdef RBTDB_DEBUG
 	if (++count % 100 == 0)
@@ -4296,16 +4320,15 @@ int ldap_sync_search_entry (
 cleanup:
 	metadb_node_close(&node);
 	if (mldap_open == ISC_TRUE)
+		/* commit metaDB changes if the syncrepl event was sent */
 		mldap_closeversion(inst->mldapdb, ISC_TF(result == ISC_R_SUCCESS));
 	if (result != ISC_R_SUCCESS) {
 		log_error_r("ldap_sync_search_entry failed");
 		sync_concurr_limit_signal(inst->sctx);
 		/* TODO: Add 'tainted' flag to the LDAP instance. */
 	}
-	if (dns_name_dynamic(&fqdn))
-		dns_name_free(&fqdn, inst->mctx);
-	if (dns_name_dynamic(&zone_name))
-		dns_name_free(&zone_name, inst->mctx);
+	ldap_entry_destroy(inst->mctx, &old_entry);
+	ldap_entry_destroy(inst->mctx, &new_entry);
 
 	/* Following return code will never reach upper layers.
 	 * It is limitation in ldap_sync_init() and ldap_sync_poll()
