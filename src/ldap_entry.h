@@ -33,6 +33,7 @@ typedef LIST(ldap_attribute_t)	ldap_attributelist_t;
 typedef unsigned char		ldap_entryclass_t;
 typedef LIST(ldap_entry_t)	ldap_entrylist_t;
 struct ldap_entry {
+	isc_mem_t		*mctx;
 	char			*dn;
 	struct berval		*uuid;
 	ldap_entryclass_t	class;
@@ -93,7 +94,7 @@ ldap_entry_reconstruct(isc_mem_t *mctx, zone_register_t *zr, const char *ldap_ba
 		       ldap_entry_t **entryp) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 void
-ldap_entry_destroy(isc_mem_t *mctx, ldap_entry_t **entryp) ATTR_NONNULLS;
+ldap_entry_destroy(ldap_entry_t **entryp) ATTR_NONNULLS;
 
 isc_result_t
 ldap_entry_getvalues(const ldap_entry_t *entry, const char *attrname,

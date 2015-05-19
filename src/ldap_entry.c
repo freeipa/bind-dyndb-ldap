@@ -112,6 +112,7 @@ ldap_entry_init(isc_mem_t *mctx, ldap_entry_t **entryp) {
 
 	CHECKED_MEM_GET_PTR(mctx, entry);
 	ZERO_PTR(entry);
+	isc_mem_attach(mctx, &entry->mctx);
 	INIT_LIST(entry->attrs);
 	INIT_LINK(entry, link);
 	INIT_BUFFERED_NAME(entry->fqdn);
@@ -124,7 +125,7 @@ ldap_entry_init(isc_mem_t *mctx, ldap_entry_t **entryp) {
 
 cleanup:
 	if (result != ISC_R_SUCCESS)
-		ldap_entry_destroy(mctx, &entry);
+		ldap_entry_destroy(&entry);
 
 	return result;
 }
@@ -186,7 +187,7 @@ ldap_entry_reconstruct(isc_mem_t *mctx, zone_register_t *zr,
 
 cleanup:
 	if (result != ISC_R_SUCCESS)
-		ldap_entry_destroy(mctx, &entry);
+		ldap_entry_destroy(&entry);
 	metadb_node_close(&node);
 	str_destroy(&str);
 	return result;
@@ -256,7 +257,7 @@ cleanup:
 		ber_free(ber, 0);
 	if (result != ISC_R_SUCCESS) {
 		if (entry != NULL)
-			ldap_entry_destroy(mctx, &entry);
+			ldap_entry_destroy(&entry);
 		SAFE_MEM_PUT_PTR(mctx, attr);
 	}
 
@@ -264,7 +265,7 @@ cleanup:
 }
 
 void
-ldap_entry_destroy(isc_mem_t *mctx, ldap_entry_t **entryp)
+ldap_entry_destroy(ldap_entry_t **entryp)
 {
 	ldap_entry_t *entry;
 
@@ -274,23 +275,24 @@ ldap_entry_destroy(isc_mem_t *mctx, ldap_entry_t **entryp)
 	if (entry == NULL)
 		return;
 
-	ldap_attributelist_destroy(mctx, &entry->attrs);
+	ldap_attributelist_destroy(entry->mctx, &entry->attrs);
 	if (entry->dn != NULL)
 		ldap_memfree(entry->dn);
 	if (entry->uuid != NULL)
 		ber_bvfree(entry->uuid);
 	if (dns_name_dynamic(&entry->fqdn))
-		dns_name_free(&entry->fqdn, mctx);
+		dns_name_free(&entry->fqdn, entry->mctx);
 	if (dns_name_dynamic(&entry->zone_name))
-		dns_name_free(&entry->zone_name, mctx);
+		dns_name_free(&entry->zone_name, entry->mctx);
 	if (entry->lex != NULL) {
 		isc_lex_close(entry->lex);
 		isc_lex_destroy(&entry->lex);
 	}
 	if (entry->rdata_target_mem != NULL)
-		SAFE_MEM_PUT(mctx, entry->rdata_target_mem, DNS_RDATA_MAXLENGTH);
+		SAFE_MEM_PUT(entry->mctx, entry->rdata_target_mem,
+			     DNS_RDATA_MAXLENGTH);
 
-	SAFE_MEM_PUT_PTR(mctx, entry);
+	MEM_PUT_AND_DETACH(entry);
 
 	*entryp = NULL;
 }

@@ -1962,7 +1962,7 @@ cleanup:
 		SAFE_MEM_PUT_PTR(mctx, nsec3p_rdata);
 	}
 	if (fake_entry != NULL)
-		ldap_entry_destroy(mctx, &fake_entry);
+		ldap_entry_destroy(&fake_entry);
 	return result;
 }
 
@@ -3687,7 +3687,7 @@ cleanup:
 	if (pevent->prevdn != NULL)
 		isc_mem_free(mctx, pevent->prevdn);
 	isc_mem_free(mctx, pevent->dn);
-	ldap_entry_destroy(mctx, &entry);
+	ldap_entry_destroy(&entry);
 	isc_mem_detach(&mctx);
 	isc_event_free(&event);
 	isc_task_detach(&task);
@@ -3718,7 +3718,7 @@ cleanup:
 			    "Configuration can be outdated, run `rndc reload`",
 			    pevent->dn);
 
-	ldap_entry_destroy(mctx, &entry);
+	ldap_entry_destroy(&entry);
 	isc_mem_free(mctx, pevent->dbname);
 	isc_mem_free(mctx, pevent->dn);
 	isc_mem_detach(&mctx);
@@ -3950,7 +3950,7 @@ cleanup:
 	isc_mem_free(mctx, pevent->dbname);
 	if (pevent->prevdn != NULL)
 		isc_mem_free(mctx, pevent->prevdn);
-	ldap_entry_destroy(mctx, &entry);
+	ldap_entry_destroy(&entry);
 	isc_mem_free(mctx, pevent->dn);
 	isc_mem_detach(&mctx);
 	isc_event_free(&event);
@@ -4138,7 +4138,7 @@ cleanup:
 			isc_mem_free(mctx, dn);
 		if (mctx != NULL)
 			isc_mem_detach(&mctx);
-		ldap_entry_destroy(inst->mctx, entryp);
+		ldap_entry_destroy(entryp);
 		if (task != NULL)
 			isc_task_detach(&task);
 	}
@@ -4327,8 +4327,8 @@ cleanup:
 		sync_concurr_limit_signal(inst->sctx);
 		/* TODO: Add 'tainted' flag to the LDAP instance. */
 	}
-	ldap_entry_destroy(inst->mctx, &old_entry);
-	ldap_entry_destroy(inst->mctx, &new_entry);
+	ldap_entry_destroy(&old_entry);
+	ldap_entry_destroy(&new_entry);
 
 	/* Following return code will never reach upper layers.
 	 * It is limitation in ldap_sync_init() and ldap_sync_poll()
