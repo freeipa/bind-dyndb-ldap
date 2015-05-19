@@ -31,7 +31,6 @@ typedef LIST(ldap_attribute_t)	ldap_attributelist_t;
 
 /* Represents LDAP entry and it's attributes */
 typedef unsigned char		ldap_entryclass_t;
-typedef LIST(ldap_entry_t)	ldap_entrylist_t;
 struct ldap_entry {
 	isc_mem_t		*mctx;
 	char			*dn;
@@ -72,17 +71,6 @@ struct ldap_attribute {
 
 isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_entry_init(isc_mem_t *mctx, ldap_entry_t **entryp);
-
-isc_result_t
-ldap_entrylist_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *msg,
-		      ldap_entrylist_t *entrylist) ATTR_NONNULLS ATTR_CHECKRESULT;
-
-void
-ldap_entrylist_destroy(isc_mem_t *mctx, ldap_entrylist_t *entrylist) ATTR_NONNULLS;
-
-isc_result_t
-ldap_entrylist_append(isc_mem_t *mctx, LDAP *ld, LDAPMessage *msg,
-		      ldap_entrylist_t *entrylist) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
 ldap_entry_parse(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
