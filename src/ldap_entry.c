@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2011-2014  bind-dyndb-ldap authors; see COPYING for license
  */
+#include <uuid/uuid.h>
 
 #include <dns/rdata.h>
 #include <dns/ttl.h>
@@ -141,9 +142,8 @@ cleanup:
  * @warning fake entry->dn might be inaccurate
  */
 isc_result_t
-ldap_entry_reconstruct(isc_mem_t *mctx, zone_register_t *zr,
-		       const char *ldap_base, mldapdb_t *mldap,
-		       struct berval *uuid, ldap_entry_t **entryp) {
+ldap_entry_reconstruct(isc_mem_t *mctx, mldapdb_t *mldap, struct berval *uuid,
+		       ldap_entry_t **entryp) {
 	isc_result_t result;
 	ldap_entry_t *entry = NULL;
 	ld_string_t *str = NULL;
@@ -163,25 +163,8 @@ ldap_entry_reconstruct(isc_mem_t *mctx, zone_register_t *zr,
 		CLEANUP_WITH(ISC_R_NOMEMORY);
 
 	CHECK(mldap_class_get(node, &entry->class));
-	/* create fake DN from remembered DNS names and object class */
-	if ((entry->class & LDAP_ENTRYCLASS_CONFIG) != 0) {
-		/* idnsConfig objects do not have DNS name */
-		CHECK(str_cat_char(str, ldap_base));
-	} else {
+	if ((entry->class & LDAP_ENTRYCLASS_CONFIG) == 0)
 		CHECK(mldap_dnsname_get(node, &entry->fqdn, &entry->zone_name));
-		if ((entry->class &
-		     (LDAP_ENTRYCLASS_MASTER | LDAP_ENTRYCLASS_FORWARD)) != 0) {
-			INSIST(dns_name_equal(dns_rootname, &entry->zone_name)
-			       == ISC_TRUE);
-			CHECK(dnsname_to_dn(zr, &entry->fqdn, &entry->fqdn, str));
-		} else if ((entry->class & LDAP_ENTRYCLASS_RR) != 0) {
-			CHECK(dnsname_to_dn(zr, &entry->fqdn, &entry->zone_name,
-					    str));
-		}
-	}
-	entry->dn = ldap_strdup(str_buf(str));
-	if (entry->dn == NULL)
-		CLEANUP_WITH(ISC_R_NOMEMORY);
 
 	*entryp = entry;
 
@@ -291,6 +274,7 @@ ldap_entry_destroy(ldap_entry_t **entryp)
 	if (entry->rdata_target_mem != NULL)
 		SAFE_MEM_PUT(entry->mctx, entry->rdata_target_mem,
 			     DNS_RDATA_MAXLENGTH);
+	str_destroy(&entry->logname);
 
 	MEM_PUT_AND_DETACH(entry);
 
@@ -451,8 +435,8 @@ ldap_entry_parseclass(ldap_entry_t *entry, ldap_entryclass_t *class)
 	 * objectClass attribute. */
 	if (ldap_entry_getvalues(entry, "objectClass", &values)
 	    != ISC_R_SUCCESS) {
-		log_error("entry without supported objectClass: DN '%s'",
-			  (entry->dn != NULL) ? entry->dn : "<NULL>");
+		log_error("entry without supported objectClass: %s",
+			  ldap_entry_logname(entry));
 		return ISC_R_UNEXPECTED;
 	}
 
@@ -468,14 +452,14 @@ ldap_entry_parseclass(ldap_entry_t *entry, ldap_entryclass_t *class)
 	}
 
 	if (class == LDAP_ENTRYCLASS_NONE) {
-		log_error("entry '%s' has no supported object class",
-			  entry->dn);
+		log_error("%s has no supported object class",
+			  ldap_entry_logname(entry));
 		return ISC_R_NOTIMPLEMENTED;
 
 	} else if ((entryclass & LDAP_ENTRYCLASS_MASTER) &&
 		   (entryclass & LDAP_ENTRYCLASS_FORWARD)) {
-		log_error("zone '%s' has to have type either "
-			  "'master' or 'forward'", entry->dn);
+		log_error("%s has to have type either "
+			  "'master' or 'forward'", ldap_entry_logname(entry));
 		return ISC_R_UNEXPECTED;
 	}
 
@@ -521,7 +505,7 @@ cleanup:
 }
 
 dns_ttl_t
-ldap_entry_getttl(const ldap_entry_t *entry)
+ldap_entry_getttl(ldap_entry_t *entry)
 {
 	const char *ttl_attr = "dnsTTL";
 	isc_textregion_t ttl_text;
@@ -541,10 +525,70 @@ ldap_entry_getttl(const ldap_entry_t *entry)
 	if (result != ISC_R_SUCCESS)
 		return DEFAULT_TTL;
 	else if (ttl > 0x7fffffffUL) {
-		log_error("entry '%s': entry TTL %u > MAXTTL, setting TTL to 0",
-			  entry->dn, ttl);
+		log_error("%s: entry TTL %u > MAXTTL, setting TTL to 0",
+			  ldap_entry_logname(entry), ttl);
 		ttl = 0;
 	}
 
 	return ttl;
+}
+
+/**
+ * Convert a combination of LDAP_ENTRYCLASS_* to a string.
+ */
+const char *
+ldap_entry_getclassname(const ldap_entryclass_t class) {
+	if ((class & LDAP_ENTRYCLASS_MASTER) != 0)
+		return "master zone";
+	else if ((class & LDAP_ENTRYCLASS_FORWARD) != 0)
+		return "forward zone";
+	else if ((class & LDAP_ENTRYCLASS_CONFIG) != 0)
+		return "config object";
+	else if ((class & LDAP_ENTRYCLASS_RR) != 0)
+		return "resource record";
+	else if (class != 0)
+		return "entry with unknown combination of object classes";
+	else
+		return "entry with empty object class";
+}
+
+/**
+ * Return human-readable entry identifier.
+ * The identifier is guaranteed to be non-NULL so it can be used without
+ * further checking.
+ */
+const char *
+ldap_entry_logname(ldap_entry_t * const entry) {
+	isc_result_t result;
+	ld_string_t *str = NULL;
+	char uuid_buf[sizeof("01234567-89ab-cdef-0123-456789abcdef")];
+
+	if (entry->logname != NULL)
+		return str_buf(entry->logname);
+
+	CHECK(str_new(entry->mctx, &str));
+	CHECK(str_cat_char(str, ldap_entry_getclassname(entry->class)));
+	if (entry->dn) {
+		if (str_len(str) > 0)
+			CHECK(str_cat_char(str, " "));
+		CHECK(str_cat_char(str, "DN '"));
+		CHECK(str_cat_char(str, entry->dn));
+		CHECK(str_cat_char(str, "'"));
+	} else if (entry->uuid) {
+		INSIST(entry->uuid->bv_len == 16);
+		uuid_unparse((*(const uuid_t *) entry->uuid->bv_val), uuid_buf);
+		if (str_len(str) > 0)
+			CHECK(str_cat_char(str, " "));
+		CHECK(str_cat_char(str, "entryUUID "));
+		CHECK(str_cat_char(str, uuid_buf));
+	}
+	/* sanity check */
+	if (str == NULL || str_len(str) <= 0)
+		goto cleanup;
+	entry->logname = str;
+	return str_buf(entry->logname);
+
+cleanup:
+	str_destroy(&str);
+	return "<failed to obtain LDAP entry identifier>";
 }

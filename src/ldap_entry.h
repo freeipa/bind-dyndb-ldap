@@ -47,6 +47,10 @@ struct ldap_entry {
 	isc_lex_t		*lex;
 	isc_buffer_t		rdata_target;
 	unsigned char		*rdata_target_mem;
+
+	/* Human-readable identifier. It has to be accessed via
+	 * ldap_entry_logname(). */
+	ld_string_t		*logname;
 };
 
 /* Represents LDAP attribute and it's values */
@@ -77,8 +81,7 @@ ldap_entry_parse(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 		  struct berval	*uuid, ldap_entry_t **entryp) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
-ldap_entry_reconstruct(isc_mem_t *mctx, zone_register_t *zr, const char *ldap_base,
-		       mldapdb_t *mldap, struct berval *uuid,
+ldap_entry_reconstruct(isc_mem_t *mctx, mldapdb_t *mldap, struct berval *uuid,
 		       ldap_entry_t **entryp) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 void
@@ -119,6 +122,9 @@ isc_result_t
 ldap_attr_nextvalue(ldap_attribute_t *attr, ld_string_t *value) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 dns_ttl_t
-ldap_entry_getttl(const ldap_entry_t *entry) ATTR_NONNULLS ATTR_CHECKRESULT;
+ldap_entry_getttl(ldap_entry_t *entry) ATTR_NONNULLS ATTR_CHECKRESULT;
+
+const char *
+ldap_entry_logname(ldap_entry_t * const entry) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 #endif /* !_LD_LDAP_ENTRY_H_ */

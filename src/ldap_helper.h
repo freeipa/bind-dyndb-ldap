@@ -87,4 +87,6 @@ isc_task_t * ldap_instance_gettask(ldap_instance_t *ldap_inst);
 
 isc_boolean_t ldap_instance_isexiting(ldap_instance_t *ldap_inst) ATTR_NONNULLS ATTR_CHECKRESULT;
 
+void ldap_instance_taint(ldap_instance_t *ldap_inst) ATTR_NONNULLS;
+
 #endif /* !_LD_LDAP_HELPER_H_ */

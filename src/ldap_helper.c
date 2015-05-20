@@ -24,6 +24,7 @@
 #include <dns/soa.h>
 #include <dns/update.h>
 
+#include <isc/atomic.h>
 #include <isc/buffer.h>
 #include <isc/dir.h>
 #include <isc/mem.h>
@@ -158,6 +159,10 @@ struct ldap_instance {
 	isc_task_t		*task;
 	isc_thread_t		watcher;
 	isc_boolean_t		exiting;
+	/* Non-zero if this instance 'tainted' by a unrecoverable problem.
+	 * It should be accessed using isc_atomic_*() because it might be
+	 * modified from multiple threads. */
+	isc_int32_t		tainted;
 
 	/* Settings. */
 	settings_set_t		*local_settings;
@@ -210,7 +215,6 @@ struct ldap_syncreplevent {
 	ISC_EVENT_COMMON(ldap_syncreplevent_t);
 	isc_mem_t *mctx;
 	char *dbname;
-	char *dn;
 	char *prevdn;
 	int chgtype;
 	ldap_entry_t *entry;
@@ -1290,13 +1294,13 @@ configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
 
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 delete_forwarding_table(ldap_instance_t *inst, dns_name_t *name,
-			const char *msg_obj_type, const char *dn) {
+			const char *msg_obj_type, const char *logname) {
 	isc_result_t result;
 
 	result = dns_fwdtable_delete(inst->view->fwdtable, name);
 	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {
-		log_error_r("%s '%s': failed to delete forwarders",
-			    msg_obj_type, dn);
+		log_error_r("%s %s: failed to delete forwarders",
+			    msg_obj_type, logname);
 		return result;
 	} else {
 		return ISC_R_SUCCESS; /* ISC_R_NOTFOUND = nothing to delete */
@@ -1379,7 +1383,7 @@ cleanup:
  * I hope it will not break something...
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-unpublish_zone(ldap_instance_t *inst, dns_name_t *name, const char *dn) {
+unpublish_zone(ldap_instance_t *inst, dns_name_t *name, const char *logname) {
 	isc_result_t result;
 	isc_result_t lock_state = ISC_R_IGNORE;
 	dns_zone_t *raw = NULL;
@@ -1396,7 +1400,7 @@ unpublish_zone(ldap_instance_t *inst, dns_name_t *name, const char *dn) {
 	}
 	CHECK(dns_view_findzone(inst->view, name, &zone_in_view));
 	INSIST(zone_in_view == raw || zone_in_view == secure);
-	CHECK(delete_forwarding_table(inst, name, "zone", dn));
+	CHECK(delete_forwarding_table(inst, name, "zone", logname));
 	CHECK(dns_zt_unmount(inst->view->zonetable, zone_in_view));
 
 cleanup:
@@ -1404,7 +1408,7 @@ cleanup:
 		dns_view_freeze(inst->view);
 	run_exclusive_exit(inst, lock_state);
 	if (result != ISC_R_SUCCESS)
-		log_error_r("zone '%s' un-publication failed", dn);
+		log_error_r("%s un-publication failed", logname);
 	if (raw != NULL)
 		dns_zone_detach(&raw);
 	if (secure != NULL)
@@ -1439,7 +1443,6 @@ static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 			  dns_name_t *name)
 {
-	const char *dn = entry->dn;
 	isc_result_t result;
 	isc_result_t orig_result;
 	isc_result_t lock_state = ISC_R_IGNORE;
@@ -1498,12 +1501,13 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 			else if (strcasecmp(value->value, "none") == 0)
 				fwdpolicy = dns_fwdpolicy_none;
 			else {
-				log_error("%s '%s': invalid value '%s' in "
+				log_error("%s %s: invalid value '%s' in "
 					  "idnsForwardPolicy attribute; "
 					  "valid values: first, only, none"
 					  "%s",
-					  msg_obj_type, dn, value->value,
-					  msg_use_global_fwds);
+					  msg_obj_type,
+					  ldap_entry_logname(entry),
+					  value->value, msg_use_global_fwds);
 				CLEANUP_WITH(ISC_R_UNEXPECTEDTOKEN);
 			}
 		}
@@ -1514,8 +1518,9 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 	} else {
 		result = ldap_entry_getvalues(entry, "idnsForwarders", &values);
 		if (result == ISC_R_NOTFOUND || EMPTY(values)) {
-			log_debug(5, "%s '%s': idnsForwarders attribute is "
-				  "not present%s", msg_obj_type, dn,
+			log_debug(5, "%s %s: idnsForwarders attribute is "
+				  "not present%s", msg_obj_type,
+				  ldap_entry_logname(entry),
 				  msg_forwarders_not_def);
 			if (is_global_config) {
 				ISC_LIST_INIT(values);
@@ -1529,8 +1534,8 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 
 	CHECK(get_enum_description(forwarder_policy_txts, fwdpolicy,
 				   &msg_forward_policy));
-	log_debug(5, "%s '%s': forward policy is '%s'", msg_obj_type, dn,
-		  msg_forward_policy);
+	log_debug(5, "%s %s: forward policy is '%s'", msg_obj_type,
+		  ldap_entry_logname(entry), msg_forward_policy);
 
 	for (value = HEAD(values); value != NULL; value = NEXT(value, link)) {
 #if LIBDNS_VERSION_MAJOR < 140
@@ -1542,8 +1547,9 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 
 		if (acl_parse_forwarder(value->value, inst->mctx, &fwdr)
 				!= ISC_R_SUCCESS) {
-			log_error("%s '%s': could not parse forwarder '%s'",
-					msg_obj_type, dn, value->value);
+			log_error("%s %s: could not parse forwarder '%s'",
+				  msg_obj_type, ldap_entry_logname(entry),
+				  value->value);
 			continue;
 		}
 
@@ -1556,18 +1562,19 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 				&fwdr->addr,
 #endif
 				forwarder_txt, ISC_SOCKADDR_FORMATSIZE);
-		log_debug(5, "%s '%s': adding forwarder '%s'", msg_obj_type,
-			  dn, forwarder_txt);
+		log_debug(5, "%s %s: adding forwarder '%s'", msg_obj_type,
+			  ldap_entry_logname(entry), forwarder_txt);
 	}
 
 	if (fwdpolicy != dns_fwdpolicy_none && ISC_LIST_EMPTY(fwdrs)) {
-		log_debug(5, "%s '%s': all idnsForwarders are invalid%s",
-			  msg_obj_type, dn, msg_use_global_fwds);
+		log_debug(5, "%s %s: all idnsForwarders are invalid%s",
+			  msg_obj_type, ldap_entry_logname(entry),
+			  msg_use_global_fwds);
 		CLEANUP_WITH(ISC_R_UNEXPECTEDTOKEN);
 	} else if (fwdpolicy == dns_fwdpolicy_none) {
-		log_debug(5, "%s '%s': forwarding explicitly disabled "
+		log_debug(5, "%s %s: forwarding explicitly disabled "
 			  "(policy 'none', ignoring global forwarders)",
-			  msg_obj_type, dn);
+			  msg_obj_type, ldap_entry_logname(entry));
 	}
 
 	/* Check for old and new forwarding settings equality. */
@@ -1607,8 +1614,9 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 	} else {
 		fwdtbl_update_requested = ISC_TRUE;
 		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
-			log_error_r("%s '%s': can't obtain old forwarding "
-				    "settings", msg_obj_type, dn);
+			log_error_r("%s %s: can't obtain old forwarding "
+				    "settings", msg_obj_type,
+				    ldap_entry_logname(entry));
 	}
 
 	if (fwdtbl_update_requested) {
@@ -1631,7 +1639,8 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 			goto cleanup;
 
 		/* Something was changed - set forward table up. */
-		CHECK(delete_forwarding_table(inst, name, msg_obj_type, dn));
+		CHECK(delete_forwarding_table(inst, name, msg_obj_type,
+					      ldap_entry_logname(entry)));
 #if LIBDNS_VERSION_MAJOR < 140
 		result = dns_fwdtable_add(inst->view->fwdtable, name, &fwdrs,
 					  fwdpolicy);
@@ -1640,12 +1649,12 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 					     fwdpolicy);
 #endif
 		if (result != ISC_R_SUCCESS)
-			log_error_r("%s '%s': forwarding table update failed",
-				    msg_obj_type, dn);
+			log_error_r("%s %s: forwarding table update failed",
+				    msg_obj_type, ldap_entry_logname(entry));
 	} else {
 		result = ISC_R_SUCCESS;
-		log_debug(5, "%s '%s': forwarding table unmodified",
-			  msg_obj_type, dn);
+		log_debug(5, "%s %s: forwarding table unmodified",
+			  msg_obj_type, ldap_entry_logname(entry));
 	}
 	if (result == ISC_R_SUCCESS) {
 		fwdtbl_deletion_requested = ISC_FALSE;
@@ -1669,13 +1678,15 @@ cleanup:
 	}
 	if (fwdtbl_deletion_requested) {
 		orig_result = result;
-		result = delete_forwarding_table(inst, name, msg_obj_type, dn);
+		result = delete_forwarding_table(inst, name, msg_obj_type,
+						 ldap_entry_logname(entry));
 		if (result == ISC_R_SUCCESS)
 			result = orig_result;
 	}
 	if (fwdtbl_deletion_requested || fwdtbl_update_requested) {
-		log_debug(5, "%s '%s': forwarder table was updated: %s",
-			  msg_obj_type, dn, dns_result_totext(result));
+		log_debug(5, "%s %s: forwarder table was updated: %s",
+			  msg_obj_type, ldap_entry_logname(entry),
+			  dns_result_totext(result));
 		orig_result = result;
 		run_exclusive_enter(inst, &lock_state);
 		result = dns_view_flushcache(inst->view);
@@ -1727,16 +1738,12 @@ cleanup:
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_parse_fwd_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 {
-	const char *dn;
 	ldap_valuelist_t values;
 	char name_txt[DNS_NAME_FORMATSIZE];
 	isc_result_t result;
 
 	REQUIRE(entry != NULL);
 	REQUIRE(inst != NULL);
-
-	/* Derive the DNS name of the zone from the DN. */
-	dn = entry->dn;
 
 	CHECK(ldap_entry_getvalues(entry, "idnsZoneActive", &values));
 	if (HEAD(values) != NULL &&
@@ -1750,7 +1757,8 @@ ldap_parse_fwd_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	/* Zone is active */
 	result = configure_zone_forwarders(entry, inst, &entry->fqdn);
 	if (result != ISC_R_DISABLED && result != ISC_R_SUCCESS) {
-		log_error_r("forward zone '%s': could not configure forwarding", dn);
+		log_error_r("%s: could not configure forwarding",
+			    ldap_entry_logname(entry));
 		goto cleanup;
 	}
 
@@ -2263,7 +2271,6 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 			    ldap_instance_t * const inst,
 			    isc_task_t * const task)
 {
-	const char *dn;
 	ldap_valuelist_t values;
 	dns_zone_t *raw = NULL;
 	dns_zone_t *secure = NULL;
@@ -2292,9 +2299,6 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 
 	dns_diff_init(inst->mctx, &diff);
 
-	/* Derive the dns name of the zone from the DN. */
-	dn = entry->dn;
-
 	run_exclusive_enter(inst, &lock_state);
 
 	result = configure_zone_forwarders(entry, inst, &entry->fqdn);
@@ -2312,11 +2316,11 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 	result = zr_get_zone_ptr(inst->zone_register, &entry->fqdn,
 				 &raw, &secure);
 	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
-		CHECK(create_zone(inst, dn, &entry->fqdn, olddb, want_secure,
-				  &raw, &secure));
+		CHECK(create_zone(inst, entry->dn, &entry->fqdn, olddb,
+				  want_secure, &raw, &secure));
 		new_zone = ISC_TRUE;
-		log_debug(2, "created zone %s: raw %p; secure %p", dn, raw,
-			  secure);
+		log_debug(2, "created %s: raw %p; secure %p",
+			  ldap_entry_logname(entry), raw, secure);
 	} else if (result != ISC_R_SUCCESS)
 		goto cleanup;
 	else if (want_secure != ISC_TF(secure != NULL)) {
@@ -2399,7 +2403,8 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 			CHECK(publish_zone(task, inst, toview));
 		CHECK(load_zone(toview, ISC_FALSE));
 	} else if (activity_changed == ISC_TRUE) { /* Zone was deactivated */
-		CHECK(unpublish_zone(inst, &entry->fqdn, entry->dn));
+		CHECK(unpublish_zone(inst, &entry->fqdn,
+				     ldap_entry_logname(entry)));
 		dns_zone_log(toview, ISC_LOG_INFO, "zone deactivated "
 			     "and removed from view");
 	}
@@ -2414,13 +2419,14 @@ cleanup:
 		dns_db_detach(&ldapdb);
 	if (new_zone == ISC_TRUE && configured == ISC_FALSE) {
 		/* Failure in ACL parsing or so. */
-		log_error_r("zone '%s': publishing failed, rolling back due to",
-			    entry->dn);
+		log_error_r("%s: publishing failed, rolling back due to",
+			    ldap_entry_logname(entry));
 		/* TODO: verify this */
 		result = ldap_delete_zone2(inst, &entry->fqdn,
 					   ISC_TRUE, ISC_FALSE);
 		if (result != ISC_R_SUCCESS)
-			log_error_r("zone '%s': rollback failed: ", entry->dn);
+			log_error_r("%s: rollback failed: ",
+				    ldap_entry_logname(entry));
 	}
 	run_exclusive_exit(inst, lock_state);
 	if (raw != NULL)
@@ -2541,7 +2547,6 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
 	dns_rdata_t *rdata = NULL;
 	dns_rdatalist_t *rdlist = NULL;
 	ldap_attribute_t *attr;
-	const char *dn = "<NULL entry>";
 	const char *data_str = "<NULL data>";
 	ld_string_t *data_buf = NULL;
 
@@ -2580,11 +2585,10 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
 	return ISC_R_SUCCESS;
 
 cleanup:
-	if (entry != NULL)
-		dn = entry->dn;
 	if (data_buf != NULL && str_len(data_buf) != 0)
 		data_str = str_buf(data_buf);
-	log_error_r("failed to parse RR entry: dn '%s': data '%s'", dn, data_str);
+	log_error_r("failed to parse RR entry: %s: data '%s'",
+		    ldap_entry_logname(entry), data_str);
 	str_destroy(&data_buf);
 	return result;
 }
@@ -3679,14 +3683,13 @@ cleanup:
 			dns_name_free(&prevname, inst->mctx);
 	}
 	if (result != ISC_R_SUCCESS)
-		log_error_r("update_zone (syncrepl) failed for '%s'. "
-			  "Zones can be outdated, run `rndc reload`",
-			  pevent->dn);
+		log_error_r("update_zone (syncrepl) failed for %s. "
+			    "Zones can be outdated, run `rndc reload`",
+			    ldap_entry_logname(entry));
 
 	isc_mem_free(mctx, pevent->dbname);
 	if (pevent->prevdn != NULL)
 		isc_mem_free(mctx, pevent->prevdn);
-	isc_mem_free(mctx, pevent->dn);
 	ldap_entry_destroy(&entry);
 	isc_mem_detach(&mctx);
 	isc_event_free(&event);
@@ -3714,13 +3717,12 @@ cleanup:
 		sync_event_signal(inst->sctx, event);
 	}
 	if (result != ISC_R_SUCCESS)
-		log_error_r("update_config (syncrepl) failed for '%s'. "
+		log_error_r("update_config (syncrepl) failed for %s. "
 			    "Configuration can be outdated, run `rndc reload`",
-			    pevent->dn);
+			    ldap_entry_logname(entry));
 
 	ldap_entry_destroy(&entry);
 	isc_mem_free(mctx, pevent->dbname);
-	isc_mem_free(mctx, pevent->dn);
 	isc_mem_detach(&mctx);
 	isc_event_free(&event);
 	isc_task_detach(&task);
@@ -3797,8 +3799,8 @@ update_restart:
 	/* This code is disabled because we don't have UUID->DN database yet.
 	    || SYNCREPL_MODDN(pevent->chgtype)) { */
 	if (SYNCREPL_DEL(pevent->chgtype)) {
-		log_debug(5, "syncrepl_update: removing name from rbtdb, dn: '%s'",
-			  pevent->dn);
+		log_debug(5, "syncrepl_update: removing name from rbtdb, "
+			  "%s", ldap_entry_logname(entry));
 		/* Do nothing. rdatalist is initialized to empty list,
 		 * so resulting diff will remove all the data from node. */
 	}
@@ -3834,8 +3836,8 @@ update_restart:
 
 	if (SYNCREPL_ADD(pevent->chgtype) || SYNCREPL_MOD(pevent->chgtype)) {
 		/* Parse new data from LDAP. */
-		log_debug(5, "syncrepl_update: updating name in rbtdb, dn: '%s'",
-		          pevent->dn);
+		log_debug(5, "syncrepl_update: updating name in rbtdb, "
+			  "%s", ldap_entry_logname(entry));
 		CHECK(setting_get_str("fake_mname", inst->local_settings,
 				      &fake_mname));
 		CHECK(ldap_parse_rrentry(mctx, entry, &entry->zone_name, fake_mname,
@@ -3906,8 +3908,8 @@ cleanup:
 	   (result == DNS_R_NOTLOADED || result == DNS_R_BADZONE)) {
 		dns_zone_log(raw, ISC_LOG_DEBUG(1),
 			     "reloading invalid zone after a change; "
-			     "reload triggered by change in '%s'",
-			     pevent->dn);
+			     "reload triggered by change in %s",
+			     ldap_entry_logname(entry));
 		if (secure != NULL)
 			result = load_zone(secure, ISC_TRUE);
 		else if (raw != NULL)
@@ -3916,7 +3918,8 @@ cleanup:
 		    result == DNS_R_DYNAMIC || result == DNS_R_CONTINUE) {
 			/* zone reload succeeded, fire current event again */
 			log_debug(1, "restarting update_record after zone reload "
-				     "caused by change in '%s'", pevent->dn);
+				     "caused by change in %s",
+				     ldap_entry_logname(entry));
 			zone_reloaded = ISC_TRUE;
 			result = dns_zone_getserial2(raw, &serial);
 			if (result == ISC_R_SUCCESS)
@@ -3924,15 +3927,16 @@ cleanup:
 		} else {
 			dns_zone_log(raw, ISC_LOG_ERROR,
 				    "unable to reload invalid zone; "
-				    "reload triggered by change in '%s':%s",
-				    pevent->dn, dns_result_totext(result));
+				    "reload triggered by change in %s: %s",
+				    ldap_entry_logname(entry),
+				    dns_result_totext(result));
 		}
 
 	} else if (result != ISC_R_SUCCESS) {
 		/* error other than invalid zone */
-		log_error_r("update_record (syncrepl) failed, dn '%s' change type 0x%x. "
-			  "Records can be outdated, run `rndc reload`",
-			  pevent->dn, pevent->chgtype);
+		log_error_r("update_record (syncrepl) failed, %s change type "
+			    "0x%x. Records can be outdated, run `rndc reload`",
+			    ldap_entry_logname(entry), pevent->chgtype);
 	}
 
 	if (inst != NULL) {
@@ -3951,7 +3955,6 @@ cleanup:
 	if (pevent->prevdn != NULL)
 		isc_mem_free(mctx, pevent->prevdn);
 	ldap_entry_destroy(&entry);
-	isc_mem_free(mctx, pevent->dn);
 	isc_mem_detach(&mctx);
 	isc_event_free(&event);
 	isc_task_detach(&task);
@@ -4036,7 +4039,6 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 
 	isc_mem_attach(inst->mctx, &mctx);
 
-	CHECKED_MEM_STRDUP(mctx, entry->dn, dn);
 	CHECKED_MEM_STRDUP(mctx, inst->db_name, dbname);
 
 	if (entry->class & LDAP_ENTRYCLASS_MASTER)
@@ -4056,7 +4058,8 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 		else {
 			/* TODO: Fix race condition:
 			 * zone is not (yet) present in zone register */
-			log_debug(1, "TODO: DN '%s': task fallback", entry->dn);
+			log_debug(1, "TODO: %s: task fallback",
+				  ldap_entry_logname(entry));
 			isc_task_attach(inst->task, &task);
 			result = ISC_R_SUCCESS;
 		}
@@ -4109,7 +4112,6 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 
 	pevent->mctx = mctx;
 	pevent->dbname = dbname;
-	pevent->dn = dn;
 	pevent->prevdn = NULL;
 	pevent->chgtype = chgtype;
 	pevent->entry = entry;
@@ -4126,16 +4128,14 @@ cleanup:
 	if (zone_ptr != NULL)
 		dns_zone_detach(&zone_ptr);
 	if (result != ISC_R_SUCCESS)
-		log_error_r("syncrepl_update failed for object '%s'",
-			    entry->dn);
+		log_error_r("syncrepl_update failed for %s",
+			    ldap_entry_logname(entry));
 	if (wait_event == NULL) {
 		/* Event was not sent */
 		sync_concurr_limit_signal(inst->sctx);
 
 		if (dbname != NULL)
 			isc_mem_free(mctx, dbname);
-		if (dn != NULL)
-			isc_mem_free(mctx, dn);
 		if (mctx != NULL)
 			isc_mem_detach(&mctx);
 		ldap_entry_destroy(entryp);
@@ -4255,9 +4255,8 @@ int ldap_sync_search_entry (
 	if (phase == LDAP_SYNC_CAPI_DELETE || phase == LDAP_SYNC_CAPI_MODIFY) {
 		INSIST(setting_get_str("base", inst->local_settings,
 				       &ldap_base) == ISC_R_SUCCESS);
-		CHECK(ldap_entry_reconstruct(inst->mctx, inst->zone_register,
-					     ldap_base, inst->mldapdb, entryUUID,
-					     &old_entry));
+		CHECK(ldap_entry_reconstruct(inst->mctx, inst->mldapdb,
+					     entryUUID, &old_entry));
 	}
 	if (phase == LDAP_SYNC_CAPI_ADD || phase == LDAP_SYNC_CAPI_MODIFY) {
 		CHECK(ldap_entry_parse(inst->mctx, ls->ls_ld, msg, entryUUID,
@@ -4267,22 +4266,23 @@ int ldap_sync_search_entry (
 	if (phase == LDAP_SYNC_CAPI_MODIFY) {
 		if (old_entry->class != new_entry->class)
 			log_error("unsupported operation: "
-				  "object class in object '%s' changed: "
+				  "object class in %s changed: "
 				  "rndc reload might be necessary",
-				  new_entry->dn);
+				  ldap_entry_logname(new_entry));
 		if ((old_entry->class & LDAP_ENTRYCLASS_CONFIG) == 0)
 			modrdn = !(dns_name_equal(&old_entry->zone_name,
 						  &new_entry->zone_name)
 				   && dns_name_equal(&old_entry->fqdn,
 						     &new_entry->fqdn));
 		if (modrdn == ISC_TRUE) {
-			log_debug(1, "detected entry rename: DN '%s' -> '%s'",
-				  old_entry->dn, new_entry->dn);
+			log_debug(1, "detected entry rename: %s -> %s",
+				  ldap_entry_logname(old_entry),
+				  ldap_entry_logname(new_entry));
 			if (old_entry->class != LDAP_ENTRYCLASS_RR)
 				log_bug("LDAP MODRDN is supported only for "
-					"records, not zones or configs; DN '%s' "
+					"records, not zones or configs; %s; "
 					"rndc reload might be necessary",
-					new_entry->dn);
+					ldap_entry_logname(new_entry));
 		}
 	}
 	if (phase == LDAP_SYNC_CAPI_DELETE || modrdn == ISC_TRUE) {
@@ -4593,4 +4593,18 @@ isc_boolean_t
 ldap_instance_isexiting(ldap_instance_t *ldap_inst)
 {
 	return ldap_inst->exiting;
+}
+
+/**
+ * Mark LDAP instance as 'tainted' by unrecoverable error, e.g. unsupported
+ * MODRDN. Full reload is required to recover consistency
+ * (if it is even possible). */
+void
+ldap_instance_taint(ldap_instance_t *ldap_inst) {
+	isc_atomic_store(&ldap_inst->tainted, 1);
+}
+
+isc_boolean_t
+ldap_instance_istained(ldap_instance_t *ldap_inst) {
+	return ISC_TF(isc_atomic_cmpxchg(&ldap_inst->tainted, 0, 0) != 0);
 }

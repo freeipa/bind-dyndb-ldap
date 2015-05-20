@@ -416,8 +416,8 @@ setting_update_from_ldap_entry(const char *name, settings_set_t *set,
 	result = ldap_entry_getvalues(entry, attr_name, &values);
 	if (result == ISC_R_NOTFOUND || HEAD(values) == NULL) {
 		CHECK(setting_unset(name, set));
-		log_debug(2, "setting '%s' (%s) was deleted in object '%s'",
-			  name, attr_name, entry->dn);
+		log_debug(2, "setting '%s' (%s) was deleted in object %s",
+			  name, attr_name, ldap_entry_logname(entry));
 		return ISC_R_SUCCESS;
 
 	} else if (result != ISC_R_SUCCESS) {
@@ -426,13 +426,14 @@ setting_update_from_ldap_entry(const char *name, settings_set_t *set,
 
 	if (HEAD(values) != TAIL(values)) {
 		log_bug("multi-value attributes are not supported: attribute "
-			"'%s' in entry '%s'", attr_name, entry->dn);
+			"'%s' in %s", attr_name,
+			ldap_entry_logname(entry));
 		return ISC_R_NOTIMPLEMENTED;
 	}
 
 	CHECK(setting_set(name, set, HEAD(values)->value));
-	log_debug(2, "setting '%s' (%s) was changed to '%s' in object '%s'",
-		  name, attr_name, HEAD(values)->value, entry->dn);
+	log_debug(2, "setting '%s' (%s) was changed to '%s' in %s", name,
+		  attr_name, HEAD(values)->value, ldap_entry_logname(entry));
 
 cleanup:
 	if (result == ISC_R_NOTFOUND)
