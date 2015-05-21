@@ -219,6 +219,14 @@ attributeTypes: ( 1.3.6.1.4.1.2428.20.1.32769
  EQUALITY caseIgnoreIA5Match 
  SUBSTR caseIgnoreIA5SubstringsMatch )
 #
+# See https://fedorahosted.org/bind-dyndb-ldap/wiki/Design/UnknownRecord
+attributeTypes: ( 1.3.6.1.4.1.2428.20.4 
+ NAME 'UnknownRecord' 
+ DESC 'unknown DNS record, RFC 3597' 
+ SYNTAX 1.3.6.1.4.1.1466.115.121.1.26 
+ EQUALITY caseIgnoreIA5Match 
+ SUBSTR caseIgnoreIA5SubstringsMatch )
+#
 attributeTypes: ( 2.16.840.1.113730.3.8.5.0 
  NAME 'idnsName' 
  DESC 'DNS FQDN' 
@@ -354,7 +362,7 @@ objectClasses: ( 2.16.840.1.113730.3.8.6.0
        SRVRecord $ TXTRecord $ MXRecord $ MDRecord $ HINFORecord $ 
        MINFORecord $ AFSDBRecord $ LOCRecord $ 
        NXTRecord $ NAPTRRecord $ KXRecord $ CERTRecord $ DNAMERecord $ 
-       DSRecord $ SSHFPRecord $ DLVRecord $ TLSARecord 
+       DSRecord $ SSHFPRecord $ DLVRecord $ TLSARecord $ UnknownRecord
      ) )
 #
 objectClasses: ( 2.16.840.1.113730.3.8.6.1 
