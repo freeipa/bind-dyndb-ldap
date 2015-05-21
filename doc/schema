@@ -23,11 +23,51 @@
 # to get them added of this schema.
 #
 # The basic record types like A, CNAME etc are defined in the cosine
-# schema and not in this schema.  This means that your LDAP server
-# must use both the cosine schema and this one to get all the DNS
-# attributes defined.
+# schema and not by UNINETT or FreeIPA.  This means that your LDAP server
+# should use the old COSINE schema (RFC 1274) plus this one to get
+# all the DNS attributes defined.
+#
+# Alternativelly you can use included excerpt from COSINE schema to get all
+# the missing attributes.
 #
 dn: cn=schema
+# COSINE schema
+# comment out if your server has COSINE schema installed
+attributeTypes: ( 0.9.2342.19200300.100.1.26 
+ NAME 'aRecord' 
+ EQUALITY caseIgnoreIA5Match 
+ SYNTAX 1.3.6.1.4.1.1466.115.121.1.26 )
+#
+attributeTypes: ( 0.9.2342.19200300.100.1.27 
+ NAME 'mDRecord' 
+ EQUALITY caseIgnoreIA5Match 
+ SYNTAX 1.3.6.1.4.1.1466.115.121.1.26 )
+#
+attributeTypes: ( 0.9.2342.19200300.100.1.28 
+ NAME 'mXRecord' 
+ EQUALITY caseIgnoreIA5Match 
+ SYNTAX 1.3.6.1.4.1.1466.115.121.1.26 )
+#
+attributeTypes: ( 0.9.2342.19200300.100.1.29 
+ NAME 'nSRecord' 
+ EQUALITY caseIgnoreIA5Match 
+ SYNTAX 1.3.6.1.4.1.1466.115.121.1.26 )
+# CNAME record was originally defined as multi-value
+# but we redefined it as single-value to conform with RFC 2136, section 1.1.5.
+attributeTypes: ( 0.9.2342.19200300.100.1.31 
+ NAME 'cNAMERecord' 
+ EQUALITY caseIgnoreIA5Match 
+ SYNTAX 1.3.6.1.4.1.1466.115.121.1.26 
+ SINGLE-VALUE )
+#
+attributetypes: ( 1.3.6.1.4.1.2428.20.0.0 
+ NAME 'dNSTTL' 
+ DESC 'An integer denoting time to live' 
+ EQUALITY integerMatch 
+ SYNTAX 1.3.6.1.4.1.1466.115.121.1.27 ) 
+#
+#
+# UNINETT and FreeIPA attributes
 # dnsClass attribute is in fact unsupported by bind-dyndb-ldap
 attributetypes: ( 1.3.6.1.4.1.2428.20.0.1 
  NAME 'dNSClass' 
