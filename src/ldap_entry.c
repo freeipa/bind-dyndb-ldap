@@ -117,7 +117,7 @@ cleanup:
 
 /**
  * Allocate and initialize empty ldap_entry_t. The new entry will not contain
- * any data, it needs to be filled by ldap_entry_create.
+ * any data, it needs to be filled by ldap_entry_parse or ldap_entry_reconstruct.
  */
 isc_result_t
 ldap_entry_init(isc_mem_t *mctx, ldap_entry_t **entryp) {
