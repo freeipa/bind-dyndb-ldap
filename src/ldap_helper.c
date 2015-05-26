@@ -4588,6 +4588,7 @@ ldap_syncrepl_watcher(isc_threadarg_t arg)
 			sane_sleep(inst, 1);
 			continue;
 		}
+		mldap_cur_generation_bump(inst->mldapdb);
 
 		log_info("LDAP instance '%s' is being synchronized, "
 			 "please ignore message 'all zones loaded'",
