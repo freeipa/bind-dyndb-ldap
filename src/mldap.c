@@ -18,6 +18,7 @@
 #include <dns/enumclass.h>
 #include <dns/name.h>
 #include <dns/types.h>
+#include <dns/update.h>
 
 #include "ldap_entry.h"
 #include "metadb.h"
@@ -60,7 +61,7 @@ mldap_new(isc_mem_t *mctx, mldapdb_t **mldapp) {
 	isc_mem_attach(mctx, &mldap->mctx);
 
 	CHECK(metadb_new(mctx, &mldap->mdb));
-	mldap->generation = 0;
+	mldap->generation = 1;
 
 	*mldapp = mldap;
 	return result;
@@ -96,6 +97,34 @@ mldap_newversion(mldapdb_t *mldap) {
 void
 mldap_closeversion(mldapdb_t *mldap, isc_boolean_t commit) {
 	return metadb_closeversion(mldap->mdb, commit);
+}
+
+/**
+ * Atomically increment MetaLDAP generation number.
+ */
+void mldap_cur_generation_bump(mldapdb_t *mldap) {
+	isc_uint32_t oldgen;
+	isc_uint32_t curgen;
+	isc_uint32_t newgen;
+
+	REQUIRE(mldap != NULL);
+
+	curgen = isc_atomic_cmpxchg((isc_int32_t *)&mldap->generation, 0, 0);
+	do {
+		oldgen = curgen;
+		newgen = dns_update_soaserial(oldgen, dns_updatemethod_increment);
+		curgen = isc_atomic_cmpxchg((isc_int32_t *)&mldap->generation, oldgen, newgen);
+	} while (curgen != oldgen);
+}
+
+/**
+ * Get current MetaLDAP generation number.
+ *
+ * Generation numbers have to be compared using isc_serial_* functions.
+ */
+isc_uint32_t
+mldap_cur_generation_get(mldapdb_t *mldap) {
+	return isc_atomic_cmpxchg((isc_int32_t *)&mldap->generation, 0, 0);
 }
 
 /**
@@ -191,12 +220,17 @@ mldap_generation_store(mldapdb_t *mldap, metadb_node_t *node) {
 	unsigned char buff[sizeof(mldap->generation)];
 	isc_region_t region = { .base = buff, .length = sizeof(buff) };
 	dns_rdata_t rdata;
+	isc_uint32_t generation;
+
+	STATIC_ASSERT((sizeof(((mldapdb_t *)0)->generation) == sizeof(generation)), \
+		       "mldapdb_t->generation and local generation size does not match");
 
 	dns_rdata_init(&rdata);
 
 	/* Bytes should be in network-order but we do not care because:
 	 * 1) It is used only internally and always compared on this machine. */
-	memcpy(buff, &mldap->generation, sizeof(mldap->generation));
+	generation = mldap_cur_generation_get(mldap);
+	memcpy(buff, &generation, sizeof(generation));
 	dns_rdata_fromregion(&rdata, dns_rdataclass_in, dns_rdatatype_a, &region);
 	CHECK(metadb_rdata_store(&rdata, node));
 
