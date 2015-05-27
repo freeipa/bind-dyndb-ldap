@@ -13,8 +13,10 @@
 #include <isc/net.h>
 #include <isc/result.h>
 #include <isc/util.h>
+#include <isc/serial.h>
 
 #include <dns/db.h>
+#include <dns/dbiterator.h>
 #include <dns/enumclass.h>
 #include <dns/name.h>
 #include <dns/types.h>
@@ -87,7 +89,6 @@ mldap_destroy(mldapdb_t **mldapp) {
 
 	*mldapp = NULL;
 }
-
 
 isc_result_t
 mldap_newversion(mldapdb_t *mldap) {
@@ -238,6 +239,29 @@ cleanup:
 	return result;
 }
 
+static isc_result_t
+mldap_generation_get(metadb_node_t *node, isc_uint32_t *generationp) {
+	isc_result_t result;
+	dns_rdataset_t rdataset;
+	dns_rdata_t rdata;
+	isc_region_t region;
+
+	REQUIRE(generationp != NULL);
+
+	dns_rdata_init(&rdata);
+	dns_rdataset_init(&rdataset);
+
+	CHECK(metadb_rdataset_get(node, dns_rdatatype_a, &rdataset));
+	dns_rdataset_current(&rdataset, &rdata);
+	dns_rdata_toregion(&rdata, &region);
+	memcpy(generationp, region.base, sizeof(*generationp));
+
+cleanup:
+	if (dns_rdataset_isassociated(&rdataset))
+		dns_rdataset_disassociate(&rdataset);
+	return result;
+}
+
 /**
  * FQDN and zone name are stored inside RP record type
  */
@@ -361,5 +385,144 @@ mldap_entry_delete(mldapdb_t *mldap, struct berval *uuid) {
 	CHECK(metadb_node_delete(&node));
 
 cleanup:
+	return result;
+}
+
+/**
+ * Start iteration over UUID's of dead nodes stored in uuid.ldap. sub-tree
+ * of metaLDAP.
+ *
+ * Dead node is a node with generation number lower than global generation
+ * number in in metaLDAP.
+ *
+ * @param[in]  mldap
+ * @param[out] iterp
+ * @param[out] uuid  Pre-allocated struct berval of size == 16 bytes.
+ *                   LDAP entry UUID of the first dead node will be filled in.
+ *
+ * @retval ISC_R_SUCCESS LDAP entry UUID of the first dead node in database
+ *                       is in uuid variable. Resulting iterp can be used for
+ *                       subsequent mldap_iter_deadnodes_next() calls.
+ * @retval ISC_R_NOMORE  There is no dead node in metaLDAP.
+ *                       Iterp and uuid are invalid.
+ * @retval other         Various errors.
+ *
+ * @warning MetaLDAP generation number cannot change during iteration.
+ *          This is safety check to prevent hard-to-debug inconsistencies.
+ */
+isc_result_t
+mldap_iter_deadnodes_start(mldapdb_t *mldap, metadb_iter_t **iterp,
+			   struct berval *uuid) {
+	isc_result_t result;
+	metadb_iter_t *iter = NULL;
+
+	REQUIRE(iterp != NULL && *iterp == NULL);
+
+	CHECK(metadb_iterator_create(mldap->mdb, &iter));
+	CHECKED_MEM_GET(mldap->mctx, iter->state, sizeof(isc_uint32_t));
+	result = dns_dbiterator_seek(iter->iter, &uuid_rootname);
+	if (result == ISC_R_NOTFOUND) /* metaLDAP is empty */
+		CLEANUP_WITH(ISC_R_NOMORE);
+	else if (result != ISC_R_SUCCESS)
+		goto cleanup;
+	/* store current generation value for sanity checking */
+	*(isc_uint32_t *)iter->state = mldap_cur_generation_get(mldap);
+
+	CHECK(mldap_iter_deadnodes_next(mldap, &iter, uuid));
+
+	*iterp = iter;
+	return result;
+
+cleanup:
+	if (iter != NULL) {
+		SAFE_MEM_PUT(mldap->mctx, iter->state, sizeof(isc_uint32_t));
+		iter->state = NULL;
+		metadb_iterator_destroy(&iter);
+	}
+
+	return result;
+}
+
+/**
+ * Continue iteration over UUID's of dead nodes stored in uuid.ldap. sub-tree
+ * of metaLDAP.
+ *
+ * @param[in]     mldap
+ * @param[in,out] iterp
+ * @param[out]    uuid  Pre-allocated struct berval of size == 16 bytes.
+ *                      LDAP entry UUID of the next dead node will be filled in.
+ *
+ * @retval ISC_R_SUCCESS LDAP entry UUID of the next dead node in database
+ *                       is in uuid variable. Resulting iterp can be used for
+ *                       subsequent mldap_iter_deadnodes_next() calls.
+ * @retval ISC_R_NOMORE  End of iteration. Iterp and uuid are no longer valid.
+ * @retval other         Various errors.
+ *
+ * @warning MetaLDAP generation number cannot change during iteration.
+ *          This is safety check to prevent hard-to-debug inconsistencies.
+ */
+isc_result_t
+mldap_iter_deadnodes_next(mldapdb_t *mldap, metadb_iter_t **iterp,
+		   struct berval *uuid) {
+	isc_result_t result;
+	dns_dbnode_t *rbt_node = NULL;
+	metadb_iter_t *iter = NULL;
+	isc_uint32_t node_generation;
+	isc_uint32_t cur_generation;
+	metadb_node_t metadb_node;
+	DECLARE_BUFFERED_NAME(name);
+	isc_region_t name_region;
+
+	REQUIRE(uuid != NULL);
+	REQUIRE(uuid->bv_len == 16 && uuid->bv_val != NULL);
+
+	INIT_BUFFERED_NAME(name);
+	iter = *iterp;
+
+	/* create fake metaDB node for use with metaDB interface */
+	metadb_node.mctx = iter->mctx;
+	metadb_node.version = iter->version;
+	metadb_node.rbtdb = iter->rbtdb;
+
+	/* skip nodes which do not belong to UUID sub-tree or are 'fresh' */
+	while (ISC_TRUE) {
+		if (rbt_node != NULL)
+			dns_db_detachnode(iter->rbtdb, &rbt_node);
+		dns_name_reset(&name);
+
+		CHECK(dns_dbiterator_next(iter->iter));
+		CHECK(dns_dbiterator_current(iter->iter, &rbt_node, &name));
+		if (dns_name_issubdomain(&name, &uuid_rootname) == ISC_FALSE)
+			continue;
+		metadb_node.dbnode = rbt_node;
+
+		INSIST(mldap_generation_get(&metadb_node, &node_generation)
+		       == ISC_R_SUCCESS);
+		cur_generation = mldap_cur_generation_get(mldap);
+		/* sanity check: generation number cannot change during iteration */
+		INSIST(*(isc_uint32_t *)(*iterp)->state == cur_generation);
+
+		if (isc_serial_lt(node_generation, cur_generation))
+			break; /* this node is from previous mLDAP generation */
+	}
+	DNS_NAME_TOREGION(&name, &name_region);
+	/* parse UUID from DNS name
+	 * "$e4113e03-03b4-11e5-b478-c78116fa7f8b\004uuid\004ldap"
+	 * - first byte of any label is length
+	 * - names derived from UUID has to have constant length */
+	INSIST(name_region.length == 37 + sizeof(uuid_rootname_ndata));
+	INSIST(name_region.base[0] == 36);
+	name_region.base[37] = '\0';
+	INSIST(uuid_parse((const char *)name_region.base + 1,
+			  *(uuid_t *)(uuid->bv_val)) == 0);
+
+cleanup:
+	if (rbt_node != NULL)
+		dns_db_detachnode(iter->rbtdb, &rbt_node);
+	if (result != ISC_R_SUCCESS) {
+		SAFE_MEM_PUT(iter->mctx, iter->state, sizeof(isc_uint32_t));
+		iter->state = NULL;
+		metadb_iterator_destroy(iterp);
+	}
 	return result;
 }

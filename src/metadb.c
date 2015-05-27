@@ -8,6 +8,7 @@
 #include <isc/util.h>
 
 #include <dns/db.h>
+#include <dns/dbiterator.h>
 #include <dns/rdatalist.h>
 #include <dns/rdatasetiter.h>
 
@@ -119,6 +120,60 @@ void
 metadb_closeversion(metadb_t *mdb, isc_boolean_t commit) {
 	UNLOCK(&mdb->newversion_lock);
 	dns_db_closeversion(mdb->rbtdb, &mdb->newversion, commit);
+}
+
+void
+metadb_iterator_destroy(metadb_iter_t **miterp) {
+	metadb_iter_t *miter = NULL;
+
+	REQUIRE(miterp != NULL && *miterp != NULL);
+	miter = *miterp;
+	/* user has to deallocate state before calling destroy() */
+	INSIST(miter->state == NULL);
+
+	if (miter == NULL)
+		return;
+
+	if (miter->iter != NULL)
+		dns_dbiterator_destroy(&miter->iter);
+
+	if (miter->rbtdb != NULL) {
+		if (miter->version != NULL)
+			dns_db_closeversion(miter->rbtdb,
+					    &miter->version,
+					    ISC_FALSE);
+		dns_db_detach(&miter->rbtdb);
+	}
+
+	MEM_PUT_AND_DETACH(miter);
+	*miterp = NULL;
+}
+
+/**
+ * Create an iterator for current read-only version of metaDB.
+ */
+isc_result_t
+metadb_iterator_create(metadb_t *mdb, metadb_iter_t **miterp) {
+	isc_result_t result;
+	metadb_iter_t *miter = NULL;
+
+	REQUIRE(mdb != NULL);
+	REQUIRE(miterp != NULL && *miterp == NULL);
+
+	CHECKED_MEM_GET_PTR(mdb->mctx, miter);
+	ZERO_PTR(miter);
+
+	isc_mem_attach(mdb->mctx, &miter->mctx);
+	dns_db_attach(mdb->rbtdb, &miter->rbtdb);
+	dns_db_currentversion(miter->rbtdb, &miter->version);
+	CHECK(dns_db_createiterator(mdb->rbtdb, 0, &miter->iter));
+
+	*miterp = miter;
+	return ISC_R_SUCCESS;
+
+cleanup:
+	metadb_iterator_destroy(&miter);
+	return result;
 }
 
 /**

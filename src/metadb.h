@@ -22,7 +22,21 @@ struct metadb_node {
 	dns_dbnode_t			*dbnode;
 };
 
+/**
+ * All-in-one structure for metaDB iteration. This structure can be directly
+ * used by metaDB users. Member state can be used to store arbitrary data
+ * for the user. User is responsible for 'state' allocation and deallocation.
+ */
+struct metadb_iter {
+	isc_mem_t			*mctx;
+	dns_db_t			*rbtdb;
+	dns_dbversion_t			*version;
+	dns_dbiterator_t		*iter;
+	void				*state;
+};
+
 typedef struct metadb_node metadb_node_t;
+typedef struct metadb_iter metadb_iter_t;
 typedef struct metadb metadb_t;
 
 isc_result_t
@@ -36,6 +50,12 @@ metadb_newversion(metadb_t *mdb);
 
 void ATTR_NONNULLS
 metadb_closeversion(metadb_t *mdb, isc_boolean_t commit);
+
+isc_result_t ATTR_CHECKRESULT ATTR_NONNULLS
+metadb_iterator_create(metadb_t *mdb, metadb_iter_t **miterp);
+
+void ATTR_NONNULLS
+metadb_iterator_destroy(metadb_iter_t **miterp);
 
 isc_result_t ATTR_CHECKRESULT ATTR_NONNULLS
 metadb_readnode_open(metadb_t *mdb, dns_name_t *mname, metadb_node_t **nodep);

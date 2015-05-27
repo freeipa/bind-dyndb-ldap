@@ -48,4 +48,12 @@ mldap_cur_generation_bump(mldapdb_t *mldap);
 isc_uint32_t ATTR_CHECKRESULT ATTR_NONNULLS
 mldap_cur_generation_get(mldapdb_t *mldap);
 
+isc_result_t ATTR_CHECKRESULT ATTR_NONNULLS
+mldap_iter_deadnodes_start(mldapdb_t *mldap, metadb_iter_t **iterp,
+			   struct berval *uuid);
+
+isc_result_t ATTR_CHECKRESULT ATTR_NONNULLS
+mldap_iter_deadnodes_next(mldapdb_t *mldap, metadb_iter_t **iterp,
+		   struct berval *uuid);
+
 #endif /* SRC_MLDAP_H_ */
