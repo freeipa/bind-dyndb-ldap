@@ -4420,21 +4420,41 @@ int ldap_sync_intermediate (
 
 	isc_result_t	result;
 	ldap_instance_t *inst = ls->ls_private;
+	metadb_iter_t *mldap_iter = NULL;
+	char entryUUID_buf[16];
+	struct berval entryUUID = { .bv_len = sizeof(entryUUID_buf),
+				    .bv_val = entryUUID_buf };
 
 	UNUSED(msg);
 	UNUSED(syncUUIDs);
-	UNUSED(phase);
 
 	if (inst->exiting)
-		return LDAP_SUCCESS;
+		goto cleanup;
 
-	if (phase == LDAP_SYNC_CAPI_DONE) {
-		log_debug(1, "ldap_sync_intermediate RECEIVED");
-		result = sync_barrier_wait(inst->sctx, inst->db_name);
-		if (result != ISC_R_SUCCESS)
-			log_error_r("sync_barrier_wait() failed for instance '%s'",
-				    inst->db_name);
+	log_debug(1, "ldap_sync_intermediate 0x%x", phase);
+	if (phase != LDAP_SYNC_CAPI_DONE)
+		goto cleanup;
+
+	result = sync_barrier_wait(inst->sctx, inst->db_name);
+	if (result != ISC_R_SUCCESS) {
+		log_error_r("sync_barrier_wait() failed for instance '%s'",
+			    inst->db_name);
+		goto cleanup;
 	}
+
+	for (result = mldap_iter_deadnodes_start(inst->mldapdb, &mldap_iter,
+						 &entryUUID);
+	     result == ISC_R_SUCCESS;
+	     result = mldap_iter_deadnodes_next(inst->mldapdb, &mldap_iter,
+					        &entryUUID)) {
+		ldap_sync_search_entry(ls, NULL, &entryUUID,
+				       LDAP_SYNC_CAPI_DELETE);
+
+	}
+	if (result != ISC_R_SUCCESS && result != ISC_R_NOMORE)
+		log_error_r("mldap_iter_deadnodes_* failed, run rndc reload");
+
+cleanup:
 	return LDAP_SUCCESS;
 }
 
