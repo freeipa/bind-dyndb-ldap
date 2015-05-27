@@ -4424,6 +4424,7 @@ int ldap_sync_intermediate (
 	char entryUUID_buf[16];
 	struct berval entryUUID = { .bv_len = sizeof(entryUUID_buf),
 				    .bv_val = entryUUID_buf };
+	sync_state_t state;
 
 	UNUSED(msg);
 	UNUSED(syncUUIDs);
@@ -4435,11 +4436,14 @@ int ldap_sync_intermediate (
 	if (phase != LDAP_SYNC_CAPI_DONE)
 		goto cleanup;
 
-	result = sync_barrier_wait(inst->sctx, inst->db_name);
-	if (result != ISC_R_SUCCESS) {
-		log_error_r("sync_barrier_wait() failed for instance '%s'",
-			    inst->db_name);
-		goto cleanup;
+	sync_state_get(inst->sctx, &state);
+	if (state == sync_init) {
+		result = sync_barrier_wait(inst->sctx, inst->db_name);
+		if (result != ISC_R_SUCCESS) {
+			log_error_r("sync_barrier_wait() failed for instance "
+				    "'%s'", inst->db_name);
+			goto cleanup;
+		}
 	}
 
 	for (result = mldap_iter_deadnodes_start(inst->mldapdb, &mldap_iter,
@@ -4503,8 +4507,6 @@ ldap_sync_prepare(ldap_instance_t *inst, settings_set_t *settings,
 
 	REQUIRE(inst != NULL);
 	REQUIRE(ldap_syncp != NULL && *ldap_syncp == NULL);
-
-	sync_state_change(inst->sctx, sync_init, ISC_TRUE);
 
 	/* Remove stale zone & journal files. */
 	CHECK(cleanup_files(inst));

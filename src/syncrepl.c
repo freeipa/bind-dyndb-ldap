@@ -344,11 +344,9 @@ sync_state_change(sync_ctx_t *sctx, sync_state_t new_state, isc_boolean_t lock) 
 
 	switch (sctx->state) {
 	case sync_init:
-		/* reconnect before ldap_sync_intermediate() call */
-		INSIST(new_state == sync_init
 		/* refresh phase is finished
 		 * and ldap_sync_intermediate() was called */
-		       || new_state == sync_barrier);
+		INSIST(new_state == sync_barrier);
 		break;
 
 	case sync_barrier:
@@ -357,12 +355,10 @@ sync_state_change(sync_ctx_t *sctx, sync_state_t new_state, isc_boolean_t lock) 
 		break;
 
 	case sync_finished:
-		/* reconnect */
-		INSIST(new_state == sync_init);
-		break;
-
+		/* state finished cannot be taken back, ever */
 	default:
-		fatal_error("undefined state 0x%x", sctx->state);
+		fatal_error("invalid synchronization state change %u -> %u",
+			    sctx->state, new_state);
 	}
 
 	sctx->state = new_state;
