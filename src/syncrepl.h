@@ -36,7 +36,7 @@ void
 sync_state_get(sync_ctx_t *sctx, sync_state_t *statep) ATTR_NONNULLS;
 
 void
-sync_state_reset(sync_ctx_t *sctx) ATTR_NONNULLS;
+sync_state_change(sync_ctx_t *sctx, sync_state_t new_state, isc_boolean_t lock) ATTR_NONNULLS;
 
 isc_result_t
 sync_task_add(sync_ctx_t *sctx, isc_task_t *task) ATTR_NONNULLS ATTR_CHECKRESULT;

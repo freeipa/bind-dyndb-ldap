@@ -4504,7 +4504,7 @@ ldap_sync_prepare(ldap_instance_t *inst, settings_set_t *settings,
 	REQUIRE(inst != NULL);
 	REQUIRE(ldap_syncp != NULL && *ldap_syncp == NULL);
 
-	sync_state_reset(inst->sctx);
+	sync_state_change(inst->sctx, sync_init, ISC_TRUE);
 
 	/* Remove stale zone & journal files. */
 	CHECK(cleanup_files(inst));

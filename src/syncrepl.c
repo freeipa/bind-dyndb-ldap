@@ -119,8 +119,7 @@ finish(isc_task_t *task, isc_event_t *event) {
 	CHECK(manager_get_ldap_instance(bev->dbname, &inst));
 	log_debug(1, "sync_barrier_wait(): finish reached");
 	LOCK(&bev->sctx->mutex);
-	REQUIRE(bev->sctx->state == sync_barrier);
-	bev->sctx->state = sync_finished;
+	sync_state_change(bev->sctx, sync_finished, ISC_FALSE);
 	isc_condition_broadcast(&bev->sctx->cond);
 	UNLOCK(&bev->sctx->mutex);
 	activate_zones(task, inst);
@@ -326,13 +325,49 @@ sync_state_get(sync_ctx_t *sctx, sync_state_t *statep) {
 	UNLOCK(&sctx->mutex);
 }
 
+/**
+ * Change state of synchronization finite state machine.
+ *
+ * @param[in] lock Request to lock sctx. This is a workaround for missing
+ *                 support recursive mutexes in ISC mutex API.
+ *
+ * @warning Caller has to ensure that sctx is properly locked either externally
+ *          or by lock = ISC_TRUE parameter. Attempt to lock sctx recursively
+ *          will lead to deadlock.
+ */
 void
-sync_state_reset(sync_ctx_t *sctx) {
+sync_state_change(sync_ctx_t *sctx, sync_state_t new_state, isc_boolean_t lock) {
 	REQUIRE(sctx != NULL);
 
-	LOCK(&sctx->mutex);
-	sctx->state = sync_init;
-	UNLOCK(&sctx->mutex);
+	if (lock == ISC_TRUE)
+		LOCK(&sctx->mutex);
+
+	switch (sctx->state) {
+	case sync_init:
+		/* reconnect before ldap_sync_intermediate() call */
+		INSIST(new_state == sync_init
+		/* refresh phase is finished
+		 * and ldap_sync_intermediate() was called */
+		       || new_state == sync_barrier);
+		break;
+
+	case sync_barrier:
+		/* sync_barrier_wait() finished */
+		INSIST(new_state == sync_finished);
+		break;
+
+	case sync_finished:
+		/* reconnect */
+		INSIST(new_state == sync_init);
+		break;
+
+	default:
+		fatal_error("undefined state 0x%x", sctx->state);
+	}
+
+	sctx->state = new_state;
+	if (lock == ISC_TRUE)
+		UNLOCK(&sctx->mutex);
 }
 
 /**
@@ -348,7 +383,6 @@ sync_task_add(sync_ctx_t *sctx, isc_task_t *task) {
 	task_element_t *newel = NULL;
 
 	REQUIRE(sctx != NULL);
-	REQUIRE(sctx->state == sync_init);
 	REQUIRE(ISCAPI_TASK_VALID(task));
 
 	CHECKED_MEM_GET_PTR(sctx->mctx, newel);
@@ -358,6 +392,7 @@ sync_task_add(sync_ctx_t *sctx, isc_task_t *task) {
 	isc_task_attach(task, &newel->task);
 
 	LOCK(&sctx->mutex);
+	REQUIRE(sctx->state == sync_init);
 	ISC_LIST_APPEND(sctx->tasks, newel, link);
 	isc_refcount_increment0(&sctx->task_cnt, &cnt);
 	UNLOCK(&sctx->mutex);
@@ -390,13 +425,9 @@ sync_barrier_wait(sync_ctx_t *sctx, const char *inst_name) {
 
 	LOCK(&sctx->mutex);
 	REQUIRE(sctx->state == sync_init);
-	if (EMPTY(sctx->tasks)) {
-		log_bug("sync_barrier_wait(): called with empty task list");
-		sctx->state = sync_finished;
-		CLEANUP_WITH(ISC_R_SUCCESS);
-	}
+	REQUIRE(!EMPTY(sctx->tasks));
 
-	sctx->state = sync_barrier;
+	sync_state_change(sctx, sync_barrier, ISC_FALSE);
 	for (taskel = next_taskel = HEAD(sctx->tasks);
 	     taskel != NULL;
 	     taskel = next_taskel) {
