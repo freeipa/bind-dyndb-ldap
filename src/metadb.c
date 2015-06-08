@@ -126,13 +126,13 @@ void
 metadb_iterator_destroy(metadb_iter_t **miterp) {
 	metadb_iter_t *miter = NULL;
 
-	REQUIRE(miterp != NULL && *miterp != NULL);
+	REQUIRE(miterp != NULL);
 	miter = *miterp;
-	/* user has to deallocate state before calling destroy() */
-	INSIST(miter->state == NULL);
-
 	if (miter == NULL)
 		return;
+
+	/* user has to deallocate state before calling destroy() */
+	INSIST(miter->state == NULL);
 
 	if (miter->iter != NULL)
 		dns_dbiterator_destroy(&miter->iter);
