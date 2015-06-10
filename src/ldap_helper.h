@@ -90,4 +90,10 @@ isc_boolean_t ldap_instance_isexiting(ldap_instance_t *ldap_inst) ATTR_NONNULLS 
 
 void ldap_instance_taint(ldap_instance_t *ldap_inst) ATTR_NONNULLS;
 
+unsigned int
+ldap_instance_untaint_start(ldap_instance_t *ldap_inst);
+
+isc_result_t
+ldap_instance_untaint_finish(ldap_instance_t *ldap_inst, unsigned int count);
+
 #endif /* !_LD_LDAP_HELPER_H_ */

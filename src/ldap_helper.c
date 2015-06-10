@@ -24,7 +24,6 @@
 #include <dns/soa.h>
 #include <dns/update.h>
 
-#include <isc/atomic.h>
 #include <isc/buffer.h>
 #include <isc/dir.h>
 #include <isc/mem.h>
@@ -37,6 +36,7 @@
 #include <isc/util.h>
 #include <isc/netaddr.h>
 #include <isc/parseint.h>
+#include <isc/refcount.h>
 #include <isc/timer.h>
 #include <isc/serial.h>
 #include <isc/string.h>
@@ -159,10 +159,8 @@ struct ldap_instance {
 	isc_task_t		*task;
 	isc_thread_t		watcher;
 	isc_boolean_t		exiting;
-	/* Non-zero if this instance 'tainted' by a unrecoverable problem.
-	 * It should be accessed using isc_atomic_*() because it might be
-	 * modified from multiple threads. */
-	isc_int32_t		tainted;
+	/* Non-zero if this instance is 'tainted' by an unrecoverable problem. */
+	isc_refcount_t		errors;
 
 	/* Settings. */
 	settings_set_t		*local_settings;
@@ -517,6 +515,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 
 	CHECKED_MEM_GET_PTR(mctx, ldap_inst);
 	ZERO_PTR(ldap_inst);
+	CHECK(isc_refcount_init(&ldap_inst->errors, 0));
 	isc_mem_attach(mctx, &ldap_inst->mctx);
 
 	ldap_inst->db_name = db_name;
@@ -663,6 +662,10 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	settings_set_free(&ldap_inst->local_settings);
 
 	sync_ctx_free(&ldap_inst->sctx);
+	/* zero out error counter (and do nothing other than that) */
+	ldap_instance_untaint_finish(ldap_inst,
+				     ldap_instance_untaint_start(ldap_inst));
+	isc_refcount_destroy(&ldap_inst->errors);
 
 	MEM_PUT_AND_DETACH(ldap_inst);
 
@@ -4684,10 +4687,42 @@ ldap_instance_isexiting(ldap_instance_t *ldap_inst)
  * (if it is even possible). */
 void
 ldap_instance_taint(ldap_instance_t *ldap_inst) {
-	isc_atomic_store(&ldap_inst->tainted, 1);
+	isc_refcount_increment0(&ldap_inst->errors, NULL);
 }
 
 isc_boolean_t
 ldap_instance_istained(ldap_instance_t *ldap_inst) {
-	return ISC_TF(isc_atomic_cmpxchg(&ldap_inst->tainted, 0, 0) != 0);
+	return ISC_TF(isc_refcount_current(&ldap_inst->errors) != 0);
+}
+
+/**
+ * Get number of errors from LDAP instance. This function should be called
+ * before re-synchronization with LDAP is started.
+ * When the re-synchronization is finished, the result of this function
+ * has to be passed to ldap_instance_untaint_finish() to detect if any other
+ * error occurred during the re-synchronization.
+ */
+unsigned int
+ldap_instance_untaint_start(ldap_instance_t *ldap_inst) {
+	return isc_refcount_current(&ldap_inst->errors);
+}
+
+/**
+ * @retval DNS_R_CONTINUE An error occurred during re-synchronization,
+ *                        it is necessary to start again.
+ * @retval ISC_R_SUCCESS  Number of errors at the beginning and the end of
+ *                        re-sychronization matches so no new errors occurred
+ *                        during re-synchronization.
+ */
+isc_result_t
+ldap_instance_untaint_finish(ldap_instance_t *ldap_inst, unsigned int count) {
+	unsigned int remaining = 0;
+	while (count > 0) {
+		isc_refcount_decrement(&ldap_inst->errors, &remaining);
+		count--;
+	}
+	if (remaining != 0)
+		return DNS_R_CONTINUE;
+	else
+		return ISC_R_SUCCESS;
 }
