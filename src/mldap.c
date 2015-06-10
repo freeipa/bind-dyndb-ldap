@@ -11,6 +11,7 @@
 
 #include <isc/boolean.h>
 #include <isc/net.h>
+#include <isc/refcount.h>
 #include <isc/result.h>
 #include <isc/util.h>
 #include <isc/serial.h>
@@ -47,7 +48,7 @@ static dns_name_t uuid_rootname =
 struct mldapdb {
 	isc_mem_t	*mctx;
 	metadb_t	*mdb;
-	isc_uint32_t	generation;
+	isc_refcount_t	generation;
 };
 
 
@@ -62,8 +63,8 @@ mldap_new(isc_mem_t *mctx, mldapdb_t **mldapp) {
 	ZERO_PTR(mldap);
 	isc_mem_attach(mctx, &mldap->mctx);
 
+	CHECK(isc_refcount_init(&mldap->generation, 0));
 	CHECK(metadb_new(mctx, &mldap->mdb));
-	mldap->generation = 1;
 
 	*mldapp = mldap;
 	return result;
@@ -104,19 +105,30 @@ mldap_closeversion(mldapdb_t *mldap, isc_boolean_t commit) {
  * Atomically increment MetaLDAP generation number.
  */
 void mldap_cur_generation_bump(mldapdb_t *mldap) {
-	isc_uint32_t oldgen;
-	isc_uint32_t curgen;
-	isc_uint32_t newgen;
-
 	REQUIRE(mldap != NULL);
 
-	curgen = isc_atomic_cmpxchg((isc_int32_t *)&mldap->generation, 0, 0);
-	do {
-		oldgen = curgen;
-		newgen = dns_update_soaserial(oldgen, dns_updatemethod_increment);
-		curgen = isc_atomic_cmpxchg((isc_int32_t *)&mldap->generation, oldgen, newgen);
-	} while (curgen != oldgen);
+	isc_refcount_increment0(&mldap->generation, NULL);
 }
+
+/*
+ * Verify that isc_refcount_t can be casted properly to isc_uint32_t
+ * so isc_serial_* functions can be safely used for comparison.
+ *
+ * The spell 'typeof(isc_refcount_current((isc_refcount_t *)0))' walks through
+ * isc_refcount_t abstractions and returns underlying type used for storing the
+ * reference counter value.
+ */
+STATIC_ASSERT((isc_uint32_t)
+		(typeof(isc_refcount_current((isc_refcount_t *)0)))
+		-1
+	      == 0xFFFFFFFF, \
+	      "negative isc_refcount_t cannot be properly shortened to 32 bits");
+
+STATIC_ASSERT((isc_uint32_t)
+		(typeof(isc_refcount_current((isc_refcount_t *)0)))
+		0x90ABCDEF12345678
+	      == 0x12345678, \
+	      "positive isc_refcount_t cannot be properly shortened to 32 bits");
 
 /**
  * Get current MetaLDAP generation number.
@@ -125,7 +137,7 @@ void mldap_cur_generation_bump(mldapdb_t *mldap) {
  */
 isc_uint32_t
 mldap_cur_generation_get(mldapdb_t *mldap) {
-	return isc_atomic_cmpxchg((isc_int32_t *)&mldap->generation, 0, 0);
+	return (isc_uint32_t)isc_refcount_current(&mldap->generation);
 }
 
 /**
@@ -209,9 +221,6 @@ cleanup:
 	return result;
 }
 
-
-STATIC_ASSERT((sizeof(((mldapdb_t *)0)->generation) == sizeof(struct in_addr)), \
-		"mldapdb_t->generation is too big for A rdata type");
 /**
  * mldapdb_t->generation is stored inside A record type
  */
@@ -223,8 +232,10 @@ mldap_generation_store(mldapdb_t *mldap, metadb_node_t *node) {
 	dns_rdata_t rdata;
 	isc_uint32_t generation;
 
-	STATIC_ASSERT((sizeof(((mldapdb_t *)0)->generation) == sizeof(generation)), \
-		       "mldapdb_t->generation and local generation size does not match");
+	STATIC_ASSERT(sizeof(mldap_cur_generation_get(mldap)) == sizeof(struct in_addr), \
+		      "mldapdb_t->generation value is too big for A rdata type");
+	STATIC_ASSERT(sizeof(mldap_cur_generation_get(mldap)) == sizeof(generation), \
+		      "mldapdb_t->generation and local generation sizes do not match");
 
 	dns_rdata_init(&rdata);
 
