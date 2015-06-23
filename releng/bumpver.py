@@ -78,7 +78,7 @@ file_version.minor = new_version.minor
 # commit version bump
 log.debug('Add modified files to git index')
 log.info(check_output(['git', 'add'] + file_version.files))
-log.info(check_output(['git', 'commit', '-m', 'Bump NVR to %s.' % file_version]))
+log.info(check_output(['git', 'commit', '-S', '-m', 'Bump NVR to %s.' % file_version]))
 check_call(['git', 'show'])
 
 # working directory should be clean if we did not mess things up
