@@ -1,3 +1,36 @@
+8.0
+====
+[1] Unknown record types can be stored in LDAP using generic syntax (RFC 3597).
+    LDAP schema was extended for this purpose with the UnknownRecord attribute.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/157
+
+[2] PTR record synchronization was improved.
+    - New PTR records now inherit the TTL value from the respective A/AAAA
+      records.
+    - SERVFAIL error is no longer returned to clients if A/AAAA record update
+      succeeded but PTR record synchronization failed because of
+      misconfiguration. Such errors are only logged.
+    - PTR record synchronization was reworked to reduce the probability
+      of race condition occurrences.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/155
+
+[3] LDAP rename (MODRDN) for DNS records is now supported.
+    Renaming of whole DNS zones is not supported and will lead to errors.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/123
+
+[4] Data changed in LDAP while connection to server was down are now refreshed
+    properly.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/128
+
+[5] Crash caused by object class and DN format mismatch were fixed.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/148
+
+[6] Compatibility with BIND 9.9.4 was improved.
+
+[7] Documentation and schema were fixed and improved. The doc/schema.ldif file
+    is now properly formatted as LDIF and contains instructions
+    for OpenLDAP and 389 DS.
+
 7.0
 ====
 [1] Support for BIND 9.10 was added.
