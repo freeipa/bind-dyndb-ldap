@@ -721,69 +721,6 @@ destroy_ldap_connection(ldap_connection_t **ldap_connp)
 	MEM_PUT_AND_DETACH(*ldap_connp);
 }
 
-/* Test if the existing zone is 'empty zone' per RFC 6303. */
-static isc_boolean_t ATTR_NONNULLS ATTR_CHECKRESULT
-zone_isempty(dns_zone_t *zone) {
-	char **argv = NULL;
-	isc_mem_t *mctx = NULL;
-	isc_boolean_t result = ISC_FALSE;
-
-	mctx = dns_zone_getmctx(zone);
-	if (dns_zone_getdbtype(zone, &argv, mctx) != ISC_R_SUCCESS)
-		CLEANUP_WITH(ISC_FALSE);
-
-	if (argv[0] != NULL && strcmp("_builtin", argv[0]) == 0 &&
-	    argv[1] != NULL && strcmp("empty", argv[1]) == 0) {
-		result = ISC_TRUE;
-	} else {
-		result = ISC_FALSE;
-	}
-	isc_mem_free(mctx, argv);
-
-cleanup:
-	return result;
-}
-
-/**
- * Delete a zone from plain BIND. LDAP zones require further steps for complete
- * removal, like deletion from zone register etc.
- *
- * @pre A zone pointer has to be attached to *zonep.
- *
- * @returns Values returned by dns_zt_unmount().
- */
-static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-delete_bind_zone(dns_zt_t *zt, dns_zone_t **zonep) {
-	dns_zone_t *zone;
-	dns_db_t *dbp = NULL;
-	dns_zonemgr_t *zmgr;
-	isc_result_t result;
-
-	REQUIRE (zonep != NULL && *zonep != NULL);
-
-	zone = *zonep;
-
-	/* Do not unload partially loaded zones, they have uninitialized
-	 * structures. */
-	if (dns_zone_getdb(zone, &dbp) == ISC_R_SUCCESS) {
-		dns_db_detach(&dbp); /* dns_zone_getdb() attaches DB implicitly */
-		dns_zone_unload(zone);
-		dns_zone_log(zone, ISC_LOG_INFO, "shutting down");
-	} else {
-		dns_zone_log(zone, ISC_LOG_DEBUG(1), "not loaded - unload skipped");
-	}
-
-	result = dns_zt_unmount(zt, zone);
-	if (result == ISC_R_NOTFOUND) /* zone wasn't part of a view */
-		result = ISC_R_SUCCESS;
-	zmgr = dns_zone_getmgr(zone);
-	if (zmgr != NULL)
-		dns_zonemgr_releasezone(zmgr, zone);
-	dns_zone_detach(zonep);
-
-	return result;
-}
-
 static isc_result_t ATTR_NONNULLS
 cleanup_zone_files(dns_zone_t *zone) {
 	isc_result_t result;

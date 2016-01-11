@@ -5,6 +5,8 @@
 #ifndef _LD_ZONE_REGISTER_H_
 #define _LD_ZONE_REGISTER_H_
 
+#include <dns/zt.h>
+
 #include "settings.h"
 #include "rbt_helper.h"
 #include "ldap_helper.h"
@@ -51,5 +53,11 @@ zr_rbt_iter_init(zone_register_t *zr, rbt_iterator_t **iter,
 
 isc_mem_t *
 zr_get_mctx(zone_register_t *zr) ATTR_NONNULLS ATTR_CHECKRESULT;
+
+isc_result_t
+delete_bind_zone(dns_zt_t *zt, dns_zone_t **zonep) ATTR_NONNULLS ATTR_CHECKRESULT;
+
+isc_boolean_t
+zone_isempty(dns_zone_t *zone) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 #endif /* !_LD_ZONE_REGISTER_H_ */
