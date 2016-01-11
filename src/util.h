@@ -7,10 +7,13 @@
 
 #include <string.h>
 
+#include <isc/boolean.h>
 #include <isc/mem.h>
 #include <isc/buffer.h>
+#include <isc/result.h>
 #include <dns/types.h>
 #include <dns/name.h>
+#include <dns/result.h>
 
 #include "log.h"
 
