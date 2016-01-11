@@ -55,6 +55,7 @@
 #include <netdb.h>
 
 #include "acl.h"
+#include "empty_zones.h"
 #include "fs.h"
 #include "krb5_helper.h"
 #include "ldap_convert.h"
@@ -510,6 +511,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	dns_forwarders_t *orig_global_forwarders = NULL;
 	isc_uint32_t connections;
 	char settings_name[PRINT_BUFF_SIZE];
+	ldap_globalfwd_handleez_t *gfwdevent = NULL;
 
 	REQUIRE(ldap_instp != NULL && *ldap_instp == NULL);
 
@@ -578,6 +580,21 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		}
 		ldap_inst->orig_global_forwarders.fwdpolicy =
 				orig_global_forwarders->fwdpolicy;
+
+		/* Make sure we disable conflicting automatic empty zones.
+		 * This will be done in event to prevent the plugin from
+		 * interfering with BIND start-up. */
+		CHECK(sync_task_add(ldap_inst->sctx, task));
+		gfwdevent = (ldap_globalfwd_handleez_t *)isc_event_allocate(
+					ldap_inst->mctx, ldap_inst,
+					LDAPDB_EVENT_GLOBALFWD_HANDLEEZ,
+					empty_zone_handle_globalfwd_ev,
+					ldap_inst->view->zonetable,
+					sizeof(ldap_globalfwd_handleez_t));
+		if (gfwdevent == NULL)
+			CLEANUP_WITH(ISC_R_NOMEMORY);
+
+		isc_task_send(task, (isc_event_t **)&gfwdevent);
 
 	} else if (result == ISC_R_NOTFOUND) {
 		/* global forwarders are not configured */
@@ -1403,7 +1420,6 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 	isc_boolean_t fwdtbl_update_requested = ISC_FALSE;
 	dns_forwarders_t *old_setting = NULL;
 	dns_fixedname_t foundname;
-	dns_zone_t *zone = NULL;
 	const char *msg_use_global_fwds;
 	const char *msg_obj_type;
 	const char *msg_forwarders_not_def;
@@ -1566,23 +1582,11 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 			    msg_obj_type, ldap_entry_logname(entry));
 
 	if (fwdtbl_update_requested) {
-		/* Shutdown automatic empty zone if it is present. */
-		result = dns_zt_find(inst->view->zonetable, name, 0, NULL,
-				     &zone);
-		if (result == ISC_R_SUCCESS || result == DNS_R_PARTIALMATCH) {
-			if (zone_isempty(zone)) {
-				dns_zone_log(zone, ISC_LOG_INFO, "automatic "
-					     "empty zone will be shut down "
-					     "to enable forwarding");
-				result = delete_bind_zone(inst->view->zonetable,
-							  &zone);
-			} else {
-				dns_zone_detach(&zone);
-				result = ISC_R_SUCCESS;
-			}
+		if (fwdpolicy != dns_fwdpolicy_none) {
+			/* Handle collisions with automatic empty zones. */
+			CHECK(empty_zone_handle_conflicts(name,
+							  inst->view->zonetable));
 		}
-		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
-			goto cleanup;
 
 		/* Something was changed - set forward table up. */
 		CHECK(delete_forwarding_table(inst, name, msg_obj_type,
