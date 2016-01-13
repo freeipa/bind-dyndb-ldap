@@ -1556,13 +1556,14 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 
 		if (!fwdtbl_update_requested && ((s1 != NULL) || (s2 != NULL)))
 			fwdtbl_update_requested = ISC_TRUE;
-	} else {
+
+	} else if (!(result == ISC_R_NOTFOUND && fwdpolicy == dns_fwdpolicy_none)) {
+		/* No forwarder in the table and policy 'none' = no change. */
 		fwdtbl_update_requested = ISC_TRUE;
-		if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
-			log_error_r("%s %s: can't obtain old forwarding "
-				    "settings", msg_obj_type,
-				    ldap_entry_logname(entry));
 	}
+	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
+		log_error_r("%s %s: can't obtain old forwarding settings",
+			    msg_obj_type, ldap_entry_logname(entry));
 
 	if (fwdtbl_update_requested) {
 		/* Shutdown automatic empty zone if it is present. */
