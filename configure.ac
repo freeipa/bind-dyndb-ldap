@@ -39,6 +39,20 @@ AC_TRY_COMPILE([
 [CFLAGS="$SAVED_CFLAGS"
  AC_MSG_RESULT([no])])
 
+# Check if build chain supports -fno-delete-null-pointer-checks
+# this flag avoids too agressive optimizations which would remove some asserts
+# BIND 9 did the same in its commit 603a78708343f063b44affb882ef93bb19a5142a
+AC_MSG_CHECKING([for -fno-delete-null-pointer-checks compiler flag])
+SAVED_CFLAGS="$CFLAGS"
+CFLAGS="-fno-delete-null-pointer-checks -Werror"
+AC_TRY_COMPILE([
+	extern int fdef(void);
+],[],
+[AC_MSG_RESULT([yes])
+ CFLAGS="$SAVED_CFLAGS -fno-delete-null-pointer-checks"],
+[CFLAGS="$SAVED_CFLAGS"
+ AC_MSG_RESULT([no])])
+
 # Get CFLAGS from isc-config.sh
 AC_ARG_VAR([BIND9_CFLAGS],
            [C compiler flags for bind9, overriding isc-config.sh])
