@@ -85,7 +85,7 @@ fs_dirs_create(const char *path) {
 	     end != NULL;
 	     end = strchr(end + 1, '/')) {
 		*end = '\0';
-		if (strcmp(curr_path, "") != 0)
+		if (strlen(curr_path) > 0)
 			/* Absolute paths would have first component empty. */
 			CHECK(fs_dir_create(curr_path));
 		*end = '/';

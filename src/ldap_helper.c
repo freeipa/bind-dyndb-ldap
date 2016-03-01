@@ -366,7 +366,7 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 	/* Use instance name as default working directory */
 	CHECK(str_new(inst->mctx, &buff));
 	CHECK(setting_get_str("directory", inst->local_settings, &dir_name));
-	dir_default = (strcmp(dir_name, "") == 0);
+	dir_default = (strlen(dir_name) == 0);
 	if (dir_default == ISC_TRUE) {
 		CHECK(str_cat_char(buff, "dyndb-ldap/"));
 		CHECK(str_cat_char(buff, inst->db_name));
