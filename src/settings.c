@@ -532,7 +532,7 @@ settings_set_free(settings_set_t **set) {
 		mctx = (*set)->mctx;
 
 		if ((*set)->lock != NULL) {
-			isc_mutex_destroy((*set)->lock);
+			DESTROYLOCK((*set)->lock);
 			SAFE_MEM_PUT_PTR(mctx, (*set)->lock);
 		}
 

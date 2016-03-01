@@ -46,7 +46,7 @@ semaphore_init(semaphore_t *sem, int value)
 
 	result = isc_condition_init(&sem->cond);
 	if (result != ISC_R_SUCCESS)
-		isc_mutex_destroy(&sem->mutex);
+		DESTROYLOCK(&sem->mutex);
 
 	return result;
 }

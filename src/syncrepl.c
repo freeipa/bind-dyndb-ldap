@@ -120,7 +120,7 @@ finish(isc_task_t *task, isc_event_t *event) {
 	log_debug(1, "sync_barrier_wait(): finish reached");
 	LOCK(&bev->sctx->mutex);
 	sync_state_change(bev->sctx, sync_finished, ISC_FALSE);
-	isc_condition_broadcast(&bev->sctx->cond);
+	BROADCAST(&bev->sctx->cond);
 	UNLOCK(&bev->sctx->mutex);
 	activate_zones(task, inst);
 
@@ -274,9 +274,10 @@ sync_ctx_init(isc_mem_t *mctx, ldap_instance_t *inst, sync_ctx_t **sctxp) {
 
 cleanup:
 	if (lock_ready == ISC_TRUE)
-		isc_mutex_destroy(&sctx->mutex);
+		DESTROYLOCK(&sctx->mutex);
 	if (cond_ready == ISC_TRUE)
-		isc_condition_init(&sctx->cond);
+		RUNTIME_CHECK(isc_condition_destroy(&sctx->cond)
+			      == ISC_R_SUCCESS);
 	if (refcount_ready == ISC_TRUE)
 		isc_refcount_destroy(&sctx->task_cnt);
 	MEM_PUT_AND_DETACH(sctx);
@@ -308,11 +309,11 @@ sync_ctx_free(sync_ctx_t **sctxp) {
 		isc_refcount_decrement(&sctx->task_cnt, NULL);
 		SAFE_MEM_PUT_PTR(sctx->mctx, taskel);
 	}
-	isc_condition_destroy(&sctx->cond);
+	RUNTIME_CHECK(isc_condition_destroy(&sctx->cond) == ISC_R_SUCCESS);
 	isc_refcount_destroy(&sctx->task_cnt);
 	UNLOCK(&sctx->mutex);
 
-	isc_mutex_destroy(&(*sctxp)->mutex);
+	DESTROYLOCK(&(*sctxp)->mutex);
 	MEM_PUT_AND_DETACH(*sctxp);
 }
 
@@ -438,7 +439,7 @@ sync_barrier_wait(sync_ctx_t *sctx, const char *inst_name) {
 
 	log_debug(1, "sync_barrier_wait(): wait until all events are processed");
 	while (sctx->state != sync_finished)
-		isc_condition_wait(&sctx->cond, &sctx->mutex);
+		WAIT(&sctx->cond, &sctx->mutex);
 	log_debug(1, "sync_barrier_wait(): all events were processed");
 
 cleanup:

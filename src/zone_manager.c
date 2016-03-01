@@ -58,7 +58,8 @@ destroy_manager(void)
 	db_instance_t *db_inst;
 	db_instance_t *next;
 
-	isc_once_do(&initialize_once, initialize_manager);
+	RUNTIME_CHECK(isc_once_do(&initialize_once, initialize_manager)
+		      == ISC_R_SUCCESS);
 
 	LOCK(&instance_list_lock);
 	db_inst = HEAD(instance_list);
@@ -105,7 +106,8 @@ manager_create_db_instance(isc_mem_t *mctx, const char *name,
 	REQUIRE(name != NULL);
 	REQUIRE(dyndb_args != NULL);
 
-	isc_once_do(&initialize_once, initialize_manager);
+	RUNTIME_CHECK(isc_once_do(&initialize_once, initialize_manager)
+		      == ISC_R_SUCCESS);
 
 	result = find_db_instance(name, &db_inst);
 	if (result == ISC_R_SUCCESS) {
@@ -149,8 +151,8 @@ manager_get_ldap_instance(const char *name, ldap_instance_t **ldap_inst)
 	REQUIRE(name != NULL);
 	REQUIRE(ldap_inst != NULL);
 
-	isc_once_do(&initialize_once, initialize_manager);
-
+	RUNTIME_CHECK(isc_once_do(&initialize_once, initialize_manager)
+		      == ISC_R_SUCCESS);
 	db_inst = NULL;
 	CHECK(find_db_instance(name, &db_inst));
 
