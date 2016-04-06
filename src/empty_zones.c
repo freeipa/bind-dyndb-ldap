@@ -252,7 +252,8 @@ cleanup:
 
 /**
  * Detect if given name is super/sub/equal domain to any of automatic empty
- * zones. If such empty zone is found, it will be automatically unloaded so
+ * zones. If such empty zone is found and warn_only == FALSE,
+ * the conflicting empty zone will be automatically unloaded so
  * forwarding will work as configured by user.
  *
  * It allows queries to leak to the public Internet if:
@@ -265,22 +266,34 @@ cleanup:
  *    it failed and user configured policy != only.
  */
 isc_result_t
-empty_zone_handle_conflicts(dns_name_t *name, dns_zt_t *zonetable)
+empty_zone_handle_conflicts(dns_name_t *name, dns_zt_t *zonetable,
+			    isc_boolean_t warn_only)
 {
 	isc_result_t result;
 	isc_boolean_t first = ISC_TRUE;
 	empty_zone_search_t eziter;
+	char name_char[DNS_NAME_FORMATSIZE];
+	char ezname_char[DNS_NAME_FORMATSIZE];
 
 	for (result = empty_zone_search_init(&eziter, name);
 	     result == ISC_R_SUCCESS;
 	     result = empty_zone_search_next(&eziter))
 	{
+		dns_name_format(name, name_char, DNS_NAME_FORMATSIZE);
+		if (warn_only == ISC_TRUE) {
+			dns_name_format(&eziter.ezname, ezname_char,
+					DNS_NAME_FORMATSIZE);
+			log_warn("ignoring inherited 'forward first;' for zone "
+				 "'%s' - did you want 'forward only;' "
+				 "to override automatic empty zone '%s'?",
+				 name_char, ezname_char);
+			continue;
+		}
+
 		/* Shutdown automatic empty zone if it is present. */
 		result = empty_zone_unload(&eziter.ezname, zonetable);
 		if (result == ISC_R_SUCCESS) {
 			if (first == ISC_TRUE) {
-				char name_char[DNS_NAME_FORMATSIZE];
-				dns_name_format(name, name_char, DNS_NAME_FORMATSIZE);
 				log_info("shutting down automatic empty zones to "
 					 "enable forwarding for domain '%s'", name_char);
 				first = ISC_FALSE;
@@ -313,7 +326,8 @@ empty_zone_handle_globalfwd_ev(isc_task_t *task, isc_event_t *event)
 	REQUIRE(event != NULL);
 
 	pevent = (ldap_globalfwd_handleez_t *)event;
-	RUNTIME_CHECK(empty_zone_handle_conflicts(dns_rootname, pevent->ev_arg)
+	RUNTIME_CHECK(empty_zone_handle_conflicts(dns_rootname, pevent->ev_arg,
+						  pevent->warn_only)
 		      == ISC_R_SUCCESS);
 
 	isc_event_free(&event);

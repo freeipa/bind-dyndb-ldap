@@ -583,7 +583,10 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 
 		/* Make sure we disable conflicting automatic empty zones.
 		 * This will be done in event to prevent the plugin from
-		 * interfering with BIND start-up. */
+		 * interfering with BIND start-up.
+		 *
+		 * Warn-only semantics is implemented in BIND RT#41441,
+		 * this code can be removed when we rebase to BIND 9.11. */
 		CHECK(sync_task_add(ldap_inst->sctx, task));
 		gfwdevent = (ldap_globalfwd_handleez_t *)isc_event_allocate(
 					ldap_inst->mctx, ldap_inst,
@@ -593,6 +596,9 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 					sizeof(ldap_globalfwd_handleez_t));
 		if (gfwdevent == NULL)
 			CLEANUP_WITH(ISC_R_NOMEMORY);
+		/* policy == first does not override automatic empty zones */
+		gfwdevent->warn_only = (orig_global_forwarders->fwdpolicy
+					== dns_fwdpolicy_first);
 
 		isc_task_send(task, (isc_event_t **)&gfwdevent);
 
@@ -1585,7 +1591,8 @@ configure_zone_forwarders(ldap_entry_t *entry, ldap_instance_t *inst,
 		if (fwdpolicy != dns_fwdpolicy_none) {
 			/* Handle collisions with automatic empty zones. */
 			CHECK(empty_zone_handle_conflicts(name,
-							  inst->view->zonetable));
+							  inst->view->zonetable,
+							  (fwdpolicy == dns_fwdpolicy_first)));
 		}
 
 		/* Something was changed - set forward table up. */
