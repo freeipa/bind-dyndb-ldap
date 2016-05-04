@@ -79,7 +79,7 @@ void
 mldap_destroy(mldapdb_t **mldapp) {
 	mldapdb_t *mldap;
 
-	REQUIRE(mldapp != NULL && *mldapp != NULL);
+	REQUIRE(mldapp != NULL);
 
 	mldap = *mldapp;
 	if (mldap == NULL)
