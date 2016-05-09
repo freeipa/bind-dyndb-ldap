@@ -6,6 +6,7 @@
 
 #include <dns/name.h>
 #include <dns/zone.h>
+#include <dns/zt.h>
 
 #include "empty_zones.h"
 #include "util.h"
@@ -151,6 +152,8 @@ empty_zone_search_next(empty_zone_search_t *iter) {
 	isc_buffer_t buffer;
 	int order;
 	unsigned int nlabels;
+	dns_zone_t *zone = NULL;
+	isc_boolean_t isempty;
 
 	REQUIRE(iter != NULL);
 	REQUIRE(iter->nextidx < sizeof(empty_zones));
@@ -174,6 +177,20 @@ empty_zone_search_next(empty_zone_search_t *iter) {
 			/* empty zone and domain in question are not related */
 			continue;
 		} else {
+			/* verify if the zone exists and is empty */
+			result = dns_zt_find(iter->zonetable, &iter->ezname,
+					     0, NULL, &zone);
+			if (result == ISC_R_SUCCESS)
+				isempty = zone_isempty(zone);
+			else if (result == DNS_R_PARTIALMATCH
+				 || result == ISC_R_NOTFOUND)
+				isempty = ISC_FALSE;
+			else
+				goto cleanup;
+			if (zone != NULL)
+				dns_zone_detach(&zone);
+			if (isempty == ISC_FALSE)
+				continue;
 			++iter->nextidx;
 			CLEANUP_WITH(ISC_R_SUCCESS);
 		}
@@ -185,11 +202,23 @@ cleanup:
 	return result;
 };
 
+/**
+ * Invalidate iterator and detach its internal pointers.
+ */
+void
+empty_zone_search_stop(empty_zone_search_t *iter) {
+	REQUIRE(iter != NULL);
+
+	if (iter->zonetable)
+		dns_zt_detach(&iter->zonetable);
+}
 
 /**
  * Start search for qname among automatic empty zones.
+ * The search must be finished by calling empty_zone_search_stop().
  *
  * @param[in]  qname  Name to compare with list of automatic empty zones.
+ * @param[in]  ztable Zone table for affected view.
  * @param[out] iter   Intermediate state which must be passed to subsequent
  * 		      empty_zone_search_next() call. At the same time,
  * 		      the structure contains name of first matching
@@ -197,7 +226,8 @@ cleanup:
  * @returns @see empty_zone_search_next
  */
 isc_result_t
-empty_zone_search_init(empty_zone_search_t *iter, dns_name_t *qname) {
+empty_zone_search_init(empty_zone_search_t *iter, dns_name_t *qname,
+                       dns_zt_t *ztable) {
 	isc_result_t result;
 
 	REQUIRE(iter != NULL);
@@ -210,7 +240,9 @@ empty_zone_search_init(empty_zone_search_t *iter, dns_name_t *qname) {
 	iter->nextidx = 0;
 	iter->namerel = dns_namereln_none;
 
-	CHECK(empty_zone_search_next(iter));
+	dns_zt_attach(ztable, &iter->zonetable);
+
+	return empty_zone_search_next(iter);
 
 cleanup:
 	return result;
@@ -275,7 +307,7 @@ empty_zone_handle_conflicts(dns_name_t *name, dns_zt_t *zonetable,
 	char name_char[DNS_NAME_FORMATSIZE];
 	char ezname_char[DNS_NAME_FORMATSIZE];
 
-	for (result = empty_zone_search_init(&eziter, name);
+	for (result = empty_zone_search_init(&eziter, name, zonetable);
 	     result == ISC_R_SUCCESS;
 	     result = empty_zone_search_next(&eziter))
 	{
@@ -309,6 +341,7 @@ empty_zone_handle_conflicts(dns_name_t *name, dns_zt_t *zonetable,
 		result = ISC_R_SUCCESS;
 
 cleanup:
+	empty_zone_search_stop(&eziter);
 	return result;
 }
 
