@@ -211,6 +211,18 @@ Attributes:
 	Absolute name of DNS zone. It is recommended to use names with trailing
 	period, e.g. "example.com."
 
+Forward zones may conflict with automatic empty zones (defined in RFC 6303)
+because empty zones are authoritative and thus have higher priority
+than forwarding.
+Bind-dyndb-ldap will automatically unload empty zones which are super/sub
+domains of a forward zones if the forwarding policy is "only".
+A warning will be issued (and zone not unloaded) if the policy is "first"
+because this policy does not guarantee that queries will not leak to
+the public Internet.
+
+Unloaded empty zones will not be loaded back even if the forward zone is later
+deleted. The empty zones will be loaded on each BIND reload.
+
 
 5. Configuration
 ================
