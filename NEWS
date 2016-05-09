@@ -1,3 +1,12 @@
+9.0
+====
+[1] Automatic empty zones conflicting with forward zones with policy 'only'
+    are now automatically unloaded. Warning is issued if the conflicting
+    forward zone has policy 'first' but the zone is not unloaded.
+    Conflict occurs if empty zone and forward zone are super/sub/equal domains.
+!!! This changes semantics of data in LDAP.
+!!! Users have to upgrade their data manually.
+
 8.0
 ====
 [1] Unknown record types can be stored in LDAP using generic syntax (RFC 3597).
