@@ -303,7 +303,7 @@ empty_zone_handle_conflicts(dns_name_t *name, dns_zt_t *zonetable,
 {
 	isc_result_t result;
 	isc_boolean_t first = ISC_TRUE;
-	empty_zone_search_t eziter;
+	empty_zone_search_t eziter = {}; /* init with zeroes */
 	char name_char[DNS_NAME_FORMATSIZE];
 	char ezname_char[DNS_NAME_FORMATSIZE];
 
