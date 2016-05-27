@@ -871,7 +871,11 @@ setcachestats(dns_db_t *db, isc_stats_t *stats)
 	return dns_db_setcachestats(ldapdb->rbtdb, stats);
 }
 
+#if LIBDNS_VERSION_MAJOR >= 164
+size_t
+#else
 unsigned int
+#endif /* LIBDNS_VERSION_MAJOR >= 164 */
 hashsize(dns_db_t *db)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
