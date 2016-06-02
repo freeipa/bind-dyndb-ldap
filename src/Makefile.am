@@ -7,6 +7,7 @@ HDRS =				\
 	compat.h		\
 	empty_zones.h		\
 	fs.h			\
+	fwd.h			\
 	fwd_register.h		\
 	krb5_helper.h		\
 	ldap_convert.h		\
@@ -34,6 +35,7 @@ ldap_la_SOURCES =		\
 	acl.c			\
 	bindcfg.c		\
 	empty_zones.c		\
+	fwd.c			\
 	fwd_register.c		\
 	fs.c			\
 	krb5_helper.c		\

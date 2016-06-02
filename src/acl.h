@@ -5,6 +5,9 @@
 #ifndef _LD_ACL_H_
 #define _LD_ACL_H_
 
+#include "config.h"
+
+#include "ldap_entry.h"
 #include "types.h"
 
 #include <dns/acl.h>
@@ -27,14 +30,5 @@ acl_from_ldap(isc_mem_t *mctx, const char *aclstr, acl_type_t type,
  *
  * Please refer to BIND 9 ARM (Administrator Reference Manual) about ACLs.
  */
-
-isc_result_t
-acl_parse_forwarder(const char *forwarders_str, isc_mem_t *mctx,
-#if LIBDNS_VERSION_MAJOR < 140
-		isc_sockaddr_t **fw)
-#else /* LIBDNS_VERSION_MAJOR >= 140 */
-		dns_forwarder_t **fw)
-#endif
-ATTR_NONNULLS ATTR_CHECKRESULT;
 
 #endif /* !_LD_ACL_H_ */

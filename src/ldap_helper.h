@@ -96,4 +96,11 @@ ldap_instance_untaint_start(ldap_instance_t *ldap_inst);
 isc_result_t
 ldap_instance_untaint_finish(ldap_instance_t *ldap_inst, unsigned int count);
 
+void
+ldap_instance_attachview(ldap_instance_t *ldap_inst, dns_view_t **view) ATTR_NONNULLS;
+
+void
+ldap_instance_attachmem(ldap_instance_t *ldap_inst, isc_mem_t **mctx)
+			ATTR_NONNULLS;
+
 #endif /* !_LD_LDAP_HELPER_H_ */
