@@ -111,4 +111,8 @@ setting_update_from_ldap_entry(const char *name, settings_set_t *set,
 isc_result_t
 get_enum_description(const enum_txt_assoc_t *map, int value, const char **desc) ATTR_NONNULLS ATTR_CHECKRESULT;
 
+isc_result_t
+get_enum_value(const enum_txt_assoc_t *map, const char *description,
+	       int *value) ATTR_NONNULLS ATTR_CHECKRESULT;
+
 #endif /* !_LD_SETTINGS_H_ */

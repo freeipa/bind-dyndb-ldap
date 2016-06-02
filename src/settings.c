@@ -659,3 +659,23 @@ get_enum_description(const enum_txt_assoc_t *map, int value, const char **desc) 
 	}
 	return ISC_R_NOTFOUND;
 }
+
+isc_result_t
+get_enum_value(const enum_txt_assoc_t *map, const char *description,
+	       int *value) {
+	const enum_txt_assoc_t *record;
+
+	REQUIRE(map != NULL);
+	REQUIRE(description != NULL);
+	REQUIRE(value != NULL);
+
+	for (record = map;
+	     record->description != NULL && record->value != -1;
+	     record++) {
+		if (strcasecmp(record->description, description) == 0) {
+			*value = record->value;
+			return ISC_R_SUCCESS;
+		}
+	}
+	return ISC_R_NOTFOUND;
+}
