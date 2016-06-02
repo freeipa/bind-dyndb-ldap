@@ -3,6 +3,7 @@ bindplugindir=$(libdir)/bind
 
 HDRS =				\
 	acl.h			\
+	bindcfg.h		\
 	compat.h		\
 	empty_zones.h		\
 	fs.h			\
@@ -31,6 +32,7 @@ HDRS =				\
 ldap_la_SOURCES =		\
 	$(HDRS)			\
 	acl.c			\
+	bindcfg.c		\
 	empty_zones.c		\
 	fwd_register.c		\
 	fs.c			\

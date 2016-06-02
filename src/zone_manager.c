@@ -18,6 +18,8 @@
 #include <unistd.h>
 
 #include "config.h"
+
+#include "bindcfg.h"
 #include "ldap_convert.h"
 #include "ldap_helper.h"
 #include "log.h"
@@ -50,6 +52,7 @@ initialize_manager(void)
 	log_info("bind-dyndb-ldap version " VERSION
 		 " compiled at " __TIME__ " " __DATE__
 		 ", compiler " __VERSION__);
+	cfg_init_types();
 }
 
 void

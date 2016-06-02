@@ -6,13 +6,11 @@
 
 #include <isccfg/aclconf.h>
 #include <isccfg/cfg.h>
-#include <isccfg/namedconf.h>
 #include <isccfg/grammar.h>
 
 #include <isc/buffer.h>
 #include <isc/log.h>
 #include <isc/mem.h>
-#include <isc/once.h>
 #include <isc/result.h>
 #include <isc/types.h>
 #include <isc/util.h>
@@ -30,16 +28,11 @@
 #include <strings.h>
 
 #include "acl.h"
+#include "bindcfg.h"
 #include "str.h"
 #include "util.h"
 #include "log.h"
 #include "types.h"
-
-static isc_once_t once = ISC_ONCE_INIT;
-static cfg_type_t *update_policy;
-static cfg_type_t *allow_query;
-static cfg_type_t *allow_transfer;
-static cfg_type_t *forwarders;
 
 /* Following definitions are necessary for context ("map" configuration object)
  * required during ACL parsing. */
@@ -59,105 +52,6 @@ const enum_txt_assoc_t acl_type_txts[] = {
 	{ acl_type_transfer,	"transfer"	},
 	{ -1,			NULL		} /* end marker */
 };
-
-static cfg_type_t * ATTR_NONNULLS ATTR_CHECKRESULT
-get_type_from_tuplefield(const cfg_type_t *cfg_type, const char *name)
-{
-	cfg_type_t *ret = NULL;
-	const cfg_tuplefielddef_t *field;
-
-	REQUIRE(cfg_type != NULL && cfg_type->of != NULL);
-	REQUIRE(name != NULL);
-
-	field = (cfg_tuplefielddef_t *)cfg_type->of;
-	for (int i = 0; field[i].name != NULL; i++) {
-		if (!strcmp(field[i].name, name)) {
-			ret = field[i].type;
-			break;
-		}
-	}
-
-	return ret;
-}
-
-static cfg_type_t * ATTR_NONNULLS ATTR_CHECKRESULT
-get_type_from_clause(const cfg_clausedef_t *clause, const char *name)
-{
-	cfg_type_t *ret = NULL;
-
-	REQUIRE(clause != NULL);
-	REQUIRE(name != NULL);
-
-	for (int i = 0; clause[i].name != NULL; i++) {
-		if (!strcmp(clause[i].name, name)) {
-			ret = clause[i].type;
-			break;
-		}
-	}
-
-	return ret;
-}
-
-static cfg_type_t * ATTR_NONNULLS ATTR_CHECKRESULT
-get_type_from_clause_array(const cfg_type_t *cfg_type, const char *name)
-{
-	cfg_type_t *ret = NULL;
-	const cfg_clausedef_t **clauses;
-
-	REQUIRE(cfg_type != NULL && cfg_type->of != NULL);
-	REQUIRE(name != NULL);
-
-	clauses = (const cfg_clausedef_t **)cfg_type->of;
-	for (int i = 0; clauses[i] != NULL; i++) {
-		ret = get_type_from_clause(clauses[i], name);
-		if (ret != NULL)
-			break;
-	}
-
-	return ret;
-}
-
-static void
-init_cfgtypes(void)
-{
-	cfg_type_t *zoneopts;
-
-	zoneopts = &cfg_type_namedconf;
-	zoneopts = get_type_from_clause_array(zoneopts, "zone");
-	zoneopts = get_type_from_tuplefield(zoneopts, "options");
-
-	update_policy = get_type_from_clause_array(zoneopts, "update-policy");
-	allow_query = get_type_from_clause_array(zoneopts, "allow-query");
-	allow_transfer = get_type_from_clause_array(zoneopts, "allow-transfer");
-	forwarders = get_type_from_clause_array(zoneopts, "forwarders");
-}
-
-static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-parse(cfg_parser_t *parser, const char *string, cfg_type_t **type,
-      cfg_obj_t **objp)
-{
-	isc_result_t result;
-	isc_buffer_t buffer;
-	size_t string_len;
-	cfg_obj_t *ret = NULL;
-
-	REQUIRE(parser != NULL);
-	REQUIRE(string != NULL);
-	REQUIRE(objp != NULL && *objp == NULL);
-
-	RUNTIME_CHECK(isc_once_do(&once, init_cfgtypes) == ISC_R_SUCCESS);
-
-	string_len = strlen(string);
-	isc_buffer_init(&buffer, (char *)string, string_len);
-	isc_buffer_add(&buffer, string_len);
-
-	result = cfg_parse_buffer(parser, &buffer, *type, &ret);
-
-	if (result == ISC_R_SUCCESS)
-		*objp = ret;
-
-	return result;
-}
 
 /*
  * The rest of the code in this file is either copied from, or based on code
@@ -408,7 +302,7 @@ acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone)
 	CHECK(bracket_str(mctx, policy_str, &new_policy_str));
 
 	CHECK(cfg_parser_create(mctx, dns_lctx, &parser));
-	result = parse(parser, str_buf(new_policy_str), &update_policy, &policy);
+	result = cfg_parse_strbuf(parser, str_buf(new_policy_str), &cfg_type_update_policy, &policy);
 
 	if (result != ISC_R_SUCCESS) {
 		dns_zone_log(zone, ISC_LOG_ERROR,
@@ -509,15 +403,15 @@ acl_from_ldap(isc_mem_t *mctx, const char *aclstr, acl_type_t type,
 
 	CHECK(cfg_parser_create(mctx, dns_lctx, &parser));
 	CHECK(cfg_parser_create(mctx, dns_lctx, &parser_empty));
-	CHECK(parse(parser_empty, "{}", &empty_map_p, &cctx));
+	CHECK(cfg_parse_strbuf(parser_empty, "{}", &empty_map_p, &cctx));
 
 	switch (type) {
 	case acl_type_query:
-		CHECK(parse(parser, str_buf(new_aclstr), &allow_query,
+		CHECK(cfg_parse_strbuf(parser, str_buf(new_aclstr), &cfg_type_allow_query,
 			    &aclobj));
 		break;
 	case acl_type_transfer:
-		CHECK(parse(parser, str_buf(new_aclstr), &allow_transfer,
+		CHECK(cfg_parse_strbuf(parser, str_buf(new_aclstr), &cfg_type_allow_transfer,
 			    &aclobj));
 		break;
 	default:
@@ -602,7 +496,7 @@ acl_parse_forwarder(const char *forwarder_str, isc_mem_t *mctx,
 		CHECK(bracket_str(mctx, forwarder_str, &new_forwarder_str));
 
 	CHECK(cfg_parser_create(mctx, dns_lctx, &parser));
-	CHECK(parse(parser, str_buf(new_forwarder_str), &forwarders, &forwarders_cfg));
+	CHECK(cfg_parse_strbuf(parser, str_buf(new_forwarder_str), &cfg_type_forwarders, &forwarders_cfg));
 
 	faddresses = cfg_tuple_get(forwarders_cfg, "addresses");
 	element = cfg_list_first(faddresses);
