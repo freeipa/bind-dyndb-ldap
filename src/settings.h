@@ -88,6 +88,11 @@ isc_boolean_t
 settings_set_isfilled(settings_set_t *set) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
+setting_find(const char *name, const settings_set_t *set,
+	     isc_boolean_t recursive, isc_boolean_t filled_only,
+	     setting_t **found) ATTR_CHECKRESULT;
+
+isc_result_t
 setting_get_uint(const char * const name, const settings_set_t * const set,
 		 isc_uint32_t * target) ATTR_NONNULLS ATTR_CHECKRESULT;
 
@@ -102,6 +107,10 @@ setting_get_bool(const char * const name, const settings_set_t * const set,
 isc_result_t
 setting_set(const char *const name, const settings_set_t *set,
 	    const char *const value) ATTR_NONNULLS ATTR_CHECKRESULT;
+
+isc_result_t
+setting_unset(const char *const name, const settings_set_t *set)
+ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
 setting_update_from_ldap_entry(const char *name, settings_set_t *set,

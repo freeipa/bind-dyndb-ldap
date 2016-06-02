@@ -354,7 +354,7 @@ cleanup:
  * @retval ISC_R_NOTFOUND Required setting was not found
  *                        in given set of settings.
  */
-static isc_result_t
+isc_result_t
 setting_unset(const char *const name, const settings_set_t *set)
 {
 	isc_result_t result;
