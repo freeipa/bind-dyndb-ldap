@@ -155,6 +155,7 @@ struct ldap_instance {
 	/* Settings. */
 	settings_set_t		*local_settings;
 	settings_set_t		*global_settings;
+	settings_set_t		empty_fwdz_settings;
 
 	sync_ctx_t		*sctx;
 	mldapdb_t		*mldapdb;
@@ -252,6 +253,12 @@ static setting_t settings_global_default[] = {
 	{ "sync_ptr",		no_default_boolean					},
 	{ "forward_policy",	default_string("first")					},
 	{ "forwarders",		default_string("{ /* uninitialized global config */ }")	},
+	end_of_settings
+};
+
+static setting_t settings_fwdz_defaults[] = {
+	{ "forward_policy",	no_default_string	},
+	{ "forwarders",		no_default_string	},
 	end_of_settings
 };
 
@@ -592,6 +599,14 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 					       ldap_inst->local_settings));
 	if (settings_set_isfilled(ldap_inst->global_settings) != ISC_TRUE)
 		CLEANUP_WITH(ISC_R_FAILURE);
+
+	ldap_inst->empty_fwdz_settings = (settings_set_t) {
+			NULL,
+			"dummy LDAP zone forwarding settings",
+			ldap_inst->global_settings,
+			NULL,
+			(setting_t *) &settings_fwdz_defaults[0]
+	};
 
 	CHECK(setting_get_uint("connections", ldap_inst->local_settings, &connections));
 
@@ -1148,6 +1163,10 @@ activate_zones(isc_task_t *task, ldap_instance_t *inst) {
 			result = activate_zone(task, inst, &name);
 			if (result == ISC_R_SUCCESS)
 				++published_cnt;
+			result = fwd_configure_zone(settings, inst, &name);
+			if (result != ISC_R_SUCCESS)
+				log_error_r("could not configure forwarding");
+
 		}
 	};
 
@@ -1404,11 +1423,6 @@ ldap_parse_fwd_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	char name_txt[DNS_NAME_FORMATSIZE];
 	isc_result_t result;
 
-	static const setting_t fwdz_defaults[] = {
-		{ "forward_policy",		no_default_string	},
-		{ "forwarders",			no_default_string	},
-		end_of_settings
-	};
 	settings_set_t *fwdz_settings = NULL;
 
 	REQUIRE(entry != NULL);
@@ -1424,7 +1438,7 @@ ldap_parse_fwd_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 		goto cleanup;
 	}
 
-	CHECK(settings_set_create(inst->mctx, fwdz_defaults, sizeof(fwdz_defaults),
+	CHECK(settings_set_create(inst->mctx, settings_fwdz_defaults, sizeof(settings_fwdz_defaults),
 				  "fake fwdz settings", inst->global_settings,
 				  &fwdz_settings));
 	result = fwd_parse_ldap(entry, fwdz_settings);
@@ -2011,12 +2025,7 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 				   &zone_settings));
 	CHECK(zone_master_reconfigure(entry, zone_settings, raw, secure, task));
 	result = fwd_parse_ldap(entry, zone_settings);
-	if (result == ISC_R_SUCCESS) {
-		result = fwd_configure_zone(zone_settings, inst, &entry->fqdn);
-		if (result != ISC_R_SUCCESS)
-			log_error_r("%s: could not configure forwarding",
-				    ldap_entry_logname(entry));
-	} else if (result != ISC_R_IGNORE)
+	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
 		goto cleanup;
 	/* synchronize zone origin with LDAP */
 	CHECK(zr_get_zone_dbs(inst->zone_register, &entry->fqdn, &ldapdb, &rbtdb));
@@ -2080,9 +2089,13 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 		if (new_zone == ISC_TRUE || activity_changed == ISC_TRUE)
 			CHECK(publish_zone(task, inst, toview));
 		CHECK(load_zone(toview, ISC_FALSE));
+		CHECK(fwd_configure_zone(zone_settings, inst, &entry->fqdn));
 	} else if (activity_changed == ISC_TRUE) { /* Zone was deactivated */
 		CHECK(unpublish_zone(inst, &entry->fqdn,
 				     ldap_entry_logname(entry)));
+		/* emulate "no explicit forwarding config" */
+		CHECK(fwd_configure_zone(&inst->empty_fwdz_settings, inst,
+					 &entry->fqdn));
 		dns_zone_log(toview, ISC_LOG_INFO, "zone deactivated "
 			     "and removed from view");
 	}
