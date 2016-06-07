@@ -156,6 +156,7 @@ struct ldap_instance {
 	settings_set_t		*local_settings;
 	settings_set_t		*global_settings;
 	settings_set_t		empty_fwdz_settings;
+	settings_set_t		*server_ldap_settings;
 
 	sync_ctx_t		*sctx;
 	mldapdb_t		*mldapdb;
@@ -244,6 +245,7 @@ static const setting_t settings_local_default[] = {
 	 * during start up to allow settings_set_isfilled() to pass.*/
 	{ "forward_policy",		no_default_string	},
 	{ "forwarders",			no_default_string	},
+	{ "server_id",			no_default_string	},
 	end_of_settings
 };
 
@@ -253,6 +255,14 @@ static setting_t settings_global_default[] = {
 	{ "sync_ptr",		no_default_boolean					},
 	{ "forward_policy",	default_string("first")					},
 	{ "forwarders",		default_string("{ /* uninitialized global config */ }")	},
+	end_of_settings
+};
+
+/** Server-specific config from idnsServerConfig object. */
+static setting_t settings_server_ldap_default[] = {
+	{ "fake_mname",		no_default_string	},
+	{ "forwarders",		no_default_string	},
+	{ "forward_policy",	no_default_string	},
 	end_of_settings
 };
 
@@ -516,6 +526,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	isc_uint32_t connections;
 	char settings_name[PRINT_BUFF_SIZE];
 	ldap_globalfwd_handleez_t *gfwdevent = NULL;
+	const char *server_id = NULL;
 
 	REQUIRE(ldap_instp != NULL && *ldap_instp == NULL);
 
@@ -600,17 +611,35 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	if (settings_set_isfilled(ldap_inst->global_settings) != ISC_TRUE)
 		CLEANUP_WITH(ISC_R_FAILURE);
 
+	/* zero-length server_id means undefined value */
+	CHECK(setting_get_str("server_id", ldap_inst->local_settings,
+			      &server_id));
+	if (strlen(server_id) == 0)
+		isc_string_printf_truncate(settings_name, PRINT_BUFF_SIZE,
+					   SETTING_SET_NAME_SERVER
+					   " for undefined server_id");
+	else
+		isc_string_printf_truncate(settings_name, PRINT_BUFF_SIZE,
+					   SETTING_SET_NAME_SERVER
+					   " for server id %s", server_id);
+
+	CHECK(settings_set_create(mctx, settings_server_ldap_default,
+	      sizeof(settings_server_ldap_default), settings_name,
+	      ldap_inst->global_settings, &ldap_inst->server_ldap_settings));
+	if (settings_set_isfilled(ldap_inst->server_ldap_settings) != ISC_TRUE)
+		CLEANUP_WITH(ISC_R_FAILURE);
+
 	ldap_inst->empty_fwdz_settings = (settings_set_t) {
 			NULL,
 			"dummy LDAP zone forwarding settings",
-			ldap_inst->global_settings,
+			ldap_inst->server_ldap_settings,
 			NULL,
 			(setting_t *) &settings_fwdz_defaults[0]
 	};
 
 	CHECK(setting_get_uint("connections", ldap_inst->local_settings, &connections));
 
-	CHECK(zr_create(mctx, ldap_inst, ldap_inst->global_settings,
+	CHECK(zr_create(mctx, ldap_inst, ldap_inst->server_ldap_settings,
 			&ldap_inst->zone_register));
 	CHECK(fwdr_create(ldap_inst->mctx, &ldap_inst->fwd_register));
 	CHECK(mldap_new(mctx, &ldap_inst->mldapdb));
@@ -682,6 +711,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 
 	settings_set_free(&ldap_inst->global_settings);
 	settings_set_free(&ldap_inst->local_settings);
+	settings_set_free(&ldap_inst->server_ldap_settings);
 
 	sync_ctx_free(&ldap_inst->sctx);
 	/* zero out error counter (and do nothing other than that) */
@@ -1439,7 +1469,7 @@ ldap_parse_fwd_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	}
 
 	CHECK(settings_set_create(inst->mctx, settings_fwdz_defaults, sizeof(settings_fwdz_defaults),
-				  "fake fwdz settings", inst->global_settings,
+				  "fake fwdz settings", inst->server_ldap_settings,
 				  &fwdz_settings));
 	result = fwd_parse_ldap(entry, fwdz_settings);
 	if (result == ISC_R_IGNORE) {
@@ -2392,7 +2422,7 @@ ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
 		case SASL_CB_USER:
 			log_debug(4, "got request for SASL_CB_USER");
 			CHECK(setting_get_str("sasl_user",
-					      ldap_inst->global_settings,
+					      ldap_inst->server_ldap_settings,
 					      (const char **)&in->result));
 			in->len = strlen(in->result);
 			ret = LDAP_SUCCESS;
@@ -2400,7 +2430,7 @@ ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
 		case SASL_CB_GETREALM:
 			log_debug(4, "got request for SASL_CB_GETREALM");
 			CHECK(setting_get_str("sasl_realm",
-					      ldap_inst->global_settings,
+					      ldap_inst->server_ldap_settings,
 					      (const char **)&in->result));
 			in->len = strlen(in->result);
 			ret = LDAP_SUCCESS;
@@ -2408,7 +2438,7 @@ ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
 		case SASL_CB_AUTHNAME:
 			log_debug(4, "got request for SASL_CB_AUTHNAME");
 			CHECK(setting_get_str("sasl_auth_name",
-					      ldap_inst->global_settings,
+					      ldap_inst->server_ldap_settings,
 					      (const char **)&in->result));
 			in->len = strlen(in->result);
 			ret = LDAP_SUCCESS;
@@ -2416,7 +2446,7 @@ ldap_sasl_interact(LDAP *ld, unsigned flags, void *defaults, void *sin)
 		case SASL_CB_PASS:
 			log_debug(4, "got request for SASL_CB_PASS");
 			CHECK(setting_get_str("sasl_password",
-					      ldap_inst->global_settings,
+					      ldap_inst->server_ldap_settings,
 					      (const char **)&in->result));
 			in->len = strlen(in->result);
 			ret = LDAP_SUCCESS;
@@ -2466,7 +2496,7 @@ ldap_connect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 	ret = ldap_set_option(ld, LDAP_OPT_PROTOCOL_VERSION, &version);
 	LDAP_OPT_CHECK(ret, "failed to set LDAP version");
 
-	CHECK(setting_get_uint("timeout", ldap_inst->global_settings,
+	CHECK(setting_get_uint("timeout", ldap_inst->server_ldap_settings,
 			       &timeout_sec));
 	timeout.tv_sec = timeout_sec;
 	timeout.tv_usec = 0;
@@ -2540,7 +2570,7 @@ ldap_reconnect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 
 		i = ISC_MIN(ntimes - 1, ldap_conn->tries);
 		CHECK(setting_get_uint("reconnect_interval",
-				       ldap_inst->global_settings,
+				       ldap_inst->server_ldap_settings,
 				       &reconnect_interval));
 		seconds = ISC_MIN(intervals[i], reconnect_interval);
 		isc_interval_set(&delay, seconds, 0);
@@ -2559,8 +2589,10 @@ force_reconnect:
 		ret = ldap_simple_bind_s(ldap_conn->handle, NULL, NULL);
 		break;
 	case AUTH_SIMPLE:
-		CHECK(setting_get_str("bind_dn", ldap_inst->global_settings, &bind_dn));
-		CHECK(setting_get_str("password", ldap_inst->global_settings, &password));
+		CHECK(setting_get_str("bind_dn", ldap_inst->server_ldap_settings,
+				      &bind_dn));
+		CHECK(setting_get_str("password", ldap_inst->server_ldap_settings,
+				      &password));
 		ret = ldap_simple_bind_s(ldap_conn->handle, bind_dn, password);
 		break;
 	case AUTH_SASL:
@@ -4288,7 +4320,7 @@ ldap_syncrepl_watcher(isc_threadarg_t arg)
 
 	while (!inst->exiting) {
 		ldap_sync_cleanup(&ldap_sync);
-		result = ldap_sync_prepare(inst, inst->global_settings,
+		result = ldap_sync_prepare(inst, inst->server_ldap_settings,
 					   conn, &ldap_sync);
 		if (result != ISC_R_SUCCESS) {
 			log_error_r("ldap_sync_prepare() failed, retrying "

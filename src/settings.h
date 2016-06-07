@@ -13,6 +13,7 @@
 #define SETTING_LINE_MAXLENGTH 255
 #define SETTING_NAME_SEPARATORS " \t"
 #define SETTING_SET_NAME_LOCAL  "named.conf"
+#define SETTING_SET_NAME_SERVER "LDAP idnsServerConfig object"
 #define SETTING_SET_NAME_GLOBAL "LDAP idnsConfig object"
 #define SETTING_SET_NAME_ZONE   "LDAP idnsZone object"
 

@@ -61,6 +61,7 @@ static const setting_t settings_default[] = {
 	{ "serial_autoincrement",	default_string("")		},
 	{ "verbose_checks",		default_boolean(ISC_FALSE)	},
 	{ "directory",			default_string("")		},
+	{ "server_id",			default_string("")		},
 	end_of_settings
 };
 
