@@ -163,7 +163,8 @@ ldap_entry_reconstruct(isc_mem_t *mctx, mldapdb_t *mldap, struct berval *uuid,
 		CLEANUP_WITH(ISC_R_NOMEMORY);
 
 	CHECK(mldap_class_get(node, &entry->class));
-	if ((entry->class & LDAP_ENTRYCLASS_CONFIG) == 0)
+	if ((entry->class
+	    & (LDAP_ENTRYCLASS_CONFIG | LDAP_ENTRYCLASS_SERVERCONFIG)) == 0)
 		CHECK(mldap_dnsname_get(node, &entry->fqdn, &entry->zone_name));
 
 	*entryp = entry;
@@ -449,6 +450,8 @@ ldap_entry_parseclass(ldap_entry_t *entry, ldap_entryclass_t *class)
 			entryclass |= LDAP_ENTRYCLASS_FORWARD;
 		else if (!strcasecmp(val->value, "idnsconfigobject"))
 			entryclass |= LDAP_ENTRYCLASS_CONFIG;
+		else if (!strcasecmp(val->value, "idnsServerConfigObject"))
+			entryclass |= LDAP_ENTRYCLASS_SERVERCONFIG;
 	}
 
 	if (class == LDAP_ENTRYCLASS_NONE) {
@@ -544,6 +547,8 @@ ldap_entry_getclassname(const ldap_entryclass_t class) {
 		return "forward zone";
 	else if ((class & LDAP_ENTRYCLASS_CONFIG) != 0)
 		return "config object";
+	else if ((class & LDAP_ENTRYCLASS_SERVERCONFIG) != 0)
+		return "server config object";
 	else if ((class & LDAP_ENTRYCLASS_RR) != 0)
 		return "resource record";
 	else if (class != 0)

@@ -1445,6 +1445,32 @@ cleanup:
 	return ISC_R_SUCCESS;
 }
 
+/* Parse the idnsServerConfig object entry */
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+ldap_parse_serverconfigentry(ldap_entry_t *entry, ldap_instance_t *inst)
+{
+	isc_result_t result;
+
+	/* BIND functions are thread safe, ldap instance 'inst' is locked
+	 * inside setting* functions. */
+
+	log_debug(3, "Parsing server configuration object");
+
+	result = fwd_parse_ldap(entry, inst->server_ldap_settings);
+	if (result == ISC_R_SUCCESS) {
+		result = fwd_configure_zone(inst->server_ldap_settings, inst,
+					    dns_rootname);
+		if (result != ISC_R_SUCCESS)
+			log_error_r("global forwarder could not be set up");
+	} else if (result != ISC_R_IGNORE)
+		goto cleanup;
+
+cleanup:
+	/* Configuration errors are not fatal. */
+	/* TODO: log something? */
+	return ISC_R_SUCCESS;
+}
+
 /* Parse the forward zone entry */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_parse_fwd_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
@@ -3506,6 +3532,38 @@ cleanup:
 	isc_task_detach(&task);
 }
 
+static void ATTR_NONNULLS
+update_serverconfig(isc_task_t * task, isc_event_t *event)
+{
+	ldap_syncreplevent_t *pevent = (ldap_syncreplevent_t *)event;
+	isc_result_t result;
+	ldap_instance_t *inst = NULL;
+	ldap_entry_t *entry = pevent->entry;
+	isc_mem_t *mctx;
+
+	mctx = pevent->mctx;
+
+	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
+	INSIST(task == inst->task); /* For task-exclusive mode */
+	CHECK(ldap_parse_serverconfigentry(entry, inst));
+
+cleanup:
+	if (inst != NULL) {
+		sync_concurr_limit_signal(inst->sctx);
+		sync_event_signal(inst->sctx, event);
+	}
+	if (result != ISC_R_SUCCESS)
+		log_error_r("update_serverconfig (syncrepl) failed for %s. "
+			    "Configuration can be outdated, run `rndc reload`",
+			    ldap_entry_logname(entry));
+
+	ldap_entry_destroy(&entry);
+	isc_mem_free(mctx, pevent->dbname);
+	isc_mem_detach(&mctx);
+	isc_event_free(&event);
+	isc_task_detach(&task);
+}
+
 /**
  * @brief Update record in cache.
  *
@@ -3857,6 +3915,8 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 
 	if ((entry->class & LDAP_ENTRYCLASS_CONFIG) != 0)
 		action = update_config;
+	else if ((entry->class & LDAP_ENTRYCLASS_SERVERCONFIG) != 0)
+		action = update_serverconfig;
 	else if ((entry->class & LDAP_ENTRYCLASS_MASTER) != 0)
 		action = update_zone;
 	else if ((entry->class & LDAP_ENTRYCLASS_FORWARD) != 0)
@@ -3871,7 +3931,8 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 
 	/* All events for single zone are handled by one task, so we don't
 	 * need to spend time with normal records. */
-	if (action == update_zone || action == update_config) {
+	if (action == update_zone || action == update_config
+	    || action == update_serverconfig) {
 		INSIST(task == inst->task); /* For task-exclusive mode */
 		sync_state_get(inst->sctx, &sync_state);
 		if (sync_state == sync_init)
@@ -3899,7 +3960,8 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 
 	/* Lock syncrepl queue to prevent zone, config and resource records
 	 * from racing with each other. */
-	if (action == update_zone || action == update_config)
+	if (action == update_zone || action == update_config
+	    || action == update_serverconfig)
 		CHECK(sync_event_wait(inst->sctx, wait_event));
 
 cleanup:
@@ -4047,7 +4109,9 @@ int ldap_sync_search_entry (
 				  "object class in %s changed: "
 				  "rndc reload might be necessary",
 				  ldap_entry_logname(new_entry));
-		if ((old_entry->class & LDAP_ENTRYCLASS_CONFIG) == 0)
+		if ((old_entry->class
+		    & (LDAP_ENTRYCLASS_CONFIG | LDAP_ENTRYCLASS_SERVERCONFIG))
+		    == 0)
 			modrdn = !(dns_name_equal(&old_entry->zone_name,
 						  &new_entry->zone_name)
 				   && dns_name_equal(&old_entry->fqdn,
@@ -4071,7 +4135,9 @@ int ldap_sync_search_entry (
 	if (phase == LDAP_SYNC_CAPI_ADD || phase == LDAP_SYNC_CAPI_MODIFY) {
 		/* store new state into metaDB */
 		CHECK(mldap_entry_create(new_entry, inst->mldapdb, &node));
-		if ((new_entry->class & LDAP_ENTRYCLASS_CONFIG) == 0)
+		if ((new_entry->class
+		    & (LDAP_ENTRYCLASS_CONFIG | LDAP_ENTRYCLASS_SERVERCONFIG))
+		    == 0)
 			CHECK(mldap_dnsname_store(&new_entry->fqdn,
 						  &new_entry->zone_name, node));
 		/* commit new entry into metaLDAP DB before something breaks */
@@ -4222,6 +4288,15 @@ ldap_sync_prepare(ldap_instance_t *inst, settings_set_t *settings,
 	const char *base = NULL;
 	isc_uint32_t reconnect_interval;
 	ldap_sync_t *ldap_sync = NULL;
+	const char *server_id = NULL;
+	char filter[1024];
+	const char filter_template[] =
+		"(|(objectClass=idnsConfigObject)"
+		"  (objectClass=idnsZone)"
+		"  (objectClass=idnsForwardZone)"
+		"  (objectClass=idnsRecord)"
+		"  %s%s%s"
+		")";
 
 	REQUIRE(inst != NULL);
 	REQUIRE(ldap_syncp != NULL && *ldap_syncp == NULL);
@@ -4256,12 +4331,20 @@ ldap_sync_prepare(ldap_instance_t *inst, settings_set_t *settings,
 	if (ldap_sync->ls_base == NULL)
 		CLEANUP_WITH(ISC_R_NOMEMORY);
 	ldap_sync->ls_scope = LDAP_SCOPE_SUBTREE;
-	ldap_sync->ls_filter = ldap_strdup("(|(objectClass=idnsConfigObject)"
-					   "  (objectClass=idnsZone)"
-					   "  (objectClass=idnsForwardZone)"
-					   "  (objectClass=idnsRecord))");
+
+	/* request idnsServerConfig object only if server_id is specified */
+	CHECK(setting_get_str("server_id", settings, &server_id));
+	if (strlen(server_id) == 0)
+		CHECK(isc_string_printf(filter, sizeof(filter), filter_template,
+				        "", "", ""));
+	else
+		CHECK(isc_string_printf(filter, sizeof(filter), filter_template,
+				        "  (&(objectClass=idnsServerConfigObject)"
+				        "    (idnsServerId=", server_id, "))"));
+	ldap_sync->ls_filter = ldap_strdup(filter);
 	if (ldap_sync->ls_filter == NULL)
 		CLEANUP_WITH(ISC_R_NOMEMORY);
+	log_debug(1, "LDAP syncrepl filter = %s", ldap_sync->ls_filter);
 	ldap_sync->ls_timeout = -1; /* sync_poll is blocking */
 	ldap_sync->ls_ld = conn->handle;
 	/* This is a hack: ldap_sync_destroy() will call ldap_unbind().
