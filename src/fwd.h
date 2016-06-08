@@ -34,4 +34,8 @@ fwd_delete_table(dns_view_t *view, dns_name_t *name,
 		 const char *msg_obj_type, const char *logname)
 		 ATTR_NONNULLS ATTR_CHECKRESULT;
 
+isc_result_t
+fwd_reconfig_global(ldap_instance_t *inst)
+		    ATTR_NONNULLS ATTR_CHECKRESULT;
+
 #endif /* _LD_FWD_H_ */

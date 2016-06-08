@@ -78,6 +78,8 @@ ldap_mod_free(isc_mem_t *mctx, LDAPMod **changep);
 
 settings_set_t * ldap_instance_getsettings_local(ldap_instance_t *ldap_inst) ATTR_NONNULLS;
 
+settings_set_t * ldap_instance_getsettings_server(ldap_instance_t *ldap_inst) ATTR_NONNULLS;
+
 const char * ldap_instance_getdbname(ldap_instance_t *ldap_inst) ATTR_NONNULLS;
 
 zone_register_t * ldap_instance_getzr(ldap_instance_t *ldap_inst) ATTR_NONNULLS;

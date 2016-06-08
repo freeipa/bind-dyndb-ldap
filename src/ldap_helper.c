@@ -1418,10 +1418,7 @@ ldap_parse_configentry(ldap_entry_t *entry, ldap_instance_t *inst)
 
 	result = fwd_parse_ldap(entry, inst->global_settings);
 	if (result == ISC_R_SUCCESS) {
-		result = fwd_configure_zone(inst->global_settings, inst,
-					    dns_rootname);
-		if (result != ISC_R_SUCCESS)
-			log_error_r("global forwarder could not be set up");
+		CHECK(fwd_reconfig_global(inst));
 	} else if (result != ISC_R_IGNORE)
 		goto cleanup;
 
@@ -1458,10 +1455,7 @@ ldap_parse_serverconfigentry(ldap_entry_t *entry, ldap_instance_t *inst)
 
 	result = fwd_parse_ldap(entry, inst->server_ldap_settings);
 	if (result == ISC_R_SUCCESS) {
-		result = fwd_configure_zone(inst->server_ldap_settings, inst,
-					    dns_rootname);
-		if (result != ISC_R_SUCCESS)
-			log_error_r("global forwarder could not be set up");
+		CHECK(fwd_reconfig_global(inst));
 	} else if (result != ISC_R_IGNORE)
 		goto cleanup;
 
@@ -4453,6 +4447,12 @@ settings_set_t *
 ldap_instance_getsettings_local(ldap_instance_t *ldap_inst)
 {
 	return ldap_inst->local_settings;
+}
+
+settings_set_t *
+ldap_instance_getsettings_server(ldap_instance_t *ldap_inst)
+{
+	return ldap_inst->server_ldap_settings;
 }
 
 const char *

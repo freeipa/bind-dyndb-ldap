@@ -18,6 +18,7 @@
 #include "ldap_helper.h"
 #include "lock.h"
 #include "settings.h"
+#include "zone_register.h"
 
 const enum_txt_assoc_t forwarder_policy_txts[] = {
 	{ dns_fwdpolicy_none,	"none"	},
@@ -674,4 +675,39 @@ fwd_delete_table(dns_view_t *view, dns_name_t *name,
 	} else {
 		return ISC_R_SUCCESS; /* ISC_R_NOTFOUND = nothing to delete */
 	}
+}
+
+/**
+ * Reconfigure global forwarder using latest configuration in priority order:
+ * - root zone (if it is active)
+ * - server LDAP config
+ * - global LDAP config (inheritance is handled by settings tree)
+ * - named.conf (inheritance is handled by settings tree)
+ */
+isc_result_t
+fwd_reconfig_global(ldap_instance_t *inst) {
+	isc_result_t result;
+	settings_set_t *toplevel_settings = NULL;
+	isc_boolean_t root_zone_is_active = ISC_FALSE;
+
+	/* we have to respect forwarding configuration for root zone */
+	result = zr_get_zone_settings(ldap_instance_getzr(inst), dns_rootname,
+				      &toplevel_settings);
+	if (result == ISC_R_SUCCESS)
+		/* is root zone active? */
+		CHECK(setting_get_bool("active", toplevel_settings,
+				       &root_zone_is_active));
+	else if (result != ISC_R_NOTFOUND)
+		goto cleanup;
+
+	if (root_zone_is_active == ISC_FALSE)
+		toplevel_settings = ldap_instance_getsettings_server(inst);
+
+	CHECK(fwd_configure_zone(toplevel_settings, inst, dns_rootname));
+	if (result != ISC_R_SUCCESS)
+		log_error_r("global forwarder could not be set up using %s",
+			    toplevel_settings->name);
+
+cleanup:
+	return result;
 }
