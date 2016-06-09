@@ -263,6 +263,7 @@ static setting_t settings_server_ldap_default[] = {
 	{ "fake_mname",		no_default_string	},
 	{ "forwarders",		no_default_string	},
 	{ "forward_policy",	no_default_string	},
+	{ "substitutionvariable_ipalocation",	no_default_string	},
 	end_of_settings
 };
 
@@ -626,8 +627,6 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	CHECK(settings_set_create(mctx, settings_server_ldap_default,
 	      sizeof(settings_server_ldap_default), settings_name,
 	      ldap_inst->global_settings, &ldap_inst->server_ldap_settings));
-	if (settings_set_isfilled(ldap_inst->server_ldap_settings) != ISC_TRUE)
-		CLEANUP_WITH(ISC_R_FAILURE);
 
 	ldap_inst->empty_fwdz_settings = (settings_set_t) {
 			NULL,
@@ -1462,6 +1461,13 @@ ldap_parse_serverconfigentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	result = setting_update_from_ldap_entry("fake_mname",
 						inst->server_ldap_settings,
 						"idnsSOAmName",
+						entry);
+	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
+		goto cleanup;
+
+	result = setting_update_from_ldap_entry("substitutionvariable_ipalocation",
+						inst->server_ldap_settings,
+						"idnsSubstitutionVariable;ipalocation",
 						entry);
 	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
 		goto cleanup;
