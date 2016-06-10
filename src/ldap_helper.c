@@ -1459,6 +1459,13 @@ ldap_parse_serverconfigentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	} else if (result != ISC_R_IGNORE)
 		goto cleanup;
 
+	result = setting_update_from_ldap_entry("fake_mname",
+						inst->server_ldap_settings,
+						"idnsSOAmName",
+						entry);
+	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
+		goto cleanup;
+
 cleanup:
 	/* Configuration errors are not fatal. */
 	/* TODO: log something? */
@@ -1892,7 +1899,7 @@ zone_sync_apex(const ldap_instance_t * const inst,
 	INIT_LIST(rdatalist);
 	*ldap_writeback = ISC_FALSE; /* GCC */
 
-	CHECK(setting_get_str("fake_mname", inst->local_settings,
+	CHECK(setting_get_str("fake_mname", inst->server_ldap_settings,
 			      &fake_mname));
 	CHECK(ldap_parse_rrentry(inst->mctx, entry, &name, fake_mname,
 				 &rdatalist));
@@ -3668,7 +3675,7 @@ update_restart:
 		/* Parse new data from LDAP. */
 		log_debug(5, "syncrepl_update: updating name in rbtdb, "
 			  "%s", ldap_entry_logname(entry));
-		CHECK(setting_get_str("fake_mname", inst->local_settings,
+		CHECK(setting_get_str("fake_mname", inst->server_ldap_settings,
 				      &fake_mname));
 		CHECK(ldap_parse_rrentry(mctx, entry, &entry->zone_name, fake_mname,
 					 &rdatalist));
