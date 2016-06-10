@@ -4274,23 +4274,20 @@ ldap_sync_cleanup(ldap_sync_t **ldap_syncp) {
 	*ldap_syncp = NULL;
 }
 
-
+/**
+ * Initialize ldap_sync_t structure. Is has to be freed by ldap_sync_cleanup().
+ * In case of failure, the conn parameter may be invalid and LDAP connection
+ * needs to be re-established.
+ *
+ * @param[in]  filter  LDAP filter to be used in SyncRepl session
+ */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_sync_prepare(ldap_instance_t *inst, settings_set_t *settings,
-		  ldap_connection_t *conn, ldap_sync_t **ldap_syncp) {
+		  const char *filter, ldap_connection_t *conn,
+		  ldap_sync_t **ldap_syncp) {
 	isc_result_t result;
 	const char *base = NULL;
-	isc_uint32_t reconnect_interval;
 	ldap_sync_t *ldap_sync = NULL;
-	const char *server_id = NULL;
-	char filter[1024];
-	const char filter_template[] =
-		"(|(objectClass=idnsConfigObject)"
-		"  (objectClass=idnsZone)"
-		"  (objectClass=idnsForwardZone)"
-		"  (objectClass=idnsRecord)"
-		"  %s%s%s"
-		")";
 
 	REQUIRE(inst != NULL);
 	REQUIRE(ldap_syncp != NULL && *ldap_syncp == NULL);
@@ -4298,20 +4295,8 @@ ldap_sync_prepare(ldap_instance_t *inst, settings_set_t *settings,
 	/* Remove stale zone & journal files. */
 	CHECK(cleanup_files(inst));
 
-	/* Try to connect. */
-	while (conn->handle == NULL) {
-		result = ISC_R_SHUTTINGDOWN;
-		CHECK_EXIT;
-		CHECK(setting_get_uint("reconnect_interval", settings,
-				       &reconnect_interval));
-
-		log_error("ldap_syncrepl will reconnect in %d second%s",
-			  reconnect_interval,
-			  reconnect_interval == 1 ? "": "s");
-		if (!sane_sleep(inst, reconnect_interval))
-			CLEANUP_WITH(ISC_R_SHUTTINGDOWN);
-		handle_connection_error(inst, conn, ISC_TRUE);
-	}
+	if(conn->handle == NULL)
+		CLEANUP_WITH(ISC_R_NOTCONNECTED);
 
 	ldap_sync = ldap_sync_initialize(NULL);
 	if (ldap_sync == NULL) {
@@ -4325,20 +4310,10 @@ ldap_sync_prepare(ldap_instance_t *inst, settings_set_t *settings,
 	if (ldap_sync->ls_base == NULL)
 		CLEANUP_WITH(ISC_R_NOMEMORY);
 	ldap_sync->ls_scope = LDAP_SCOPE_SUBTREE;
-
-	/* request idnsServerConfig object only if server_id is specified */
-	CHECK(setting_get_str("server_id", settings, &server_id));
-	if (strlen(server_id) == 0)
-		CHECK(isc_string_printf(filter, sizeof(filter), filter_template,
-				        "", "", ""));
-	else
-		CHECK(isc_string_printf(filter, sizeof(filter), filter_template,
-				        "  (&(objectClass=idnsServerConfigObject)"
-				        "    (idnsServerId=", server_id, "))"));
 	ldap_sync->ls_filter = ldap_strdup(filter);
 	if (ldap_sync->ls_filter == NULL)
 		CLEANUP_WITH(ISC_R_NOMEMORY);
-	log_debug(1, "LDAP syncrepl filter = %s", ldap_sync->ls_filter);
+	log_debug(1, "LDAP syncrepl filter = '%s'", ldap_sync->ls_filter);
 	ldap_sync->ls_timeout = -1; /* sync_poll is blocking */
 	ldap_sync->ls_ld = conn->handle;
 	/* This is a hack: ldap_sync_destroy() will call ldap_unbind().
@@ -4360,6 +4335,90 @@ cleanup:
 	return result;
 }
 
+/**
+ * Start one SyncRepl session and process all events produced by it.
+   LDAP_SYNC_REFRESH_AND_PERSIST mode returns only if an error occurred.
+ *
+ * @post Conn is unbound and invalid. The connection needs to be re-established.
+ *
+ * @param[in]  conn          Valid and bound LDAP connection.
+ * @param[in]  filter_objcs  LDAP filter specifying objects which should
+ *                           be retrieved during this session. The supplied
+ *                           filter will be ORed filter specifying configuration
+ *                           objects which always need to be retrieved.
+ * @param[in]  mode          LDAP_SYNC_REFRESH_AND_PERSIST
+ *                           or LDAP_SYNC_REFRESH_ONLY
+ *
+ * @retval ISC_R_SUCCESS      LDAP_SYNC_REFRESH_ONLY mode finished,
+ *                            all events were sent (not necessarily processed)
+ * @retval ISC_R_NOTCONNECTED Unable to start SyncRepl session.
+ * @retval others             Errors, some events might or might not be sent.
+ */
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+ldap_sync_doit(ldap_instance_t *inst, ldap_connection_t *conn,
+	       const char * const filter_objcs, int mode) {
+	isc_result_t result;
+	int ret;
+	ldap_sync_t *ldap_sync = NULL;
+	const char *err_hint = "";
+	char filter[1024];
+	const char config_template[] =
+		"(|"
+		"  (objectClass=idnsConfigObject)"
+		"  %s%s%s"
+		"%s"
+		")";
+	const char *server_id = NULL;
+
+	/* request idnsServerConfig object only if server_id is specified */
+	CHECK(setting_get_str("server_id", inst->server_ldap_settings, &server_id));
+	if (strlen(server_id) == 0)
+		CHECK(isc_string_printf(filter, sizeof(filter), config_template,
+				        "", "", "", filter_objcs));
+	else
+		CHECK(isc_string_printf(filter, sizeof(filter), config_template,
+					"  (&(objectClass=idnsServerConfigObject)"
+				        "    (idnsServerId=", server_id, "))",
+					filter_objcs));
+
+	result = ldap_sync_prepare(inst, inst->server_ldap_settings,
+				   filter, conn, &ldap_sync);
+	if (result != ISC_R_SUCCESS) {
+		log_error_r("ldap_sync_prepare() failed, retrying "
+			    "in 1 second");
+		sane_sleep(inst, 1);
+		goto cleanup;
+	}
+
+	ret = ldap_sync_init(ldap_sync, mode);
+	/* TODO: error handling, set tainted flag & do full reload? */
+	if (ret != LDAP_SUCCESS) {
+		if (ret == LDAP_UNAVAILABLE_CRITICAL_EXTENSION)
+			err_hint = ": is RFC 4533 supported by LDAP server?";
+		else
+			err_hint = "";
+
+		log_ldap_error(ldap_sync->ls_ld, "unable to start SyncRepl "
+				"session%s", err_hint);
+		conn->handle = NULL;
+		CLEANUP_WITH(ISC_R_NOTCONNECTED);
+	}
+
+	while (!inst->exiting && ret == LDAP_SUCCESS
+	       && mode == LDAP_SYNC_REFRESH_AND_PERSIST) {
+		ret = ldap_sync_poll(ldap_sync);
+		if (!inst->exiting && ret != LDAP_SUCCESS) {
+			log_ldap_error(ldap_sync->ls_ld,
+				       "ldap_sync_poll() failed");
+			/* force reconnect in sync_prepare */
+			conn->handle = NULL;
+		}
+	}
+
+cleanup:
+	ldap_sync_cleanup(&ldap_sync);
+	return result;
+}
 
 /*
  * NOTE:
@@ -4373,8 +4432,7 @@ ldap_syncrepl_watcher(isc_threadarg_t arg)
 	int ret;
 	isc_result_t result;
 	sigset_t sigset;
-	ldap_sync_t *ldap_sync = NULL;
-	const char *err_hint = "";
+	isc_uint32_t reconnect_interval;
 
 	log_debug(1, "Entering ldap_syncrepl_watcher");
 
@@ -4396,48 +4454,42 @@ ldap_syncrepl_watcher(isc_threadarg_t arg)
 	CHECK(ldap_pool_getconnection(inst->pool, &conn));
 
 	while (!inst->exiting) {
-		ldap_sync_cleanup(&ldap_sync);
-		result = ldap_sync_prepare(inst, inst->server_ldap_settings,
-					   conn, &ldap_sync);
-		if (result != ISC_R_SUCCESS) {
-			log_error_r("ldap_sync_prepare() failed, retrying "
-				    "in 1 second");
-			sane_sleep(inst, 1);
-			continue;
-		}
 		mldap_cur_generation_bump(inst->mldapdb);
 
 		log_info("LDAP instance '%s' is being synchronized, "
 			 "please ignore message 'all zones loaded'",
 			 inst->db_name);
-		ret = ldap_sync_init(ldap_sync, LDAP_SYNC_REFRESH_AND_PERSIST);
-		/* TODO: error handling, set tainted flag & do full reload? */
-		if (ret != LDAP_SUCCESS) {
-			if (ret == LDAP_UNAVAILABLE_CRITICAL_EXTENSION)
-				err_hint = ": is RFC 4533 supported by LDAP server?";
-			else
-				err_hint = "";
-
-			log_ldap_error(ldap_sync->ls_ld, "unable to start SyncRepl "
-					"session%s", err_hint);
-			conn->handle = NULL;
-			continue;
+		result = ldap_sync_doit(inst, conn,
+				        "(|(objectClass=idnsZone)"
+					"  (objectClass=idnsForwardZone)"
+					"  (objectClass=idnsRecord))",
+					LDAP_SYNC_REFRESH_AND_PERSIST);
+		if (result != ISC_R_SUCCESS) {
+			log_error_r("LDAP data synchronization failed");
+			goto retry;
 		}
 
-		while (!inst->exiting && ret == LDAP_SUCCESS) {
-			ret = ldap_sync_poll(ldap_sync);
-			if (!inst->exiting && ret != LDAP_SUCCESS) {
-				log_ldap_error(ldap_sync->ls_ld,
-					       "ldap_sync_poll() failed");
-				/* force reconnect in sync_prepare */
-				conn->handle = NULL;
-			}
+		CHECK_EXIT;
+
+retry:
+		/* Try to connect. */
+		while (conn->handle == NULL) {
+			CHECK_EXIT;
+			CHECK(setting_get_uint("reconnect_interval",
+					       inst->server_ldap_settings,
+					       &reconnect_interval));
+
+			log_error("ldap_syncrepl will reconnect in %d second%s",
+				  reconnect_interval,
+				  reconnect_interval == 1 ? "": "s");
+			if (!sane_sleep(inst, reconnect_interval))
+				CLEANUP_WITH(ISC_R_SHUTTINGDOWN);
+			handle_connection_error(inst, conn, ISC_TRUE);
 		}
 	}
 
 cleanup:
 	log_debug(1, "Ending ldap_syncrepl_watcher");
-	ldap_sync_cleanup(&ldap_sync);
 	ldap_pool_putconnection(inst->pool, &conn);
 
 	return (isc_threadresult_t)0;
