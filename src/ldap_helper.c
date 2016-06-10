@@ -297,9 +297,11 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 			    ldap_instance_t *const inst,
 			    isc_task_t *const task)
 			    ATTR_NONNULL(1,3,4) ATTR_CHECKRESULT;
+
 static isc_result_t
 ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
-		   const char *fake_mname, ldapdb_rdatalist_t *rdatalist) ATTR_NONNULLS ATTR_CHECKRESULT;
+		   const settings_set_t * const settings,
+		   ldapdb_rdatalist_t *rdatalist) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 static isc_result_t ldap_connect(ldap_instance_t *ldap_inst,
 		ldap_connection_t *ldap_conn, isc_boolean_t force) ATTR_NONNULLS ATTR_CHECKRESULT;
@@ -1891,7 +1893,6 @@ zone_sync_apex(const ldap_instance_t * const inst,
 	       isc_boolean_t * const ldap_writeback,
 	       isc_boolean_t * const data_changed) {
 	isc_result_t result;
-	const char *fake_mname = NULL;
 	ldapdb_rdatalist_t rdatalist;
 	dns_rdatasetiter_t *rbt_rds_iterator = NULL;
 	/* RBTDB's origin node cannot be detached until the node is non-empty.
@@ -1905,10 +1906,8 @@ zone_sync_apex(const ldap_instance_t * const inst,
 	INIT_LIST(rdatalist);
 	*ldap_writeback = ISC_FALSE; /* GCC */
 
-	CHECK(setting_get_str("fake_mname", inst->server_ldap_settings,
-			      &fake_mname));
-	CHECK(ldap_parse_rrentry(inst->mctx, entry, &name, fake_mname,
-				 &rdatalist));
+	CHECK(ldap_parse_rrentry(inst->mctx, entry, &name,
+				 inst->server_ldap_settings, &rdatalist));
 
 	CHECK(dns_db_getoriginnode(rbtdb, &node));
 	result = dns_db_allrdatasets(rbtdb, node, version, 0,
@@ -2292,7 +2291,8 @@ free_rdatalist(isc_mem_t *mctx, dns_rdatalist_t *rdlist)
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
-		   const char *fake_mname, ldapdb_rdatalist_t *rdatalist)
+		   const settings_set_t * const settings,
+		   ldapdb_rdatalist_t *rdatalist)
 {
 	isc_result_t result;
 	dns_rdataclass_t rdclass;
@@ -2303,12 +2303,15 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
 	ldap_attribute_t *attr;
 	const char *data_str = "<NULL data>";
 	ld_string_t *data_buf = NULL;
+	const char *fake_mname;
 
 	REQUIRE(EMPTY(*rdatalist));
 
 	CHECK(str_new(mctx, &data_buf));
-	if ((entry->class & LDAP_ENTRYCLASS_MASTER) != 0)
+	if ((entry->class & LDAP_ENTRYCLASS_MASTER) != 0) {
+		CHECK(setting_get_str("fake_mname", settings, &fake_mname));
 		CHECK(add_soa_record(mctx, origin, entry, rdatalist, fake_mname));
+	}
 
 	rdclass = ldap_entry_getrdclass(entry);
 	ttl = ldap_entry_getttl(entry);
@@ -3593,7 +3596,6 @@ update_record(isc_task_t *task, isc_event_t *event)
 	isc_boolean_t zone_reloaded = ISC_FALSE;
 	isc_uint32_t serial;
 	ldap_entry_t *entry = pevent->entry;
-	const char *fake_mname = NULL;
 
 	dns_db_t *rbtdb = NULL;
 	dns_db_t *ldapdb = NULL;
@@ -3681,10 +3683,8 @@ update_restart:
 		/* Parse new data from LDAP. */
 		log_debug(5, "syncrepl_update: updating name in rbtdb, "
 			  "%s", ldap_entry_logname(entry));
-		CHECK(setting_get_str("fake_mname", inst->server_ldap_settings,
-				      &fake_mname));
-		CHECK(ldap_parse_rrentry(mctx, entry, &entry->zone_name, fake_mname,
-					 &rdatalist));
+		CHECK(ldap_parse_rrentry(mctx, entry, &entry->zone_name,
+					 inst->server_ldap_settings, &rdatalist));
 	}
 
 	if (rbt_rds_iterator != NULL) {
