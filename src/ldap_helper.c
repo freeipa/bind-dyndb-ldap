@@ -2726,7 +2726,7 @@ handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn
 		/* Try to reconnect on other errors. */
 		log_ldap_error(ldap_conn->handle, "connection error");
 reconnect:
-		if (ldap_conn->handle == NULL)
+		if (ldap_conn->handle == NULL && force == ISC_FALSE)
 			log_error("connection to the LDAP server was lost");
 		result = ldap_connect(ldap_inst, ldap_conn, force);
 		if (result == ISC_R_SUCCESS)
