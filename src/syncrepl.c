@@ -39,6 +39,7 @@ struct task_element {
 static const isc_interval_t shutdown_timeout = { 3, 0 };
 
 /**
+ * @file syncrepl.c
  * @brief Synchronisation context.
  *
  * This structure provides information necessary for detecting the end
@@ -52,9 +53,13 @@ static const isc_interval_t shutdown_timeout = { 3, 0 };
  * zone. Each task involved in event processing is added to task list in
  * struct sync_ctx by sync_task_add() call.
  *
- * The initial synchronization is done when LDAP intermediate message
- * (with attribute refreshDone = TRUE) was received and all events generated
- * before this message were processed.
+ * The initial synchronization in LDAP_SYNC_REFRESH_ONLY mode is done
+ * when LDAP search result message was
+ * received and all events generated before this message were processed.
+ *
+ * The initial synchronization in LDAP_SYNC_REFRESH_AND_PERSIST mode is done
+ * when LDAP intermediate message (with attribute refreshDone = TRUE) was
+ * received and all events generated before this message were processed.
  *
  * LDAP intermediate message handler ldap_sync_intermediate() calls
  * sync_barrier_wait() and it sends sync_barrierev event to all involved tasks.
@@ -62,10 +67,17 @@ static const isc_interval_t shutdown_timeout = { 3, 0 };
  * events. As a result, all events generated before sync_barrier_wait() call
  * are processed before the call returns.
  *
- * @warning There are two assumptions:
+ * @warning There are three assumptions:
  * 	@li Each task processes events in FIFO order.
  * 	@li The task assigned to a LDAP instance or a DNS zone never changes.
+ * 	@li All code which depends on machine states is executed sequentially.
+ * 	    Asynchronous execution would lead to race conditions.
+ * 	    This currently works because all code depending on machine state
+ * 	    is directly or indirectly executed from ldap_sync_{init,poll}
+ * 	    functions and is synchronous.
  *
+ * @see ldap_sync_search_result()
+ * @see ldap_sync_intermediate()
  * @see ldap_sync_search_entry()
  */
 struct sync_ctx {
@@ -111,6 +123,7 @@ finish(isc_task_t *task, isc_event_t *event) {
 	isc_result_t result = ISC_R_SUCCESS;
 	ldap_instance_t *inst = NULL;
 	sync_barrierev_t *bev = NULL;
+	sync_state_t new_state;
 
 	REQUIRE(ISCAPI_TASK_VALID(task));
 	REQUIRE(event != NULL);
@@ -119,10 +132,26 @@ finish(isc_task_t *task, isc_event_t *event) {
 	CHECK(manager_get_ldap_instance(bev->dbname, &inst));
 	log_debug(1, "sync_barrier_wait(): finish reached");
 	LOCK(&bev->sctx->mutex);
-	sync_state_change(bev->sctx, sync_finished, ISC_FALSE);
+	switch (bev->sctx->state) {
+		case sync_configbarrier:
+			new_state = sync_datainit;
+			break;
+		case sync_databarrier:
+			new_state = sync_finished;
+			break;
+		case sync_configinit:
+		case sync_datainit:
+		case sync_finished:
+		default:
+			FATAL_ERROR(__FILE__, __LINE__,
+				    "sync_barrier_wait(): invalid state "
+				    "%u", bev->sctx->state);
+	}
+	sync_state_change(bev->sctx, new_state, ISC_FALSE);
 	BROADCAST(&bev->sctx->cond);
 	UNLOCK(&bev->sctx->mutex);
-	activate_zones(task, inst);
+	if (new_state == sync_finished)
+		activate_zones(task, inst);
 
 cleanup:
 	if (result != ISC_R_SUCCESS)
@@ -233,7 +262,7 @@ sync_barrierev_create(sync_ctx_t *sctx, const char *inst_name,
  * @param[in]	inst	LDAP instance associated with this synchronization ctx.
  * @param[out]	sctxp	The new synchronization context.
  *
- * @post state == sync_init
+ * @post state == sync_configinit
  * @post task_cnt == 1
  * @post tasks list contains the task
  */
@@ -264,7 +293,7 @@ sync_ctx_init(isc_mem_t *mctx, ldap_instance_t *inst, sync_ctx_t **sctxp) {
 
 	ISC_LIST_INIT(sctx->tasks);
 
-	sctx->state = sync_init;
+	sctx->state = sync_configinit;
 	CHECK(sync_task_add(sctx, ldap_instance_gettask(sctx->inst)));
 
 	CHECK(semaphore_init(&sctx->concurr_limit, LDAP_CONCURRENCY_LIMIT));
@@ -344,14 +373,25 @@ sync_state_change(sync_ctx_t *sctx, sync_state_t new_state, isc_boolean_t lock) 
 		LOCK(&sctx->mutex);
 
 	switch (sctx->state) {
-	case sync_init:
-		/* refresh phase is finished
-		 * and ldap_sync_intermediate() was called */
-		INSIST(new_state == sync_barrier);
+	case sync_configinit:
+		/* initial synchronization is finished
+		 * and ldap_sync_search_result() was called */
+		INSIST(new_state == sync_configbarrier);
 		break;
 
-	case sync_barrier:
-		/* sync_barrier_wait() finished */
+	case sync_configbarrier:
+		/* sync_barrier_wait(sync_configinit) finished */
+		INSIST(new_state == sync_datainit);
+		break;
+
+	case sync_datainit:
+		/* refresh phase is finished
+		 * and ldap_sync_intermediate() was called */
+		INSIST(new_state == sync_databarrier);
+		break;
+
+	case sync_databarrier:
+		/* sync_barrier_wait(sync_databarrier) finished */
 		INSIST(new_state == sync_finished);
 		break;
 
@@ -363,8 +403,42 @@ sync_state_change(sync_ctx_t *sctx, sync_state_t new_state, isc_boolean_t lock) 
 	}
 
 	sctx->state = new_state;
+	log_debug(1, "sctx state %u reached", new_state);
 	if (lock == ISC_TRUE)
 		UNLOCK(&sctx->mutex);
+}
+
+/**
+ * Reset state of synchronization finite state machine.
+ * Reset can be done only before reaching state finished,
+ * i.e. when one of initial synchronizations in ldap_syncrepl_watcher failed.
+ *
+ * @warning The reset can reliably work only if all state transitions
+ *          are synchronous. This is necessary to prevent race conditions
+ *          between reset and events depending on particular state.
+ */
+void
+sync_state_reset(sync_ctx_t *sctx) {
+	REQUIRE(sctx != NULL);
+
+	LOCK(&sctx->mutex);
+
+	switch (sctx->state) {
+	case sync_configinit:
+	case sync_configbarrier:
+	case sync_datainit:
+	case sync_databarrier:
+		sctx->state = sync_configinit;
+		break;
+
+	case sync_finished:
+		/* state finished cannot be taken back, ever */
+	default:
+		fatal_error("invalid attempt to reset synchronization state");
+	}
+
+	log_debug(1, "sctx state %u reached (reset)", sctx->state);
+	UNLOCK(&sctx->mutex);
 }
 
 /**
@@ -389,7 +463,7 @@ sync_task_add(sync_ctx_t *sctx, isc_task_t *task) {
 	isc_task_attach(task, &newel->task);
 
 	LOCK(&sctx->mutex);
-	REQUIRE(sctx->state == sync_init);
+	REQUIRE(sctx->state == sync_configinit || sctx->state == sync_datainit);
 	ISC_LIST_APPEND(sctx->tasks, newel, link);
 	isc_refcount_increment0(&sctx->task_cnt, &cnt);
 	UNLOCK(&sctx->mutex);
@@ -408,7 +482,7 @@ cleanup:
  * @param[in,out]	sctx		Synchronization context
  * @param[in]		inst_name	LDAP instance name for given sctx
  *
- * @pre  sctx->state == sync_init
+ * @pre  sctx->state == sync_configinit || sync_datainit
  * @post sctx->state == sync_finished and all tasks processed all events
  *       enqueued before sync_barrier_wait() call.
  */
@@ -417,14 +491,34 @@ sync_barrier_wait(sync_ctx_t *sctx, const char *inst_name) {
 	isc_result_t result;
 	isc_event_t *ev = NULL;
 	sync_barrierev_t *bev = NULL;
+	sync_state_t barrier_state;
+	sync_state_t final_state;
 	task_element_t *taskel = NULL;
 	task_element_t *next_taskel = NULL;
 
 	LOCK(&sctx->mutex);
-	REQUIRE(sctx->state == sync_init);
+	REQUIRE(sctx->state == sync_configinit || sctx->state == sync_datainit);
 	REQUIRE(!EMPTY(sctx->tasks));
 
-	sync_state_change(sctx, sync_barrier, ISC_FALSE);
+	switch (sctx->state) {
+		case sync_configinit:
+			barrier_state = sync_configbarrier;
+			final_state = sync_datainit;
+			break;
+		case sync_datainit:
+			barrier_state = sync_databarrier;
+			final_state = sync_finished;
+			break;
+		case sync_configbarrier:
+		case sync_databarrier:
+		case sync_finished:
+		default:
+			FATAL_ERROR(__FILE__, __LINE__,
+				    "sync_barrier_wait(): invalid state "
+				    "%u", sctx->state);
+	}
+
+	sync_state_change(sctx, barrier_state, ISC_FALSE);
 	for (taskel = next_taskel = HEAD(sctx->tasks);
 	     taskel != NULL;
 	     taskel = next_taskel) {
@@ -438,7 +532,7 @@ sync_barrier_wait(sync_ctx_t *sctx, const char *inst_name) {
 	}
 
 	log_debug(1, "sync_barrier_wait(): wait until all events are processed");
-	while (sctx->state != sync_finished)
+	while (sctx->state != final_state)
 		WAIT(&sctx->cond, &sctx->mutex);
 	log_debug(1, "sync_barrier_wait(): all events were processed");
 

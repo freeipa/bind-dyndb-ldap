@@ -969,7 +969,7 @@ create_zone(ldap_instance_t * const inst, const char * const dn,
 	}
 
 	sync_state_get(inst->sctx, &sync_state);
-	if (sync_state == sync_init) {
+	if (sync_state == sync_datainit) {
 		dns_zone_gettask(raw, &task);
 		CHECK(sync_task_add(inst->sctx, task));
 		isc_task_detach(&task);
@@ -3929,7 +3929,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 	    || action == update_serverconfig) {
 		INSIST(task == inst->task); /* For task-exclusive mode */
 		sync_state_get(inst->sctx, &sync_state);
-		if (sync_state == sync_init)
+		if (sync_state == sync_configinit || sync_state == sync_datainit)
 			CHECK(sync_task_add(inst->sctx, task));
 	}
 
@@ -4215,11 +4215,11 @@ int ldap_sync_intermediate (
 		goto cleanup;
 
 	sync_state_get(inst->sctx, &state);
-	if (state == sync_init) {
+	if (state == sync_datainit) {
 		result = sync_barrier_wait(inst->sctx, inst->db_name);
 		if (result != ISC_R_SUCCESS) {
-			log_error_r("sync_barrier_wait() failed for instance "
-				    "'%s'", inst->db_name);
+			log_error_r("%s: sync_barrier_wait() failed for "
+				    "instance '%s'", __func__, inst->db_name);
 			goto cleanup;
 		}
 	}
@@ -4250,12 +4250,36 @@ int ATTR_NONNULLS ATTR_CHECKRESULT ldap_sync_search_result (
 	ldap_sync_t			*ls,
 	LDAPMessage			*msg,
 	int				refreshDeletes ) {
+	isc_result_t	result;
+	ldap_instance_t *inst = ls->ls_private;
+	sync_state_t state;
 
-	UNUSED(ls);
 	UNUSED(msg);
 	UNUSED(refreshDeletes);
 
-	log_error("ldap_sync_search_result is not yet handled");
+	log_debug(1, "ldap_sync_search_result");
+
+	if (inst->exiting)
+		goto cleanup;
+
+	/* This place can be reached only if:
+	 * a) initial config synchronization is done
+	 * b) config is re-synchronized after reconnect to LDAP */
+	sync_state_get(inst->sctx, &state);
+	INSIST(state == sync_configinit || state == sync_finished);
+
+	if (state == sync_configinit) {
+		result = sync_barrier_wait(inst->sctx, inst->db_name);
+		if (result != ISC_R_SUCCESS) {
+			log_error_r("%s: sync_barrier_wait() failed for "
+				    "instance '%s'", __func__, inst->db_name);
+			goto cleanup;
+		}
+	}
+	log_info("LDAP configuration for instance '%s' synchronized",
+		 inst->db_name);
+
+cleanup:
 	return LDAP_SUCCESS;
 }
 
@@ -4433,6 +4457,7 @@ ldap_syncrepl_watcher(isc_threadarg_t arg)
 	isc_result_t result;
 	sigset_t sigset;
 	isc_uint32_t reconnect_interval;
+	sync_state_t state;
 
 	log_debug(1, "Entering ldap_syncrepl_watcher");
 
@@ -4454,9 +4479,31 @@ ldap_syncrepl_watcher(isc_threadarg_t arg)
 	CHECK(ldap_pool_getconnection(inst->pool, &conn));
 
 	while (!inst->exiting) {
-		mldap_cur_generation_bump(inst->mldapdb);
+		sync_state_get(inst->sctx, &state);
+		if (state != sync_finished) {
+			sync_state_reset(inst->sctx);
+			CHECK(sync_task_add(inst->sctx, inst->task));
+		}
+		/* synchronize configuration first so configuration variables
+		 * are already available during data processing */
+		result = ldap_sync_doit(inst, conn, "", LDAP_SYNC_REFRESH_ONLY);
+		if (result != ISC_R_SUCCESS) {
+			log_error_r("LDAP configuration synchronization failed");
+			goto retry;
+		}
 
-		log_info("LDAP instance '%s' is being synchronized, "
+		result = ldap_connect(inst, conn, ISC_TRUE);
+		if (result != ISC_R_SUCCESS) {
+			log_error_r("reconnection to LDAP failed");
+			goto retry;
+		}
+
+		/* finally synchronize the data */
+		sync_state_get(inst->sctx, &state);
+		if (state != sync_finished)
+			CHECK(sync_task_add(inst->sctx, inst->task));
+		mldap_cur_generation_bump(inst->mldapdb);
+		log_info("LDAP data for instance '%s' are being synchronized, "
 			 "please ignore message 'all zones loaded'",
 			 inst->db_name);
 		result = ldap_sync_doit(inst, conn,
@@ -4486,6 +4533,7 @@ retry:
 				CLEANUP_WITH(ISC_R_SHUTTINGDOWN);
 			handle_connection_error(inst, conn, ISC_TRUE);
 		}
+
 	}
 
 cleanup:
