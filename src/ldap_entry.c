@@ -221,6 +221,12 @@ ldap_entry_parse(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 	}
 	entry->uuid = ber_dupbv(NULL, uuid);
 	CHECK(ldap_entry_parseclass(entry, &entry->class));
+	if ((entry->class & LDAP_ENTRYCLASS_TEMPLATE) != 0
+	    && (entry->class
+		& ~(LDAP_ENTRYCLASS_TEMPLATE | LDAP_ENTRYCLASS_RR)) != 0) {
+		log_bug("idnsTemplateObject is not supported with anything "
+			"else than idnsRecord: %s", ldap_entry_logname(entry));
+	}
 
 	if ((entry->class &
 	    (LDAP_ENTRYCLASS_MASTER | LDAP_ENTRYCLASS_FORWARD
@@ -444,6 +450,8 @@ ldap_entry_parseclass(ldap_entry_t *entry, ldap_entryclass_t *class)
 	for (val = HEAD(values); val != NULL; val = NEXT(val, link)) {
 		if (!strcasecmp(val->value, "idnsrecord"))
 			entryclass |= LDAP_ENTRYCLASS_RR;
+		else if (!strcasecmp(val->value, "idnsTemplateObject"))
+			entryclass |= LDAP_ENTRYCLASS_TEMPLATE;
 		else if (!strcasecmp(val->value, "idnszone"))
 			entryclass |= LDAP_ENTRYCLASS_MASTER;
 		else if (!strcasecmp(val->value, "idnsforwardzone"))
@@ -549,6 +557,9 @@ ldap_entry_getclassname(const ldap_entryclass_t class) {
 		return "config object";
 	else if ((class & LDAP_ENTRYCLASS_SERVERCONFIG) != 0)
 		return "server config object";
+	else if ((class & LDAP_ENTRYCLASS_RR) != 0
+		 && (class & LDAP_ENTRYCLASS_TEMPLATE) != 0)
+		return "resource record template";
 	else if ((class & LDAP_ENTRYCLASS_RR) != 0)
 		return "resource record";
 	else if (class != 0)
