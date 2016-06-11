@@ -358,6 +358,12 @@ attributeTypes: ( 2.16.840.1.113730.3.8.5.31
  EQUALITY caseIgnoreMatch
  SINGLE-VALUE )
 #
+attributeTypes: ( 2.16.840.1.113730.3.8.5.30 
+ NAME 'idnsSubstitutionVariable' 
+ DESC 'User defined variable for DNS plugin' 
+ SYNTAX 1.3.6.1.4.1.1466.115.121.1.26 
+ EQUALITY caseIgnoreIA5Match )
+#
 objectClasses: ( 2.16.840.1.113730.3.8.6.0 
  NAME 'idnsRecord' 
  DESC 'dns Record, usually a host' 
@@ -406,4 +412,6 @@ objectClasses: ( 2.16.840.1.113730.3.8.6.6
  SUP top 
  STRUCTURAL 
  MUST ( idnsServerId ) 
- MAY ( idnsSOAmName $ idnsForwarders $ idnsForwardPolicy ) )
+ MAY ( idnsSOAmName $ idnsForwarders $ idnsForwardPolicy $ 
+       idnsSubstitutionVariable 
+     ) )

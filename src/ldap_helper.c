@@ -47,6 +47,7 @@
 #define LDAP_DEPRECATED 1
 #include <ldap.h>
 #include <limits.h>
+#include <regex.h>
 #include <sasl/sasl.h>
 #include <signal.h>
 #include <stddef.h>
@@ -2286,8 +2287,192 @@ free_rdatalist(isc_mem_t *mctx, dns_rdatalist_t *rdlist)
 		SAFE_MEM_PUT_PTR(mctx, rdata);
 	}
 }
+
 /**
- * @param rdatalist[in,out] Has to be empty initialized list.
+ * Replace occurrences of \{variable_name\} with respective strings from
+ * settings tree. Remaining parts of the original string are just copied
+ * into the output.
+ *
+ * Double-escaped strings \\{ \\} do not trigger substitution.
+ * Nested references will expand only innermost variable: \{\{var1\}\}
+ * Non-matching parentheses and other garbage will be copied verbatim
+ * without trigerring an error.
+ *
+ * @retval  ISC_R_SUCCESS  Output string is valid. Caller must deallocate output.
+ * @retval  ISC_R_IGNORE   Some variables used in the template are not defined
+ *                         in settings tree. Substitution was terminated
+ *                         prematurely and output is not available.
+ * @retval  others         Unexpected errors.
+ */
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+ldap_substitute_rr_template(isc_mem_t *mctx, const settings_set_t const * set,
+			    ld_string_t *orig_val, ld_string_t **output) {
+	isc_result_t result;
+	regex_t regex;
+	regmatch_t matches[3];
+	size_t processed = 0;
+	char *tmp = NULL;
+	const char *setting_name;
+	setting_t *setting;
+	ld_string_t *replaced = NULL;
+
+	/* match \{variable_name\} in the text
+	 * \{ and \} must not be double-escaped like \\{ or \\} */
+	if (regcomp(&regex,
+		    "\\(^\\|[^\\]\\)" /* character preceding \{ = matches[1] */
+		    "\\\\{"
+		    "\\([a-zA-Z0-9_-]\\+\\)" /* variable name = matches[2] */
+		    "\\\\}",
+		    0) != 0)
+		CLEANUP_WITH(ISC_R_UNEXPECTED);
+
+	CHECK(str_new(mctx, &replaced));
+	CHECKED_MEM_STRDUP(mctx, str_buf(orig_val), tmp);
+
+	while (regexec(&regex, tmp + processed,
+		       sizeof(matches)/sizeof(regmatch_t),
+		       matches, 0) == 0)
+	{
+		/* derelativize offsets to make sure they
+		 * always start from tmp instead of tmp + processed */
+		for (size_t i = 0; i < sizeof(matches)/sizeof(regmatch_t); i++) {
+			matches[i].rm_so += processed;
+			matches[i].rm_eo += processed;
+		}
+		/* copy verbatim part of the string which precedes the \{ */
+		CHECK(str_cat_char_len(replaced,
+				       tmp + processed,
+				       matches[1].rm_eo - processed));
+
+		/* find value for given variable name in settings tree */
+		setting_name = tmp + matches[2].rm_so;
+		tmp[matches[2].rm_eo] = '\0';
+		setting = NULL;
+		result = setting_find(setting_name, set, isc_boolean_true,
+				      isc_boolean_true, &setting);
+		if (result != ISC_R_SUCCESS) {
+			log_debug(3, "setting '%s' is not defined so it "
+				  "cannot be substituted into template '%s'",
+				  setting_name, str_buf(orig_val));
+			CLEANUP_WITH(ISC_R_IGNORE);
+		}
+		if (setting->type != ST_STRING) {
+			log_bug("setting '%s' it not string so it cannot be "
+				"substituted", setting_name);
+			CLEANUP_WITH(ISC_R_NOTIMPLEMENTED);
+		}
+		CHECK(str_cat_char(replaced, setting->value.value_char));
+
+		/* end offset of previous match = matches[0].rm_eo */
+		processed = matches[0].rm_eo;
+	};
+
+	/* copy remaining part of the string */
+	CHECK(str_cat_char(replaced, tmp + processed));
+
+	*output = replaced;
+	replaced = NULL;
+	result = ISC_R_SUCCESS;
+
+cleanup:
+	if (tmp != NULL)
+		isc_mem_free(mctx, tmp);
+
+	str_destroy(&replaced);
+	return result;
+}
+
+/**
+ * Substitute strings into idnsTemplateAttributes
+ * and parse results into list of rdatas.
+ *
+ * idnsTemplateAttribute must have exactly one sub-type like "TXTRecord"
+ * (e.g. "idnsTemplateAttribute;TXTRecord"). The sub-type specifies target type.
+ *
+ * @warning Substitution currently works only for *Record attributes
+ *          and cannot be used for anything else.
+ *
+ * @retval  ISC_R_SUCCESS  A template exists in the entry and values
+ *                         were successfully substituted into it.
+ *                         Rdatalist contains new rdata.
+ * @retval  ISC_R_IGNORE   No template was found or variables
+ *                         do not have defined values. Ignore output.
+ */
+static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+ldap_parse_rrentry_template(isc_mem_t *mctx, ldap_entry_t *entry,
+			    dns_name_t *origin,
+			    const settings_set_t * const settings,
+			    ldapdb_rdatalist_t *rdatalist)
+{
+	isc_result_t result;
+	ldap_attribute_t *attr;
+	ld_string_t *orig_val = NULL;
+	ld_string_t *new_val = NULL;
+	dns_rdata_t *rdata = NULL;
+	dns_rdataclass_t rdclass;
+	dns_ttl_t ttl;
+	dns_rdatatype_t rdtype;
+	dns_rdatalist_t *rdlist = NULL;
+	isc_boolean_t did_something = ISC_FALSE;
+	static const char prefix[] = "idnsTemplateAttribute;";
+	static const char prefix_len = sizeof(prefix) - 1;
+
+	CHECK(str_new(mctx, &orig_val));
+	rdclass = ldap_entry_getrdclass(entry);
+	ttl = ldap_entry_getttl(entry);
+
+	while ((attr = ldap_entry_nextattr(entry)) != NULL) {
+		if (strncasecmp(prefix, attr->name, prefix_len) != 0)
+			continue;
+
+		result = ldap_attribute_to_rdatatype(attr->name + prefix_len,
+						     &rdtype);
+		if (result != ISC_R_SUCCESS) {
+			log_bug("%s: substitution into '%s' is not supported",
+				ldap_entry_logname(entry),
+				attr->name + prefix_len);
+			continue;
+		}
+
+		CHECK(findrdatatype_or_create(mctx, rdatalist, rdclass,
+					      rdtype, ttl, &rdlist));
+		for (result = ldap_attr_firstvalue(attr, orig_val);
+		     result == ISC_R_SUCCESS;
+		     result = ldap_attr_nextvalue(attr, orig_val)) {
+			str_destroy(&new_val);
+			CHECK(ldap_substitute_rr_template(mctx, settings,
+							  orig_val, &new_val));
+			log_debug(10, "%s: substituted '%s' '%s' -> '%s'",
+				  ldap_entry_logname(entry), attr->name,
+				  str_buf(orig_val), str_buf(new_val));
+			CHECK(parse_rdata(mctx, entry, rdclass, rdtype, origin,
+					  str_buf(new_val), &rdata));
+			APPEND(rdlist->rdata, rdata, link);
+			rdata = NULL;
+			did_something = ISC_TRUE;
+		}
+	}
+
+cleanup:
+	str_destroy(&orig_val);
+	str_destroy(&new_val);
+	if (result == ISC_R_NOMORE || result == ISC_R_SUCCESS)
+		result = did_something ? ISC_R_SUCCESS : ISC_R_IGNORE;
+
+	return result;
+}
+
+/**
+ * Parse object containing DNS records and substitute idnsAttributeTemplates
+ * into it if they are defined.
+ *
+ * idnsAttributeTemplates take precedence over all statically defined
+ * attributes with RRs.
+ * All static RRs are ignored if substitution was successful.
+ *
+ * @pre rdatalist is empty initialized list.
+ *
+ * @param rdatalist[in,out]
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
@@ -2307,7 +2492,6 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
 
 	REQUIRE(EMPTY(*rdatalist));
 
-	CHECK(str_new(mctx, &data_buf));
 	if ((entry->class & LDAP_ENTRYCLASS_MASTER) != 0) {
 		CHECK(setting_get_str("fake_mname", settings, &fake_mname));
 		CHECK(add_soa_record(mctx, origin, entry, rdatalist, fake_mname));
@@ -2316,6 +2500,15 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
 	rdclass = ldap_entry_getrdclass(entry);
 	ttl = ldap_entry_getttl(entry);
 
+	result = ldap_parse_rrentry_template(mctx, entry, origin, settings,
+					     rdatalist);
+	if (result == ISC_R_SUCCESS)
+		/* successful substitution overrides all constants */
+		return result;
+	else if (result != ISC_R_IGNORE)
+		goto cleanup;
+
+	CHECK(str_new(mctx, &data_buf));
 	for (result = ldap_entry_firstrdtype(entry, &attr, &rdtype);
 	     result == ISC_R_SUCCESS;
 	     result = ldap_entry_nextrdtype(entry, &attr, &rdtype)) {
