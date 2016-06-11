@@ -2500,13 +2500,15 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
 	rdclass = ldap_entry_getrdclass(entry);
 	ttl = ldap_entry_getttl(entry);
 
-	result = ldap_parse_rrentry_template(mctx, entry, origin, settings,
-					     rdatalist);
-	if (result == ISC_R_SUCCESS)
-		/* successful substitution overrides all constants */
-		return result;
-	else if (result != ISC_R_IGNORE)
-		goto cleanup;
+	if ((entry->class & LDAP_ENTRYCLASS_TEMPLATE) != 0) {
+		result = ldap_parse_rrentry_template(mctx, entry, origin,
+						     settings, rdatalist);
+		if (result == ISC_R_SUCCESS)
+			/* successful substitution overrides all constants */
+			return result;
+		else if (result != ISC_R_IGNORE)
+			goto cleanup;
+	}
 
 	CHECK(str_new(mctx, &data_buf));
 	for (result = ldap_entry_firstrdtype(entry, &attr, &rdtype);
