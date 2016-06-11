@@ -70,8 +70,6 @@ struct ldap_attribute {
 #define LDAP_ENTRYCLASS_SERVERCONFIG	0x10
 #define LDAP_ENTRYCLASS_TEMPLATE	0x20
 
-#define DEFAULT_TTL 86400
-
 /* Max type length definitions, from lib/dns/master.c */
 #define TOKENSIZ (8*1024)
 
@@ -124,7 +122,7 @@ isc_result_t
 ldap_attr_nextvalue(ldap_attribute_t *attr, ld_string_t *value) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 dns_ttl_t
-ldap_entry_getttl(ldap_entry_t *entry) ATTR_NONNULLS ATTR_CHECKRESULT;
+ldap_entry_getttl(ldap_entry_t *entry, const settings_set_t * settings) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 const char *
 ldap_entry_logname(ldap_entry_t * const entry) ATTR_NONNULLS ATTR_CHECKRESULT;

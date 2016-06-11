@@ -516,7 +516,7 @@ cleanup:
 }
 
 dns_ttl_t
-ldap_entry_getttl(ldap_entry_t *entry)
+ldap_entry_getttl(ldap_entry_t *entry, const settings_set_t * settings)
 {
 	const char *ttl_attr = "dnsTTL";
 	isc_textregion_t ttl_text;
@@ -526,21 +526,20 @@ ldap_entry_getttl(ldap_entry_t *entry)
 
 	REQUIRE(entry != NULL);
 
-	result = ldap_entry_getvalues(entry, ttl_attr, &values);
-	if (result == ISC_R_NOTFOUND)
-		return DEFAULT_TTL;
+	CHECK(ldap_entry_getvalues(entry, ttl_attr, &values));
 
 	ttl_text.base = HEAD(values)->value;
 	ttl_text.length = strlen(ttl_text.base);
-	result = dns_ttl_fromtext(&ttl_text, &ttl);
-	if (result != ISC_R_SUCCESS)
-		return DEFAULT_TTL;
-	else if (ttl > 0x7fffffffUL) {
+	CHECK(dns_ttl_fromtext(&ttl_text, &ttl));
+	if (ttl > 0x7fffffffUL) {
 		log_error("%s: entry TTL %u > MAXTTL, setting TTL to 0",
 			  ldap_entry_logname(entry), ttl);
 		ttl = 0;
 	}
+	return ttl;
 
+cleanup:
+	INSIST(setting_get_uint("default_ttl", settings, &ttl) == ISC_R_SUCCESS);
 	return ttl;
 }
 

@@ -70,6 +70,7 @@ static void delete_zone_info(void *arg1, void *arg2);
  */
 static const setting_t zone_settings[] = {
 	{ "active",			default_boolean(0)	},
+	{ "default_ttl",		no_default_uint		},
 	{ "dyn_update",			no_default_boolean	},
 	{ "update_policy",		no_default_string	},
 	{ "allow_query",		no_default_string	},

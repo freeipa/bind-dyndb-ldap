@@ -28,6 +28,7 @@ isc_boolean_t verbose_checks = ISC_FALSE; /* log each failure in CHECK() macro *
 
 /** Built-in defaults. */
 static const setting_t settings_default[] = {
+	{ "default_ttl",		default_uint(86400)		}, /* Seconds */
 	{ "uri",			no_default_string		}, /* User have to set this */
 	{ "connections",		default_uint(2)			},
 	{ "reconnect_interval",		default_uint(60)		},

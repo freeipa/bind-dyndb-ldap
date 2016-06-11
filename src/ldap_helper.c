@@ -287,7 +287,7 @@ static isc_result_t findrdatatype_or_create(isc_mem_t *mctx,
 		ldapdb_rdatalist_t *rdatalist, dns_rdataclass_t rdclass,
 		dns_rdatatype_t rdtype, dns_ttl_t ttl, dns_rdatalist_t **rdlistp) ATTR_NONNULLS ATTR_CHECKRESULT;
 static isc_result_t add_soa_record(isc_mem_t *mctx, dns_name_t *origin,
-		ldap_entry_t *entry, ldapdb_rdatalist_t *rdatalist,
+		ldap_entry_t *entry, dns_ttl_t ttl, ldapdb_rdatalist_t *rdatalist,
 		const char *fake_mname) ATTR_NONNULLS ATTR_CHECKRESULT;
 static isc_result_t parse_rdata(isc_mem_t *mctx, ldap_entry_t *entry,
 		dns_rdataclass_t rdclass, dns_rdatatype_t rdtype,
@@ -1767,6 +1767,13 @@ zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
 	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
 		goto cleanup;
 
+	result = setting_update_from_ldap_entry("default_ttl", zone_settings,
+					        "DNSdefaultTTL", entry);
+	if (result == ISC_R_SUCCESS)
+		log_bug("default TTL cannot be changed at run-time");
+	else if (result != ISC_R_IGNORE)
+		goto cleanup;
+
 	result = setting_update_from_ldap_entry("update_policy", zone_settings,
 						"idnsUpdatePolicy", entry);
 	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
@@ -1889,7 +1896,9 @@ zone_sync_apex(const ldap_instance_t * const inst,
 	       ldap_entry_t * const entry, dns_name_t name,
 	       const sync_state_t sync_state, const isc_boolean_t new_zone,
 	       dns_db_t * const ldapdb, dns_db_t * const rbtdb,
-	       dns_dbversion_t * const version, dns_diff_t * const diff,
+	       dns_dbversion_t * const version,
+	       const settings_set_t * const zone_settings,
+	       dns_diff_t * const diff,
 	       isc_uint32_t * const new_serial,
 	       isc_boolean_t * const ldap_writeback,
 	       isc_boolean_t * const data_changed) {
@@ -1908,7 +1917,7 @@ zone_sync_apex(const ldap_instance_t * const inst,
 	*ldap_writeback = ISC_FALSE; /* GCC */
 
 	CHECK(ldap_parse_rrentry(inst->mctx, entry, &name,
-				 inst->server_ldap_settings, &rdatalist));
+				 zone_settings, &rdatalist));
 
 	CHECK(dns_db_getoriginnode(rbtdb, &node));
 	result = dns_db_allrdatasets(rbtdb, node, version, 0,
@@ -2095,7 +2104,7 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 	CHECK(dns_db_newversion(ldapdb, &version));
 	sync_state_get(inst->sctx, &sync_state);
 	CHECK(zone_sync_apex(inst, entry, entry->fqdn, sync_state, new_zone,
-			     ldapdb, rbtdb, version,
+			     ldapdb, rbtdb, version, zone_settings,
 			     &diff, &new_serial, &ldap_writeback,
 			     &data_changed));
 
@@ -2419,7 +2428,7 @@ ldap_parse_rrentry_template(isc_mem_t *mctx, ldap_entry_t *entry,
 
 	CHECK(str_new(mctx, &orig_val));
 	rdclass = ldap_entry_getrdclass(entry);
-	ttl = ldap_entry_getttl(entry);
+	ttl = ldap_entry_getttl(entry, settings);
 
 	while ((attr = ldap_entry_nextattr(entry)) != NULL) {
 		if (strncasecmp(prefix, attr->name, prefix_len) != 0)
@@ -2492,13 +2501,13 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
 
 	REQUIRE(EMPTY(*rdatalist));
 
+	ttl = ldap_entry_getttl(entry, settings);
+	rdclass = ldap_entry_getrdclass(entry);
 	if ((entry->class & LDAP_ENTRYCLASS_MASTER) != 0) {
 		CHECK(setting_get_str("fake_mname", settings, &fake_mname));
-		CHECK(add_soa_record(mctx, origin, entry, rdatalist, fake_mname));
+		CHECK(add_soa_record(mctx, origin, entry, ttl, rdatalist,
+				     fake_mname));
 	}
-
-	rdclass = ldap_entry_getrdclass(entry);
-	ttl = ldap_entry_getttl(entry);
 
 	if ((entry->class & LDAP_ENTRYCLASS_TEMPLATE) != 0) {
 		result = ldap_parse_rrentry_template(mctx, entry, origin,
@@ -2547,7 +2556,7 @@ cleanup:
 
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 add_soa_record(isc_mem_t *mctx, dns_name_t *origin,
-	       ldap_entry_t *entry, ldapdb_rdatalist_t *rdatalist,
+	       ldap_entry_t *entry, dns_ttl_t ttl, ldapdb_rdatalist_t *rdatalist,
 	       const char *fake_mname)
 {
 	isc_result_t result;
@@ -2564,7 +2573,7 @@ add_soa_record(isc_mem_t *mctx, dns_name_t *origin,
 			  str_buf(string), &rdata));
 
 	CHECK(findrdatatype_or_create(mctx, rdatalist, rdclass, dns_rdatatype_soa,
-				      ldap_entry_getttl(entry), &rdlist));
+				      ttl, &rdlist));
 
 	APPEND(rdlist->rdata, rdata, link);
 
@@ -3785,6 +3794,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 	isc_result_t result;
 	ldap_instance_t *inst = NULL;
 	isc_mem_t *mctx;
+	settings_set_t *zone_settings = NULL;
 	dns_zone_t *raw = NULL;
 	dns_zone_t *secure = NULL;
 	isc_boolean_t zone_found = ISC_FALSE;
@@ -3878,8 +3888,10 @@ update_restart:
 		/* Parse new data from LDAP. */
 		log_debug(5, "syncrepl_update: updating name in rbtdb, "
 			  "%s", ldap_entry_logname(entry));
+		CHECK(zr_get_zone_settings(inst->zone_register,
+					   &entry->zone_name, &zone_settings));
 		CHECK(ldap_parse_rrentry(mctx, entry, &entry->zone_name,
-					 inst->server_ldap_settings, &rdatalist));
+					 zone_settings, &rdatalist));
 	}
 
 	if (rbt_rds_iterator != NULL) {
