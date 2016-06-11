@@ -263,6 +263,34 @@ cleanup:
 	return result;
 }
 
+/**
+ * Append len bytes from src to dest.
+ */
+isc_result_t
+str_cat_char_len(ld_string_t *dest, const char *src, size_t len)
+{
+       isc_result_t result;
+       char *from;
+       size_t dest_size;
+
+       REQUIRE(dest != NULL);
+
+        if (src == NULL || len == 0)
+            return ISC_R_SUCCESS;
+
+       dest_size = str_len_internal(dest);
+
+       CHECK(str_alloc(dest, dest_size + len));
+       from = dest->data + dest_size;
+       memcpy(from, src, len);
+       from[len] = '\0';
+
+       return ISC_R_SUCCESS;
+
+cleanup:
+       return result;
+}
+
 /*
  * A sprintf() like function.
  */
