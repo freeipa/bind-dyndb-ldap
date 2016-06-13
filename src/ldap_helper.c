@@ -4103,7 +4103,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 	    (entry->class & LDAP_ENTRYCLASS_MASTER) == 0) {
 		result = zr_get_zone_ptr(inst->zone_register, zone_name,
 					 &zone_ptr, NULL);
-		if (result == ISC_R_SUCCESS && dns_zone_getmgr(zone_ptr) != NULL)
+		if (result == ISC_R_SUCCESS)
 			dns_zone_gettask(zone_ptr, &task);
 		else {
 			/* TODO: Fix race condition:
