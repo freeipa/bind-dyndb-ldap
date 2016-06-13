@@ -4289,7 +4289,6 @@ int ldap_sync_search_entry (
 	isc_result_t result;
 	metadb_node_t *node = NULL;
 	isc_boolean_t mldap_open = ISC_FALSE;
-	const char *ldap_base = NULL;
 	isc_boolean_t modrdn = ISC_FALSE;
 
 #ifdef RBTDB_DEBUG
@@ -4307,8 +4306,6 @@ int ldap_sync_search_entry (
 
 	/* MODIFY can be rename: get old name from metaDB */
 	if (phase == LDAP_SYNC_CAPI_DELETE || phase == LDAP_SYNC_CAPI_MODIFY) {
-		INSIST(setting_get_str("base", inst->local_settings,
-				       &ldap_base) == ISC_R_SUCCESS);
 		CHECK(ldap_entry_reconstruct(inst->mctx, inst->mldapdb,
 					     entryUUID, &old_entry));
 	}
