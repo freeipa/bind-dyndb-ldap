@@ -91,10 +91,11 @@ struct sync_ctx {
 	isc_condition_t			cond;	/**< for signal when task_cnt == 0 */
 	sync_state_t			state;
 	ldap_instance_t			*inst;
-	isc_event_t			*last_ev; /**< Last processed event */
 	ISC_LIST(task_element_t)	tasks;	/**< list of tasks processing
 						     events from initial
 						     synchronization phase */
+	isc_uint32_t			next_id;  /**< next sequential id */
+	isc_uint32_t			last_id;  /**< last processed event */
 };
 
 /**
@@ -587,20 +588,29 @@ sync_concurr_limit_signal(sync_ctx_t *sctx) {
 }
 
 /**
- * Wait until given event ev is processed.
+ * Send ISC event to specified task and optionally wait until given event
+ * is processed.
  *
- * End of event processing has to be signalled by
- * sync_event_signal() call.
+ * End of event processing has to be signaled by
+ * @see sync_event_signal() call.
  */
 isc_result_t
-sync_event_wait(sync_ctx_t *sctx, isc_event_t *ev) {
+sync_event_send(sync_ctx_t *sctx, isc_task_t *task, ldap_syncreplevent_t **ev,
+		isc_boolean_t synchronous) {
 	isc_result_t result;
 	isc_time_t abs_timeout;
+	isc_uint32_t seqid;
+	isc_boolean_t locked = ISC_FALSE;
 
 	REQUIRE(sctx != NULL);
 
 	LOCK(&sctx->mutex);
-	while (sctx->last_ev != ev) {
+	locked = ISC_TRUE;
+	/* overflow is not a problem as long as the modulo is smaller than
+	 * constant used by sync_concurr_limit_wait() */
+	(*ev)->seqid = seqid = ++sctx->next_id % 0xffffffff;
+	isc_task_send(task, (isc_event_t **)ev);
+	while (synchronous == ISC_TRUE && sctx->last_id != seqid) {
 		if (ldap_instance_isexiting(sctx->inst) == ISC_TRUE)
 			CLEANUP_WITH(ISC_R_SHUTTINGDOWN);
 
@@ -613,7 +623,8 @@ sync_event_wait(sync_ctx_t *sctx, isc_event_t *ev) {
 	result = ISC_R_SUCCESS;
 
 cleanup:
-	UNLOCK(&sctx->mutex);
+	if (locked == ISC_TRUE)
+		UNLOCK(&sctx->mutex);
 	return result;
 }
 
@@ -621,12 +632,12 @@ cleanup:
  * Signal that given syncrepl event was processed.
  */
 void
-sync_event_signal(sync_ctx_t *sctx, isc_event_t *ev) {
+sync_event_signal(sync_ctx_t *sctx, ldap_syncreplevent_t *ev) {
 	REQUIRE(sctx != NULL);
 	REQUIRE(ev != NULL);
 
 	LOCK(&sctx->mutex);
-	sctx->last_ev = ev;
+	sctx->last_id = ev->seqid;
 	BROADCAST(&sctx->cond);
 	UNLOCK(&sctx->mutex);
 }

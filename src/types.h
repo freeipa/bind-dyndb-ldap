@@ -5,6 +5,7 @@
 #ifndef _LD_TYPES_H_
 #define _LD_TYPES_H_
 
+#include <isc/event.h>
 #include <isc/refcount.h>
 #include <dns/name.h>
 
@@ -35,5 +36,18 @@ typedef struct zone_register	zone_register_t;
 typedef struct mldapdb		mldapdb_t;
 typedef struct ldap_entry	ldap_entry_t;
 typedef struct settings_set	settings_set_t;
+
+
+#define LDAPDB_EVENT_SYNCREPL_UPDATE	(LDAPDB_EVENTCLASS + 1)
+typedef struct ldap_syncreplevent ldap_syncreplevent_t;
+struct ldap_syncreplevent {
+	ISC_EVENT_COMMON(ldap_syncreplevent_t);
+	isc_mem_t *mctx;
+	char *dbname;
+	char *prevdn;
+	int chgtype;
+	ldap_entry_t *entry;
+	isc_uint32_t seqid;
+};
 
 #endif /* !_LD_TYPES_H_ */

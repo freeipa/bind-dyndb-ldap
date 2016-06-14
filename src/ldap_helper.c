@@ -198,18 +198,6 @@ const ldap_auth_pair_t supported_ldap_auth[] = {
 	{ AUTH_INVALID, NULL		},
 };
 
-#define LDAPDB_EVENT_SYNCREPL_UPDATE	(LDAPDB_EVENTCLASS + 1)
-
-typedef struct ldap_syncreplevent ldap_syncreplevent_t;
-struct ldap_syncreplevent {
-	ISC_EVENT_COMMON(ldap_syncreplevent_t);
-	isc_mem_t *mctx;
-	char *dbname;
-	char *prevdn;
-	int chgtype;
-	ldap_entry_t *entry;
-};
-
 extern const settings_set_t settings_default_set;
 
 /** Local configuration file */
@@ -3696,7 +3684,7 @@ update_zone(isc_task_t *task, isc_event_t *event)
 cleanup:
 	if (inst != NULL) {
 		sync_concurr_limit_signal(inst->sctx);
-		sync_event_signal(inst->sctx, event);
+		sync_event_signal(inst->sctx, pevent);
 		if (dns_name_dynamic(&prevname))
 			dns_name_free(&prevname, inst->mctx);
 	}
@@ -3732,7 +3720,7 @@ update_config(isc_task_t * task, isc_event_t *event)
 cleanup:
 	if (inst != NULL) {
 		sync_concurr_limit_signal(inst->sctx);
-		sync_event_signal(inst->sctx, event);
+		sync_event_signal(inst->sctx, pevent);
 	}
 	if (result != ISC_R_SUCCESS)
 		log_error_r("update_config (syncrepl) failed for %s. "
@@ -3764,7 +3752,7 @@ update_serverconfig(isc_task_t * task, isc_event_t *event)
 cleanup:
 	if (inst != NULL) {
 		sync_concurr_limit_signal(inst->sctx);
-		sync_event_signal(inst->sctx, event);
+		sync_event_signal(inst->sctx, pevent);
 	}
 	if (result != ISC_R_SUCCESS)
 		log_error_r("update_serverconfig (syncrepl) failed for %s. "
@@ -4069,7 +4057,6 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 	isc_result_t result = ISC_R_SUCCESS;
 	ldap_syncreplevent_t *pevent = NULL;
 	ldap_entry_t *entry = NULL;
-	isc_event_t *wait_event = NULL;
 	dns_name_t *zone_name = NULL;
 	dns_zone_t *zone_ptr = NULL;
 	char *dn = NULL;
@@ -4078,6 +4065,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 	isc_taskaction_t action = NULL;
 	isc_task_t *task = NULL;
 	sync_state_t sync_state;
+	isc_boolean_t synchronous;
 
 	REQUIRE(entryp != NULL);
 	entry = *entryp;
@@ -4113,10 +4101,12 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 			isc_task_attach(inst->task, &task);
 			result = ISC_R_SUCCESS;
 		}
+		synchronous = ISC_FALSE;
 	} else {
 		/* For configuration object and zone object use single task
 		 * to make sure that the exclusive mode actually works. */
 		isc_task_attach(inst->task, &task);
+		synchronous = ISC_TRUE;
 	}
 	REQUIRE(task != NULL);
 
@@ -4168,15 +4158,11 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 	pevent->prevdn = NULL;
 	pevent->chgtype = chgtype;
 	pevent->entry = entry;
-	wait_event = (isc_event_t *)pevent;
-	isc_task_send(task, (isc_event_t **)&pevent);
-	*entryp = NULL; /* event handler will deallocate the LDAP entry */
 
 	/* Lock syncrepl queue to prevent zone, config and resource records
 	 * from racing with each other. */
-	if (action == update_zone || action == update_config
-	    || action == update_serverconfig)
-		CHECK(sync_event_wait(inst->sctx, wait_event));
+	CHECK(sync_event_send(inst->sctx, task, &pevent, synchronous));
+	*entryp = NULL; /* event handler will deallocate the LDAP entry */
 
 cleanup:
 	if (zone_ptr != NULL)
@@ -4184,7 +4170,7 @@ cleanup:
 	if (result != ISC_R_SUCCESS)
 		log_error_r("syncrepl_update failed for %s",
 			    ldap_entry_logname(entry));
-	if (wait_event == NULL) {
+	if (pevent != NULL) {
 		/* Event was not sent */
 		sync_concurr_limit_signal(inst->sctx);
 
