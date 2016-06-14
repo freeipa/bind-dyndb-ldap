@@ -4064,7 +4064,6 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 	isc_mem_t *mctx = NULL;
 	isc_taskaction_t action = NULL;
 	isc_task_t *task = NULL;
-	sync_state_t sync_state;
 	isc_boolean_t synchronous;
 
 	REQUIRE(entryp != NULL);
@@ -4131,16 +4130,6 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 		log_error("unsupported objectClass: dn '%s'", dn);
 		result = ISC_R_NOTIMPLEMENTED;
 		goto cleanup;
-	}
-
-	/* All events for single zone are handled by one task, so we don't
-	 * need to spend time with normal records. */
-	if (action == update_zone || action == update_config
-	    || action == update_serverconfig) {
-		INSIST(task == inst->task); /* For task-exclusive mode */
-		sync_state_get(inst->sctx, &sync_state);
-		if (sync_state == sync_configinit || sync_state == sync_datainit)
-			CHECK(sync_task_add(inst->sctx, task));
 	}
 
 	pevent = (ldap_syncreplevent_t *)isc_event_allocate(inst->mctx,
