@@ -4088,18 +4088,9 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 	 * See discussion about run_exclusive_begin() function in lock.c. */
 	if ((entry->class & LDAP_ENTRYCLASS_RR) != 0 &&
 	    (entry->class & LDAP_ENTRYCLASS_MASTER) == 0) {
-		result = zr_get_zone_ptr(inst->zone_register, zone_name,
-					 &zone_ptr, NULL);
-		if (result == ISC_R_SUCCESS)
-			dns_zone_gettask(zone_ptr, &task);
-		else {
-			/* TODO: Fix race condition:
-			 * zone is not (yet) present in zone register */
-			log_debug(1, "TODO: %s: task fallback",
-				  ldap_entry_logname(entry));
-			isc_task_attach(inst->task, &task);
-			result = ISC_R_SUCCESS;
-		}
+		CHECK(zr_get_zone_ptr(inst->zone_register, zone_name,
+				      &zone_ptr, NULL));
+		dns_zone_gettask(zone_ptr, &task);
 		synchronous = ISC_FALSE;
 	} else {
 		/* For configuration object and zone object use single task
