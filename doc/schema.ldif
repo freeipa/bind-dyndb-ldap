@@ -422,3 +422,10 @@ objectClasses: ( 2.16.840.1.113730.3.8.6.6
  MAY ( idnsSOAmName $ idnsForwarders $ idnsForwardPolicy $ 
        idnsSubstitutionVariable 
      ) )
+#
+objectClasses: ( 2.16.840.1.113730.3.8.6.5 
+ NAME 'idnsTemplateObject' 
+ DESC 'Template object for dynamic DNS attribute generation' 
+ SUP top
+ AUXILIARY 
+ MUST ( idnsTemplateAttribute ) )

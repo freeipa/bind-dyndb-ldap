@@ -271,6 +271,41 @@ Attributes:
 	LIMITATION: Current plugin version supports only "ipalocation" variable
 
 
+4.5 Record template (idnsTemplateObject)
+----------------------------------------
+Object class idnsTemplateObject provides facility for dynamic resource record
+generation. The template entry must contain idnsTemplateAttribute with
+string template.
+
+Optionally the same entry can contain statically defined resource records
+in *Record attributes. All statically defined record values are ignored
+when template is present and substitution into template is successful.
+The substitution is successful only if all variables used
+by the template string are defined.
+
+Attributes:
+* idnsTemplateAttribute
+	String subtitution template. All occurrences of \{variable_name\}
+	are replaced with respective strings from plugin configuration.
+	Remaining parts of the original string are just copied into the output.
+
+	Double-escaped strings \\{ \\} do not trigger substitution.
+	Nested references will expand only innermost variable: \{\{var1\}\}
+	Non-matching parentheses and other garbage will be copied verbatim
+	without triggering an error.
+
+	Resulting resource record type is specified as LDAP sub-type.
+	(The attribute cannot be used without sub-type.
+	Exactly one instance of each sub-type is required.)
+
+	Example - LDIF snippet:
+		idnsSubstitutionVariable;ipalocation: brno
+		idnsTemplateAttribute;CNAMERecord: server.\{substitutionvariable_ipalocation\}
+		will generate CNAME record: server.brno
+	For further information please see
+	https://fedorahosted.org/bind-dyndb-ldap/wiki/Design/RecordGenerator
+
+
 5. Configuration
 ================
 
