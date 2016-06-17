@@ -240,6 +240,37 @@ Attributes:
 	Syntax is the same as in forward zone, please see previous section.
 
 
+4.4 Per-server configuration object (idnsServerConfigObject)
+------------------------------------------------------------
+Object class idnsConfigObject provides global configuration common
+for all zones. A plugin instance will read configuration
+only from entries with matching idnsServerId.
+
+Attributes:
+* idnsServerId
+	Configuration identifier (arbitrary string).
+	A plugin instance will use only objects whose idnsServerId value
+	matches server_id value in plugin's config.
+
+* idnsForwarders
+* idnsForwardPolicy
+	Same meaning as in global configuration object (idnsConfigObject).
+
+* idnsSOAmName
+	Equivalent to fake_mname option in plugin's config.
+
+* idnsSubstitutionVariable
+	This attribute associates string value with user-defined name.
+	These named variables can be used later in record template processing.
+	Variable name is specified as LDAP sub-type. (The attribute cannot be
+	used without sub-type. Exactly one instance of each sub-type
+	is required.)
+	For further information please see
+	https://fedorahosted.org/bind-dyndb-ldap/wiki/Design/RecordGenerator
+
+	LIMITATION: Current plugin version supports only "ipalocation" variable
+
+
 5. Configuration
 ================
 
