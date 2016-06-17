@@ -224,6 +224,22 @@ Unloaded empty zones will not be loaded back even if the forward zone is later
 deleted. The empty zones will be loaded on each BIND reload.
 
 
+4.3 Global configuration object (idnsConfigObject)
+--------------------------------------------------
+Object class idnsConfigObject provides global configuration common
+for all zones.
+
+Attributes:
+* idnsAllowSyncPTR
+	Semantics is equivalent to "sync_ptr" option described in plugin's
+	config and to idnsAllowSyncPTR attribute in idnsZone.
+
+* idnsForwarders
+* idnsForwardPolicy
+	Semantics is equivalent to "forward" statement in named.conf.
+	Syntax is the same as in forward zone, please see previous section.
+
+
 5. Configuration
 ================
 
