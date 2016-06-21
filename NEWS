@@ -1,3 +1,40 @@
+10.0
+====
+[1] Default TTL can be configured at zone level in dNSdefaultTTL attribute.
+    Please note that changes may not be applied until server reload.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/70
+
+[2] Certain subset of configuration options can be specified
+    in idnsServerConfigObject in LDAP. Each bind-dyndb-ldap instance will
+    only use values from object with idnsServerId attribute matching server_id
+    configured in named.conf. This can be used for per-server configuration
+    in shared LDAP tree.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/162
+
+[2] fake_mname option can be specified in idnsServerConfigObject in LDAP.
+    Please note that changes may not be applied until server reload.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/162
+
+[3] Per-server global forwarders can be configured in idnsServerConfigObject.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/162
+
+[4] Dynamic record generation using idnsTemplateObject and
+    idnsSubstitutionVariable;ipalocation attribute from idnsServerConfigObject
+    is supported. Please see README.
+    Please note that changes may not be applied until server reload.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/126
+
+[5] Forwarding configuration is properly ignored for disabled master zones.
+
+[6] Interaction between DNS root zone and global forwarding is now
+    deterministic and root zone has higher priority over global forwarding.
+
+[7] Various problems in internal event processing were fixed.
+
+[8] Potential crash in early start-up phase was fixed.
+
+[9] Compatibility with BIND >= 9.10.4b1 was improved
+
 9.0
 ====
 [1] Automatic empty zones conflicting with forward zones with policy 'only'
