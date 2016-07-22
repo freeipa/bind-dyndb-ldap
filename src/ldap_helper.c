@@ -3824,6 +3824,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 update_restart:
 	rbtdb = NULL;
 	ldapdb = NULL;
+	zone_settings = NULL;
 	ldapdb_rdatalist_destroy(mctx, &rdatalist);
 	CHECK(zr_get_zone_dbs(inst->zone_register, &entry->zone_name, &ldapdb, &rbtdb));
 	CHECK(dns_db_newversion(ldapdb, &version));
