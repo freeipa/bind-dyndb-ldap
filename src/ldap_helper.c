@@ -1285,8 +1285,7 @@ configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
 
 /* Delete zone by dns zone name */
 isc_result_t
-ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
-		  isc_boolean_t preserve_forwarding)
+ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock)
 {
 	isc_result_t result;
 	isc_result_t isforward = ISC_R_NOTFOUND;
@@ -1302,13 +1301,11 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock,
 	if (lock)
 		run_exclusive_enter(inst, &lock_state);
 
-	if (!preserve_forwarding) {
-		CHECK(fwd_delete_table(inst->view, name, "zone",
-				       zone_name_char));
-		isforward = fwdr_zone_ispresent(inst->fwd_register, name);
-		if (isforward == ISC_R_SUCCESS)
-			CHECK(fwdr_del_zone(inst->fwd_register, name));
-	}
+	CHECK(fwd_delete_table(inst->view, name, "zone",
+			       zone_name_char));
+	isforward = fwdr_zone_ispresent(inst->fwd_register, name);
+	if (isforward == ISC_R_SUCCESS)
+		CHECK(fwdr_del_zone(inst->fwd_register, name));
 
 	result = zr_get_zone_ptr(inst->zone_register, name, &raw, &secure);
 	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
@@ -1487,8 +1484,7 @@ ldap_parse_fwd_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	if (HEAD(values) != NULL &&
 	    strcasecmp(HEAD(values)->value, "TRUE") != 0) {
 		/* Zone is not active */
-		result = ldap_delete_zone2(inst, &entry->fqdn,
-					   ISC_TRUE, ISC_FALSE);
+		result = ldap_delete_zone2(inst, &entry->fqdn, ISC_TRUE);
 		goto cleanup;
 	}
 
@@ -1990,7 +1986,7 @@ zone_security_change(ldap_entry_t * const entry, dns_name_t * const name,
 	 * in period where old zone was deleted but the new zone was not
 	 * created yet. */
 	run_exclusive_enter(inst, &lock_state);
-	CHECK(ldap_delete_zone2(inst, name, ISC_FALSE, ISC_TRUE));
+	CHECK(ldap_delete_zone2(inst, name, ISC_FALSE));
 	CHECK(ldap_parse_master_zoneentry(entry, olddb, inst, task));
 
 cleanup:
@@ -2173,8 +2169,7 @@ cleanup:
 		log_error_r("%s: publishing failed, rolling back due to",
 			    ldap_entry_logname(entry));
 		/* TODO: verify this */
-		result = ldap_delete_zone2(inst, &entry->fqdn,
-					   ISC_TRUE, ISC_FALSE);
+		result = ldap_delete_zone2(inst, &entry->fqdn, ISC_TRUE);
 		if (result != ISC_R_SUCCESS)
 			log_error_r("%s: rollback failed: ",
 				    ldap_entry_logname(entry));
@@ -3671,8 +3666,7 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	INSIST(task == inst->task); /* For task-exclusive mode */
 
 	if (SYNCREPL_DEL(pevent->chgtype)) {
-		CHECK(ldap_delete_zone2(inst, &entry->fqdn,
-					ISC_TRUE, ISC_FALSE));
+		CHECK(ldap_delete_zone2(inst, &entry->fqdn, ISC_TRUE));
 	} else {
 		if (entry->class & LDAP_ENTRYCLASS_MASTER)
 			CHECK(ldap_parse_master_zoneentry(entry, NULL, inst,
