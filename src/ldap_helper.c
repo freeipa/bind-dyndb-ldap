@@ -1301,8 +1301,8 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock)
 	if (lock)
 		run_exclusive_enter(inst, &lock_state);
 
-	CHECK(fwd_delete_table(inst->view, name, "zone",
-			       zone_name_char));
+	/* simulate no explicit forwarding configuration */
+	CHECK(fwd_configure_zone(&inst->empty_fwdz_settings, inst, name));
 	isforward = fwdr_zone_ispresent(inst->fwd_register, name);
 	if (isforward == ISC_R_SUCCESS)
 		CHECK(fwdr_del_zone(inst->fwd_register, name));
@@ -1312,8 +1312,7 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock)
 		if (isforward == ISC_R_SUCCESS)
 			log_info("forward zone '%s': shutting down", zone_name_char);
 		log_debug(1, "zone '%s' not found in zone register", zone_name_char);
-		result = dns_view_flushcache(inst->view);
-		goto cleanup;
+		CLEANUP_WITH(ISC_R_SUCCESS);
 	} else if (result != ISC_R_SUCCESS)
 		goto cleanup;
 
@@ -1373,7 +1372,8 @@ unpublish_zone(ldap_instance_t *inst, dns_name_t *name, const char *logname) {
 	}
 	CHECK(dns_view_findzone(inst->view, name, &zone_in_view));
 	INSIST(zone_in_view == raw || zone_in_view == secure);
-	CHECK(fwd_delete_table(inst->view, name, "zone", logname));
+	/* simulate no explicit forwarding configuration */
+	CHECK(fwd_configure_zone(&inst->empty_fwdz_settings, inst, name));
 	CHECK(dns_zt_unmount(inst->view->zonetable, zone_in_view));
 
 cleanup:
