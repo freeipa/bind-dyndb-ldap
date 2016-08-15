@@ -809,6 +809,16 @@ hashsize(dns_db_t *db)
 	return dns_db_hashsize(ldapdb->rbtdb);
 }
 
+isc_result_t
+nodefullname(dns_db_t *db, dns_dbnode_t *node, dns_name_t *name)
+{
+	ldapdb_t *ldapdb = (ldapdb_t *) db;
+
+	REQUIRE(VALID_LDAPDB(ldapdb));
+
+	return dns_db_nodefullname(ldapdb->rbtdb, node, name);
+}
+
 static dns_dbmethods_t ldapdb_methods = {
 	attach,
 	detach,
@@ -852,7 +862,8 @@ static dns_dbmethods_t ldapdb_methods = {
 	findnodeext,
 	findext,
 	setcachestats,
-	hashsize
+	hashsize,
+	nodefullname
 };
 
 isc_result_t ATTR_NONNULLS
