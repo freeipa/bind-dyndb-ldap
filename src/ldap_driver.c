@@ -29,7 +29,6 @@
 
 #include <string.h> /* For memcpy */
 
-#include "compat.h"
 #include "ldap_driver.h"
 #include "ldap_helper.h"
 #include "ldap_convert.h"
@@ -181,18 +180,9 @@ detach(dns_db_t **dbp)
 
 /* !!! This could be required for optimizations (like on-disk cache). */
 static isc_result_t
-#if LIBDNS_VERSION_MAJOR < 140
-beginload(dns_db_t *db, dns_addrdatasetfunc_t *addp, dns_dbload_t **dbloadp)
-{
-
-	UNUSED(db);
-	UNUSED(addp);
-	UNUSED(dbloadp);
-#else /* LIBDNS_VERSION_MAJOR >= 140 */
 beginload(dns_db_t *db, dns_rdatacallbacks_t *callbacks) {
 	UNUSED(db);
 	UNUSED(callbacks);
-#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 
 	fatal_error("ldapdb: method beginload() should never be called");
 
@@ -207,17 +197,9 @@ beginload(dns_db_t *db, dns_rdatacallbacks_t *callbacks) {
 
 /* !!! This could be required for optimizations (like on-disk cache). */
 static isc_result_t
-#if LIBDNS_VERSION_MAJOR < 140
-endload(dns_db_t *db, dns_dbload_t **dbloadp)
-{
-
-	UNUSED(db);
-	UNUSED(dbloadp);
-#else /* LIBDNS_VERSION_MAJOR >= 140 */
 endload(dns_db_t *db, dns_rdatacallbacks_t *callbacks) {
 	UNUSED(db);
 	UNUSED(callbacks);
-#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 
 	fatal_error("ldapdb: method endload() should never be called");
 
@@ -225,7 +207,6 @@ endload(dns_db_t *db, dns_rdatacallbacks_t *callbacks) {
 	return ISC_R_SUCCESS;
 }
 
-#if LIBDNS_VERSION_MAJOR >= 140
 static isc_result_t
 serialize(dns_db_t *db, dns_dbversion_t *version, FILE *file)
 {
@@ -235,23 +216,17 @@ serialize(dns_db_t *db, dns_dbversion_t *version, FILE *file)
 
 	return dns_db_serialize(ldapdb->rbtdb, version, file);
 }
-#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 
 /* !!! This could be required for optimizations (like on-disk cache). */
 static isc_result_t
-dump(dns_db_t *db, dns_dbversion_t *version, const char *filename
-#if LIBDNS_VERSION_MAJOR >= 31
-     , dns_masterformat_t masterformat
-#endif
-     )
+dump(dns_db_t *db, dns_dbversion_t *version, const char *filename,
+     dns_masterformat_t masterformat)
 {
 
 	UNUSED(db);
 	UNUSED(version);
 	UNUSED(filename);
-#if LIBDNS_VERSION_MAJOR >= 31
 	UNUSED(masterformat);
-#endif
 
 	fatal_error("ldapdb: method dump() should never be called");
 
@@ -422,22 +397,14 @@ printnode(dns_db_t *db, dns_dbnode_t *node, FILE *out)
 }
 
 static isc_result_t
-createiterator(dns_db_t *db,
-#if LIBDNS_VERSION_MAJOR >= 50
-	       unsigned int options,
-#else
-	       isc_boolean_t relative_names,
-#endif
+createiterator(dns_db_t *db,  unsigned int options,
 	       dns_dbiterator_t **iteratorp)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
-#if LIBDNS_VERSION_MAJOR >= 50
+
 	return dns_db_createiterator(ldapdb->rbtdb, options, iteratorp);
-#else
-	return dns_db_createiterator(ldapdb->rbtdb, relative_names, iteratorp);
-#endif
 }
 
 static isc_result_t
@@ -675,7 +642,6 @@ settask(dns_db_t *db, isc_task_t *task)
 	dns_db_settask(ldapdb->rbtdb, task);
 }
 
-#if LIBDNS_VERSION_MAJOR >= 31
 static isc_result_t
 getoriginnode(dns_db_t *db, dns_dbnode_t **nodep)
 {
@@ -685,9 +651,7 @@ getoriginnode(dns_db_t *db, dns_dbnode_t **nodep)
 
 	return dns_db_getoriginnode(ldapdb->rbtdb, nodep);
 }
-#endif /* LIBDNS_VERSION_MAJOR >= 31 */
 
-#if LIBDNS_VERSION_MAJOR >= 45
 static void
 transfernode(dns_db_t *db, dns_dbnode_t **sourcep, dns_dbnode_t **targetp)
 {
@@ -698,9 +662,7 @@ transfernode(dns_db_t *db, dns_dbnode_t **sourcep, dns_dbnode_t **targetp)
 	dns_db_transfernode(ldapdb->rbtdb, sourcep, targetp);
 
 }
-#endif /* LIBDNS_VERSION_MAJOR >= 45 */
 
-#if LIBDNS_VERSION_MAJOR >= 50
 static isc_result_t
 getnsec3parameters(dns_db_t *db, dns_dbversion_t *version,
 			  dns_hash_t *hash, isc_uint8_t *flags,
@@ -767,9 +729,7 @@ isdnssec(dns_db_t *db)
 
 	return dns_db_isdnssec(ldapdb->rbtdb);
 }
-#endif /* LIBDNS_VERSION_MAJOR >= 50 */
 
-#if LIBDNS_VERSION_MAJOR >= 45
 static dns_stats_t *
 getrrsetstats(dns_db_t *db) {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
@@ -779,35 +739,7 @@ getrrsetstats(dns_db_t *db) {
 	return dns_db_getrrsetstats(ldapdb->rbtdb);
 
 }
-#endif /* LIBDNS_VERSION_MAJOR >= 45 */
 
-#if LIBDNS_VERSION_MAJOR >= 82 && LIBDNS_VERSION_MAJOR < 140
-static isc_result_t
-rpz_enabled(dns_db_t *db, dns_rpz_st_t *st)
-{
-	ldapdb_t *ldapdb = (ldapdb_t *) db;
-
-	REQUIRE(VALID_LDAPDB(ldapdb));
-
-	return dns_db_rpz_enabled(ldapdb->rbtdb, st);
-}
-
-static void
-rpz_findips(dns_rpz_zone_t *rpz, dns_rpz_type_t rpz_type,
-		   dns_zone_t *zone, dns_db_t *db, dns_dbversion_t *version,
-		   dns_rdataset_t *ardataset, dns_rpz_st_t *st,
-		   dns_name_t *query_qname)
-{
-	ldapdb_t *ldapdb = (ldapdb_t *) db;
-
-	REQUIRE(VALID_LDAPDB(ldapdb));
-
-	dns_db_rpz_findips(rpz, rpz_type, zone, ldapdb->rbtdb, version,
-			   ardataset, st, query_qname);
-}
-#endif /* LIBDNS_VERSION_MAJOR >= 82 && LIBDNS_VERSION_MAJOR < 140 */
-
-#if LIBDNS_VERSION_MAJOR >= 140
 void
 rpz_attach(dns_db_t *db, dns_rpz_zones_t *rpzs, dns_rpz_num_t rpz_num)
 {
@@ -827,9 +759,7 @@ rpz_ready(dns_db_t *db)
 
 	return dns_db_rpz_ready(ldapdb->rbtdb);
 }
-#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 
-#if LIBDNS_VERSION_MAJOR >= 90
 static isc_result_t
 findnodeext(dns_db_t *db, dns_name_t *name,
 		   isc_boolean_t create, dns_clientinfomethods_t *methods,
@@ -858,9 +788,7 @@ findext(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 			      nodep, foundname, methods, clientinfo, rdataset,
 			      sigrdataset);
 }
-#endif /* LIBDNS_VERSION_MAJOR >= 90 */
 
-#if LIBDNS_VERSION_MAJOR >= 140
 isc_result_t
 setcachestats(dns_db_t *db, isc_stats_t *stats)
 {
@@ -871,11 +799,7 @@ setcachestats(dns_db_t *db, isc_stats_t *stats)
 	return dns_db_setcachestats(ldapdb->rbtdb, stats);
 }
 
-#if LIBDNS_VERSION_MAJOR >= 164
 size_t
-#else
-unsigned int
-#endif /* LIBDNS_VERSION_MAJOR >= 164 */
 hashsize(dns_db_t *db)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
@@ -884,16 +808,13 @@ hashsize(dns_db_t *db)
 
 	return dns_db_hashsize(ldapdb->rbtdb);
 }
-#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 
 static dns_dbmethods_t ldapdb_methods = {
 	attach,
 	detach,
 	beginload,
 	endload,
-#if LIBDNS_VERSION_MAJOR >= 140
 	serialize, /* see dns_db_serialize(), implementation is not mandatory */
-#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 	dump,
 	currentversion,
 	newversion,
@@ -917,37 +838,21 @@ static dns_dbmethods_t ldapdb_methods = {
 	ispersistent,
 	overmem,
 	settask,
-#if LIBDNS_VERSION_MAJOR >= 31
 	getoriginnode,
-#endif /* LIBDNS_VERSION_MAJOR >= 31 */
-#if LIBDNS_VERSION_MAJOR >= 45
 	transfernode,
-#if LIBDNS_VERSION_MAJOR >= 50
 	getnsec3parameters,
 	findnsec3node,
 	setsigningtime,
 	getsigningtime,
 	resigned,
 	isdnssec,
-#endif /* LIBDNS_VERSION_MAJOR >= 50 */
 	getrrsetstats,
-#endif /* LIBDNS_VERSION_MAJOR >= 45 */
-#if LIBDNS_VERSION_MAJOR >= 82 && LIBDNS_VERSION_MAJOR < 140
-	rpz_enabled,
-	rpz_findips,
-#endif /* LIBDNS_VERSION_MAJOR >= 82 && LIBDNS_VERSION_MAJOR < 140 */
-#if LIBDNS_VERSION_MAJOR >= 140
 	rpz_attach,
 	rpz_ready,
-#endif /* LIBDNS_VERSION_MAJOR >= 140 */
-#if LIBDNS_VERSION_MAJOR >= 90
 	findnodeext,
 	findext,
-#endif /* LIBDNS_VERSION_MAJOR >= 90 */
-#if LIBDNS_VERSION_MAJOR >= 140
 	setcachestats,
 	hashsize
-#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 };
 
 isc_result_t ATTR_NONNULLS
