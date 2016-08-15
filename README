@@ -2,15 +2,9 @@
 ===============
 
 The dynamic LDAP back-end is a plug-in for BIND that provides an LDAP
-database back-end capabilities. For now, it requires that BIND is patched
-to support dynamic loading of database back-ends. You can get a patch
-for your version here:
+database back-end capabilities. It requires dyndb interface which is present
+in BIND versions >= 9.11.0rc1.
 
-  https://github.com/pspacek/bind-dynamic_db
-
-Hopefully, the patch will once be included in the official BIND release.
-
-BIND >= 9.9.0 is required.
 
 2. Features
 ===========
@@ -309,19 +303,17 @@ Attributes:
 5. Configuration
 ================
 
-To configure dynamic loading of back-end, you must put a "dynamic-db"
+To configure dynamic loading of back-end, you must put a "dyndb"
 clause into your named.conf. The clause must then be followed by a
-string denoting the name. The name is not that much important, it is
-passed to the plug-in and might be used for example, for logging
-purposes. Following after that is a set of options enclosed between
+string denoting the name of the instance and path to dyndb library.
+
+The name is not that much important, it is passed to the plug-in
+and is used for logging purposes and for naming working directories.
+
+Library path must point to a shared object file that will be opened and loaded.
+
+Name and library path have to be followed by set of options enclosed between
 curly brackets.
-
-The most important option here is "library". It names a shared object
-file that will be opened and loaded. The "arg" option specifies a string
-that is passed directly to the plugin. You can specify multiple "arg"
-options. The LDAP back-end follows the convention that the first word of
-this string is the name of the setting and the rest is the value.
-
 
 5.1 Configuration options
 -------------------------

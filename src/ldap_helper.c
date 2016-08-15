@@ -4,7 +4,7 @@
 
 #include "config.h"
 
-#include <dns/dynamic_db.h>
+#include <dns/dyndb.h>
 #include <dns/diff.h>
 #include <dns/journal.h>
 #include <dns/rbt.h>
@@ -77,7 +77,6 @@
 #include "syncrepl.h"
 #include "util.h"
 #include "zone.h"
-#include "zone_manager.h"
 #include "zone_register.h"
 #include "rbt_helper.h"
 #include "fwd_register.h"
@@ -133,7 +132,8 @@ struct ldap_instance {
 	isc_mem_t		*mctx;
 
 	/* These are needed for zone creation. */
-	const char *		db_name;
+	char *			db_name;
+	dns_dbimplementation_t	*db_imp;
 	dns_view_t		*view;
 	dns_zonemgr_t		*zmgr;
 
@@ -183,12 +183,6 @@ struct ldap_connection {
 	isc_time_t		next_reconnect;
 	unsigned int		tries;
 };
-
-/*
- * Constants.
- */
-
-extern const char *ldapdb_impname;
 
 /* Supported authentication types. */
 const ldap_auth_pair_t supported_ldap_auth[] = {
@@ -505,13 +499,12 @@ cleanup:
 
 #define PRINT_BUFF_SIZE 255
 isc_result_t
-new_ldap_instance(isc_mem_t *mctx, const char *db_name,
-		  const char * const *argv, dns_dyndb_arguments_t *dyndb_args,
-		  isc_task_t *task, ldap_instance_t **ldap_instp)
+new_ldap_instance(isc_mem_t *mctx, const char *db_name, unsigned int argc,
+		  char **argv, const dns_dyndbctx_t *dctx,
+		  ldap_instance_t **ldap_instp)
 {
 	isc_result_t result;
 	ldap_instance_t *ldap_inst;
-	dns_view_t *view = NULL;
 	dns_forwarders_t *named_conf_forwarders = NULL;
 	isc_buffer_t *forwarders_list = NULL;
 	const char *forward_policy = NULL;
@@ -526,30 +519,29 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	ZERO_PTR(ldap_inst);
 	CHECK(isc_refcount_init(&ldap_inst->errors, 0));
 	isc_mem_attach(mctx, &ldap_inst->mctx);
+	CHECKED_MEM_STRDUP(mctx, db_name, ldap_inst->db_name);
+	dns_view_attach(dctx->view, &ldap_inst->view);
+	dns_zonemgr_attach(dctx->zmgr, &ldap_inst->zmgr);
+	isc_task_attach(dctx->task, &ldap_inst->task);
 
-	ldap_inst->db_name = db_name;
-	view = dns_dyndb_get_view(dyndb_args);
-	dns_view_attach(view, &ldap_inst->view);
-	ldap_inst->zmgr = dns_dyndb_get_zonemgr(dyndb_args);
-	ldap_inst->task = task;
 	ldap_inst->watcher = 0;
 	CHECK(sync_ctx_init(ldap_inst->mctx, ldap_inst, &ldap_inst->sctx));
 
 	isc_string_printf_truncate(settings_name, PRINT_BUFF_SIZE,
 				   SETTING_SET_NAME_LOCAL " for database %s",
-				   db_name);
+				   ldap_inst->db_name);
 	CHECK(settings_set_create(mctx, settings_local_default,
 	      sizeof(settings_local_default), settings_name,
 	      &settings_default_set, &ldap_inst->local_settings));
 
 	isc_string_printf_truncate(settings_name, PRINT_BUFF_SIZE,
 				   SETTING_SET_NAME_GLOBAL " for database %s",
-				   db_name);
+				   ldap_inst->db_name);
 	CHECK(settings_set_create(mctx, settings_global_default,
 	      sizeof(settings_global_default), settings_name,
 	      ldap_inst->local_settings, &ldap_inst->global_settings));
 
-	CHECK(settings_set_fill(ldap_inst->local_settings, argv));
+	CHECK(settings_set_fill(ldap_inst->local_settings, argc, argv));
 
 	/* copy global forwarders setting for configuration roll back in
 	 * configure_zone_forwarders() */
@@ -573,7 +565,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		 *
 		 * Warn-only semantics is implemented in BIND RT#41441,
 		 * this code can be removed when we rebase to BIND 9.11. */
-		CHECK(sync_task_add(ldap_inst->sctx, task));
+		CHECK(sync_task_add(ldap_inst->sctx, ldap_inst->task));
 		gfwdevent = (ldap_globalfwd_handleez_t *)isc_event_allocate(
 					ldap_inst->mctx, ldap_inst,
 					LDAPDB_EVENT_GLOBALFWD_HANDLEEZ,
@@ -586,7 +578,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 		gfwdevent->warn_only = (named_conf_forwarders->fwdpolicy
 					== dns_fwdpolicy_first);
 
-		isc_task_send(task, (isc_event_t **)&gfwdevent);
+		isc_task_send(ldap_inst->task, (isc_event_t **)&gfwdevent);
 
 	} else if (result == ISC_R_NOTFOUND) {
 		/* global forwarders are not configured */
@@ -639,6 +631,10 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name,
 	CHECK(ldap_pool_create(mctx, connections, &ldap_inst->pool));
 	CHECK(ldap_pool_connect(ldap_inst->pool, ldap_inst));
 
+	/* Register new DNS DB implementation. */
+	CHECK(dns_db_register(ldap_inst->db_name, &ldapdb_associate, ldap_inst,
+			      mctx, &ldap_inst->db_imp));
+
 	/* Start the watcher thread */
 	result = isc_thread_create(ldap_syncrepl_watcher, ldap_inst,
 				   &ldap_inst->watcher);
@@ -663,15 +659,12 @@ void
 destroy_ldap_instance(ldap_instance_t **ldap_instp)
 {
 	ldap_instance_t *ldap_inst;
-	const char *db_name;
 
 	REQUIRE(ldap_instp != NULL);
 
 	ldap_inst = *ldap_instp;
 	if (ldap_inst == NULL)
 		return;
-
-	db_name = ldap_inst->db_name; /* points to DB instance: outside ldap_inst */
 
 	if (ldap_inst->watcher != 0) {
 		ldap_inst->exiting = ISC_TRUE;
@@ -695,7 +688,14 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	mldap_destroy(&ldap_inst->mldapdb);
 
 	ldap_pool_destroy(&ldap_inst->pool);
-	dns_view_detach(&ldap_inst->view);
+	if (ldap_inst->db_imp != NULL)
+		dns_db_unregister(&ldap_inst->db_imp);
+	if (ldap_inst->view != NULL)
+		dns_view_detach(&ldap_inst->view);
+	if (ldap_inst->zmgr != NULL)
+		dns_zonemgr_detach(&ldap_inst->zmgr);
+	if (ldap_inst->task != NULL)
+		isc_task_detach(&ldap_inst->task);
 
 	DESTROYLOCK(&ldap_inst->kinit_lock);
 
@@ -709,10 +709,13 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 				     ldap_instance_untaint_start(ldap_inst));
 	isc_refcount_destroy(&ldap_inst->errors);
 
+	if (ldap_inst->db_name != NULL) {
+		log_debug(1, "LDAP instance '%s' destroyed", ldap_inst->db_name);
+		isc_mem_free(ldap_inst->mctx, ldap_inst->db_name);
+	}
 	MEM_PUT_AND_DETACH(ldap_inst);
 
 	*ldap_instp = NULL;
-	log_debug(1, "LDAP instance '%s' destroyed", db_name);
 }
 
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
@@ -916,7 +919,7 @@ create_zone(ldap_instance_t * const inst, const char * const dn,
 	isc_result_t result;
 	dns_zone_t *raw = NULL;
 	dns_zone_t *secure = NULL;
-	const char *ldap_argv[2];
+	const char *ldap_argv[1] = { inst->db_name };
 	const char *rbt_argv[1] = { "rbt" };
 	sync_state_t sync_state;
 	isc_task_t *task = NULL;
@@ -925,9 +928,6 @@ create_zone(ldap_instance_t * const inst, const char * const dn,
 	REQUIRE(inst != NULL);
 	REQUIRE(name != NULL);
 	REQUIRE(rawp != NULL && *rawp == NULL);
-
-	ldap_argv[0] = ldapdb_impname;
-	ldap_argv[1] = inst->db_name;
 
 	result = zone_unload_ifempty(inst->view, name);
 	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
@@ -938,7 +938,8 @@ create_zone(ldap_instance_t * const inst, const char * const dn,
 	dns_zone_setclass(raw, dns_rdataclass_in);
 	dns_zone_settype(raw, dns_zone_master);
 	/* dns_zone_setview(raw, view); */
-	CHECK(dns_zone_setdbtype(raw, 2, ldap_argv));
+	CHECK(dns_zone_setdbtype(raw, sizeof(ldap_argv)/sizeof(ldap_argv[0]),
+				 ldap_argv));
 	CHECK(configure_paths(inst->mctx, inst, raw, ISC_FALSE));
 
 	if (want_secure == ISC_FALSE) {
@@ -3654,7 +3655,7 @@ update_zone(isc_task_t *task, isc_event_t *event)
 {
 	ldap_syncreplevent_t *pevent = (ldap_syncreplevent_t *)event;
 	isc_result_t result ;
-	ldap_instance_t *inst = NULL;
+	ldap_instance_t *inst = pevent->inst;
 	isc_mem_t *mctx;
 	dns_name_t prevname;
 	ldap_entry_t *entry = pevent->entry;
@@ -3662,7 +3663,6 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	mctx = pevent->mctx;
 	dns_name_init(&prevname, NULL);
 
-	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
 	INSIST(task == inst->task); /* For task-exclusive mode */
 
 	if (SYNCREPL_DEL(pevent->chgtype)) {
@@ -3673,6 +3673,9 @@ update_zone(isc_task_t *task, isc_event_t *event)
 							  task));
 		else if (entry->class & LDAP_ENTRYCLASS_FORWARD)
 			CHECK(ldap_parse_fwd_zoneentry(entry, inst));
+		else
+			FATAL_ERROR(__FILE__, __LINE__,
+				    "update_zone: unexpected entry class");
 	}
 
 cleanup:
@@ -3687,7 +3690,6 @@ cleanup:
 			    "Zones can be outdated, run `rndc reload`",
 			    ldap_entry_logname(entry));
 
-	isc_mem_free(mctx, pevent->dbname);
 	if (pevent->prevdn != NULL)
 		isc_mem_free(mctx, pevent->prevdn);
 	ldap_entry_destroy(&entry);
@@ -3701,13 +3703,12 @@ update_config(isc_task_t * task, isc_event_t *event)
 {
 	ldap_syncreplevent_t *pevent = (ldap_syncreplevent_t *)event;
 	isc_result_t result;
-	ldap_instance_t *inst = NULL;
+	ldap_instance_t *inst = pevent->inst;
 	ldap_entry_t *entry = pevent->entry;
 	isc_mem_t *mctx;
 
 	mctx = pevent->mctx;
 
-	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
 	INSIST(task == inst->task); /* For task-exclusive mode */
 	CHECK(ldap_parse_configentry(entry, inst));
 
@@ -3722,7 +3723,6 @@ cleanup:
 			    ldap_entry_logname(entry));
 
 	ldap_entry_destroy(&entry);
-	isc_mem_free(mctx, pevent->dbname);
 	isc_mem_detach(&mctx);
 	isc_event_free(&event);
 	isc_task_detach(&task);
@@ -3733,13 +3733,12 @@ update_serverconfig(isc_task_t * task, isc_event_t *event)
 {
 	ldap_syncreplevent_t *pevent = (ldap_syncreplevent_t *)event;
 	isc_result_t result;
-	ldap_instance_t *inst = NULL;
+	ldap_instance_t *inst = pevent->inst;
 	ldap_entry_t *entry = pevent->entry;
 	isc_mem_t *mctx;
 
 	mctx = pevent->mctx;
 
-	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
 	INSIST(task == inst->task); /* For task-exclusive mode */
 	CHECK(ldap_parse_serverconfigentry(entry, inst));
 
@@ -3754,7 +3753,6 @@ cleanup:
 			    ldap_entry_logname(entry));
 
 	ldap_entry_destroy(&entry);
-	isc_mem_free(mctx, pevent->dbname);
 	isc_mem_detach(&mctx);
 	isc_event_free(&event);
 	isc_task_detach(&task);
@@ -3774,7 +3772,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 	/* syncrepl event */
 	ldap_syncreplevent_t *pevent = (ldap_syncreplevent_t *)event;
 	isc_result_t result;
-	ldap_instance_t *inst = NULL;
+	ldap_instance_t *inst = pevent->inst;
 	isc_mem_t *mctx;
 	settings_set_t *zone_settings = NULL;
 	dns_zone_t *raw = NULL;
@@ -3811,7 +3809,6 @@ update_record(isc_task_t *task, isc_event_t *event)
 	dns_name_init(&prevname, NULL);
 	dns_name_init(&prevorigin, NULL);
 
-	CHECK(manager_get_ldap_instance(pevent->dbname, &inst));
 	CHECK(zr_get_zone_ptr(inst->zone_register, &entry->zone_name, &raw, &secure));
 	zone_found = ISC_TRUE;
 
@@ -3984,7 +3981,6 @@ cleanup:
 	if (secure != NULL)
 		dns_zone_detach(&secure);
 	ldapdb_rdatalist_destroy(mctx, &rdatalist);
-	isc_mem_free(mctx, pevent->dbname);
 	if (pevent->prevdn != NULL)
 		isc_mem_free(mctx, pevent->prevdn);
 	ldap_entry_destroy(&entry);
@@ -4055,7 +4051,6 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 	dns_name_t *zone_name = NULL;
 	dns_zone_t *zone_ptr = NULL;
 	char *dn = NULL;
-	char *dbname = NULL;
 	isc_mem_t *mctx = NULL;
 	isc_taskaction_t action = NULL;
 	isc_task_t *task = NULL;
@@ -4070,8 +4065,6 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 		  SYNCREPL_MOD(chgtype));
 
 	isc_mem_attach(inst->mctx, &mctx);
-
-	CHECKED_MEM_STRDUP(mctx, inst->db_name, dbname);
 
 	if (entry->class & LDAP_ENTRYCLASS_MASTER)
 		zone_name = &entry->fqdn;
@@ -4129,7 +4122,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 	}
 
 	pevent->mctx = mctx;
-	pevent->dbname = dbname;
+	pevent->inst = inst;
 	pevent->prevdn = NULL;
 	pevent->chgtype = chgtype;
 	pevent->entry = entry;
@@ -4148,9 +4141,6 @@ cleanup:
 	if (pevent != NULL) {
 		/* Event was not sent */
 		sync_concurr_limit_signal(inst->sctx);
-
-		if (dbname != NULL)
-			isc_mem_free(mctx, dbname);
 		if (mctx != NULL)
 			isc_mem_detach(&mctx);
 		ldap_entry_destroy(entryp);
@@ -4394,7 +4384,7 @@ int ldap_sync_intermediate (
 
 	sync_state_get(inst->sctx, &state);
 	if (state == sync_datainit) {
-		result = sync_barrier_wait(inst->sctx, inst->db_name);
+		result = sync_barrier_wait(inst->sctx, inst);
 		if (result != ISC_R_SUCCESS) {
 			log_error_r("%s: sync_barrier_wait() failed for "
 				    "instance '%s'", __func__, inst->db_name);
@@ -4447,7 +4437,7 @@ int ATTR_NONNULLS ATTR_CHECKRESULT ldap_sync_search_result (
 	INSIST(state == sync_configinit || state == sync_finished);
 
 	if (state == sync_configinit) {
-		result = sync_barrier_wait(inst->sctx, inst->db_name);
+		result = sync_barrier_wait(inst->sctx, inst);
 		if (result != ISC_R_SUCCESS) {
 			log_error_r("%s: sync_barrier_wait() failed for "
 				    "instance '%s'", __func__, inst->db_name);

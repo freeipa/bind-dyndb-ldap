@@ -260,15 +260,15 @@ cleanup:
 static isc_result_t ATTR_NONNULL(1,2,4,5,6,8)
 create_zone_info(isc_mem_t * const mctx, dns_zone_t * const raw,
 		dns_zone_t * const secure, const char * const dn,
-		 settings_set_t *global_settings, const char *db_name,
+		 settings_set_t *global_settings, ldap_instance_t *inst,
 		 dns_db_t * const ldapdb, zone_info_t **zinfop)
 {
 	isc_result_t result;
 	zone_info_t *zinfo;
 	char settings_name[PRINT_BUFF_SIZE];
 	ld_string_t *zone_dir = NULL;
-	char *argv[1];
 
+	REQUIRE(inst != NULL);
 	REQUIRE(raw != NULL);
 	REQUIRE(dn != NULL);
 	REQUIRE(zinfop != NULL && *zinfop == NULL);
@@ -294,11 +294,9 @@ create_zone_info(isc_mem_t * const mctx, dns_zone_t * const raw,
 	CHECK(fs_dirs_create(str_buf(zone_dir)));
 
 	if (ldapdb == NULL) { /* create new empty database */
-		DE_CONST(db_name, argv[0]);
 		CHECK(ldapdb_create(mctx, dns_zone_getorigin(raw),
 				    LDAP_DB_TYPE, LDAP_DB_RDATACLASS,
-				    sizeof(argv)/sizeof(argv[0]),
-				    argv, NULL, &zinfo->ldapdb));
+				    inst, &zinfo->ldapdb));
 	} else { /* re-use existing database */
 		dns_db_attach(ldapdb, &zinfo->ldapdb);
 	}
@@ -396,8 +394,7 @@ zr_add_zone(zone_register_t * const zr, dns_db_t * const ldapdb,
 	}
 
 	CHECK(create_zone_info(zr->mctx, raw, secure, dn, zr->global_settings,
-			       ldap_instance_getdbname(zr->ldap_inst), ldapdb,
-			       &new_zinfo));
+			       zr->ldap_inst, ldapdb, &new_zinfo));
 	CHECK(dns_rbt_addname(zr->rbt, name, new_zinfo));
 
 cleanup:
