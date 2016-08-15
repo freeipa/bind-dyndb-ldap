@@ -69,11 +69,7 @@ fwd_list_len(dns_forwarders_t *fwdrs) {
 
 	REQUIRE(fwdrs != NULL);
 
-#if LIBDNS_VERSION_MAJOR < 140
-	for (isc_sockaddr_t *fwdr = ISC_LIST_HEAD(fwdrs->addrs);
-#else /* LIBDNS_VERSION_MAJOR >= 140 */
 	for (dns_forwarder_t *fwdr = ISC_LIST_HEAD(fwdrs->fwdrs);
-#endif
 	     fwdr != NULL;
 	     fwdr = ISC_LIST_NEXT(fwdr, link)) {
 		len++;
@@ -169,11 +165,7 @@ fwd_print_list_buff(isc_mem_t *mctx, dns_forwarders_t *fwdrs,
 	const cfg_obj_t *faddresses;
 	const cfg_listelt_t *fwdr_cfg; /* config representation */
 	/* internal representation */
-#if LIBDNS_VERSION_MAJOR < 140
-	isc_sockaddr_t *fwdr_int;
-#else /* LIBDNS_VERSION_MAJOR >= 140 */
 	dns_forwarder_t *fwdr_int;
-#endif
 
 	isc_buffer_initnull(&tmp_buf);
 	tmp_buf.mctx = mctx;
@@ -197,20 +189,12 @@ fwd_print_list_buff(isc_mem_t *mctx, dns_forwarders_t *fwdrs,
 	 * data from the internal one to cfg data structures.*/
 	faddresses = cfg_tuple_get(forwarders_cfg, "addresses");
 	for (fwdr_int = ISC_LIST_HEAD(
-#if LIBDNS_VERSION_MAJOR < 140
-			fwdrs->addrs
-#else /* LIBDNS_VERSION_MAJOR >= 140 */
 			fwdrs->fwdrs
-#endif
 			), fwdr_cfg = cfg_list_first(faddresses);
 	     INSIST((fwdr_int == NULL) == (fwdr_cfg == NULL)), fwdr_int != NULL;
 	     fwdr_int = ISC_LIST_NEXT(fwdr_int, link), fwdr_cfg = cfg_list_next(fwdr_cfg)) {
-#if LIBDNS_VERSION_MAJOR < 140
-		fwdr_cfg->obj->value.sockaddr = *fwdr_int;
-#else /* LIBDNS_VERSION_MAJOR >= 140 */
 		fwdr_cfg->obj->value.sockaddrdscp.sockaddr = fwdr_int->addr;
 		fwdr_cfg->obj->value.sockaddrdscp.dscp = fwdr_int->dscp;
-#endif
 	}
 	cfg_print(faddresses, buffer_append_str, &tmp_buf);
 
@@ -259,12 +243,7 @@ cleanup:
 
 static isc_result_t
 fwd_parse_str(const char *fwdrs_str, isc_mem_t *mctx,
-#if LIBDNS_VERSION_MAJOR < 140
-	isc_sockaddrlist_t *fwdrs
-#else /* LIBDNS_VERSION_MAJOR >= 140 */
-	dns_forwarderlist_t *fwdrs
-#endif
-	)
+	      dns_forwarderlist_t *fwdrs)
 {
 	isc_result_t result = ISC_R_SUCCESS;
 	cfg_parser_t *parser = NULL;
@@ -274,11 +253,7 @@ fwd_parse_str(const char *fwdrs_str, isc_mem_t *mctx,
 	const cfg_listelt_t *listel;
 	const cfg_obj_t *fwdr_cfg;
 	isc_sockaddr_t addr;
-#if LIBDNS_VERSION_MAJOR < 140
-	isc_sockaddr_t *fwdr;
-#else /* LIBDNS_VERSION_MAJOR >= 140 */
 	dns_forwarder_t *fwdr;
-#endif
 
 	in_port_t port = 53;
 
@@ -301,12 +276,8 @@ fwd_parse_str(const char *fwdrs_str, isc_mem_t *mctx,
 		if (isc_sockaddr_getport(&addr) == 0)
 			isc_sockaddr_setport(&addr, port);
 		CHECKED_MEM_GET_PTR(mctx, fwdr);
-#if LIBDNS_VERSION_MAJOR < 140
-		*fwdr = addr;
-#else /* LIBDNS_VERSION_MAJOR >= 140 */
 		fwdr->addr = addr;
 		fwdr->dscp = cfg_obj_getdscp(fwdr_cfg);
-#endif
 		ISC_LINK_INIT(fwdr, link);
 		ISC_LIST_APPEND(*fwdrs, fwdr, link);
 	}
@@ -320,18 +291,8 @@ cleanup:
 }
 
 static void
-fwdr_list_free(isc_mem_t *mctx,
-#if LIBDNS_VERSION_MAJOR < 140
-	isc_sockaddrlist_t *fwdrs
-#else /* LIBDNS_VERSION_MAJOR >= 140 */
-	dns_forwarderlist_t *fwdrs
-#endif
-	) {
-#if LIBDNS_VERSION_MAJOR < 140
-	isc_sockaddr_t *fwdr;
-#else /* LIBDNS_VERSION_MAJOR >= 140 */
+fwdr_list_free(isc_mem_t *mctx, dns_forwarderlist_t *fwdrs) {
 	dns_forwarder_t *fwdr;
-#endif
 	while (!ISC_LIST_EMPTY(*fwdrs)) {
 		fwdr = ISC_LIST_HEAD(*fwdrs);
 		ISC_LIST_UNLINK(*fwdrs, fwdr, link);
@@ -357,11 +318,7 @@ fwd_setting_isexplicit(isc_mem_t *mctx, const settings_set_t *set,
 	isc_result_t result;
 	setting_t *setting = NULL;
 	dns_fwdpolicy_t	fwdpolicy;
-#if LIBDNS_VERSION_MAJOR < 140
-	isc_sockaddrlist_t fwdrs;
-#else /* LIBDNS_VERSION_MAJOR >= 140 */
 	dns_forwarderlist_t fwdrs;
-#endif
 
 	REQUIRE(isexplicit != NULL);
 	ISC_LIST_INIT(fwdrs);
@@ -440,11 +397,7 @@ fwd_parse_ldap(ldap_entry_t *entry, settings_set_t *set) {
 	ldap_valuelist_t values;
 	ldap_value_t *value;
 	isc_buffer_t *tmp_buf = NULL; /* hack: only the base buffer is allocated */
-#if LIBDNS_VERSION_MAJOR < 140
-	isc_sockaddrlist_t fwdrs;
-#else /* LIBDNS_VERSION_MAJOR >= 140 */
 	dns_forwarderlist_t fwdrs;
-#endif
 	const char *setting_str = NULL;
 
 	/**
@@ -547,11 +500,7 @@ fwd_configure_zone(const settings_set_t *set, ldap_instance_t *inst,
 	isc_mem_t *mctx = NULL;
 	dns_view_t *view = NULL;
 	isc_result_t lock_state = ISC_R_IGNORE;
-#if LIBDNS_VERSION_MAJOR < 140
-	isc_sockaddrlist_t fwdrs;
-#else /* LIBDNS_VERSION_MAJOR >= 140 */
 	dns_forwarderlist_t fwdrs;
-#endif
 	isc_boolean_t is_global_config;
 	dns_fixedname_t foundname;
 	const char *msg_use_global_fwds;
@@ -630,13 +579,8 @@ fwd_configure_zone(const settings_set_t *set, ldap_instance_t *inst,
 	run_exclusive_enter(inst, &lock_state);
 	CHECK(fwd_delete_table(view, name, msg_obj_type, set->name));
 	if (isconfigured == ISC_TRUE) {
-#if LIBDNS_VERSION_MAJOR < 140
-		CHECK(dns_fwdtable_add(view->fwdtable, name, &fwdrs,
-				       fwdpolicy));
-#else /* LIBDNS_VERSION_MAJOR >= 140 */
 		CHECK(dns_fwdtable_addfwd(view->fwdtable, name, &fwdrs,
 					  fwdpolicy));
-#endif
 	}
 	dns_view_flushcache(view);
 	run_exclusive_exit(inst, lock_state);

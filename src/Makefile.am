@@ -4,7 +4,6 @@ bindplugindir=$(libdir)/bind
 HDRS =				\
 	acl.h			\
 	bindcfg.h		\
-	compat.h		\
 	empty_zones.h		\
 	fs.h			\
 	fwd.h			\
