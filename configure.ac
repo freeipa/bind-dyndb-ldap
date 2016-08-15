@@ -3,7 +3,7 @@ AC_INIT([bind-dyndb-ldap], [10.1], [freeipa-devel@redhat.com])
 
 AM_INIT_AUTOMAKE([-Wall foreign dist-bzip2])
 
-AC_CONFIG_SRCDIR([src/zone_manager.h])
+AC_CONFIG_SRCDIR([src/ldap_driver.c])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_MACRO_DIR([m4])
 

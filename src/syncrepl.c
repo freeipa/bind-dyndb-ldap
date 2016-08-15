@@ -15,7 +15,6 @@
 #include "util.h"
 #include "semaphore.h"
 #include "syncrepl.h"
-#include "zone_manager.h"
 
 #define LDAPDB_EVENT_SYNCREPL_BARRIER	(LDAPDB_EVENTCLASS + 2)
 #define LDAPDB_EVENT_SYNCREPL_FINISH	(LDAPDB_EVENTCLASS + 3)
@@ -109,7 +108,7 @@ struct sync_ctx {
  */
 struct sync_barrierev {
 	ISC_EVENT_COMMON(sync_barrierev_t);
-	const char	*dbname;
+	ldap_instance_t	*inst;
 	sync_ctx_t	*sctx;
 };
 
@@ -122,7 +121,6 @@ struct sync_barrierev {
 void
 finish(isc_task_t *task, isc_event_t *event) {
 	isc_result_t result = ISC_R_SUCCESS;
-	ldap_instance_t *inst = NULL;
 	sync_barrierev_t *bev = NULL;
 	sync_state_t new_state;
 
@@ -130,7 +128,6 @@ finish(isc_task_t *task, isc_event_t *event) {
 	REQUIRE(event != NULL);
 
 	bev = (sync_barrierev_t *)event;
-	CHECK(manager_get_ldap_instance(bev->dbname, &inst));
 	log_debug(1, "sync_barrier_wait(): finish reached");
 	LOCK(&bev->sctx->mutex);
 	switch (bev->sctx->state) {
@@ -152,9 +149,8 @@ finish(isc_task_t *task, isc_event_t *event) {
 	BROADCAST(&bev->sctx->cond);
 	UNLOCK(&bev->sctx->mutex);
 	if (new_state == sync_finished)
-		activate_zones(task, inst);
+		activate_zones(task, bev->inst);
 
-cleanup:
 	if (result != ISC_R_SUCCESS)
 		log_error_r("syncrepl finish() failed");
 	isc_event_free(&event);
@@ -162,12 +158,12 @@ cleanup:
 }
 
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-sync_finishev_create(sync_ctx_t *sctx, const char *inst_name,
+sync_finishev_create(sync_ctx_t *sctx, ldap_instance_t *inst,
 		      sync_barrierev_t **evp) {
 	sync_barrierev_t *ev = NULL;
 
 	REQUIRE(sctx != NULL);
-	REQUIRE(inst_name != NULL);
+	REQUIRE(inst != NULL);
 	REQUIRE(evp != NULL && *evp == NULL);
 
 	ev = (sync_barrierev_t *)isc_event_allocate(sctx->mctx,
@@ -177,7 +173,7 @@ sync_finishev_create(sync_ctx_t *sctx, const char *inst_name,
 	if (ev == NULL)
 		return ISC_R_NOMEMORY;
 
-	ev->dbname = inst_name;
+	ev->inst = inst;
 	ev->sctx = sctx;
 	*evp = ev;
 
@@ -203,7 +199,6 @@ sync_finishev_create(sync_ctx_t *sctx, const char *inst_name,
 void
 barrier_decrement(isc_task_t *task, isc_event_t *event) {
 	isc_result_t result = ISC_R_SUCCESS;
-	ldap_instance_t *inst = NULL;
 	sync_barrierev_t *bev = NULL;
 	sync_barrierev_t *fev = NULL;
 	isc_event_t *ev = NULL;
@@ -214,13 +209,12 @@ barrier_decrement(isc_task_t *task, isc_event_t *event) {
 	REQUIRE(event != NULL);
 
 	bev = (sync_barrierev_t *)event;
-	CHECK(manager_get_ldap_instance(bev->dbname, &inst));
 	isc_refcount_decrement(&bev->sctx->task_cnt, &cnt);
 	if (cnt == 0) {
 		log_debug(1, "sync_barrier_wait(): barrier reached");
 		LOCK(&bev->sctx->mutex);
 		locked = ISC_TRUE;
-		CHECK(sync_finishev_create(bev->sctx, bev->dbname, &fev));
+		CHECK(sync_finishev_create(bev->sctx, bev->inst, &fev));
 		ev = (isc_event_t *)fev;
 		isc_task_send(ldap_instance_gettask(bev->sctx->inst), &ev);
 	}
@@ -235,12 +229,12 @@ cleanup:
 }
 
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-sync_barrierev_create(sync_ctx_t *sctx, const char *inst_name,
+sync_barrierev_create(sync_ctx_t *sctx, ldap_instance_t *inst,
 		      sync_barrierev_t **evp) {
 	sync_barrierev_t *ev = NULL;
 
 	REQUIRE(sctx != NULL);
-	REQUIRE(inst_name != NULL);
+	REQUIRE(inst != NULL);
 	REQUIRE(evp != NULL && *evp == NULL);
 
 	ev = (sync_barrierev_t *)isc_event_allocate(sctx->mctx,
@@ -250,7 +244,7 @@ sync_barrierev_create(sync_ctx_t *sctx, const char *inst_name,
 	if (ev == NULL)
 		return ISC_R_NOMEMORY;
 
-	ev->dbname = inst_name;
+	ev->inst = inst;
 	ev->sctx = sctx;
 	*evp = ev;
 
@@ -488,7 +482,7 @@ cleanup:
  *       enqueued before sync_barrier_wait() call.
  */
 isc_result_t
-sync_barrier_wait(sync_ctx_t *sctx, const char *inst_name) {
+sync_barrier_wait(sync_ctx_t *sctx, ldap_instance_t *inst) {
 	isc_result_t result;
 	isc_event_t *ev = NULL;
 	sync_barrierev_t *bev = NULL;
@@ -524,7 +518,7 @@ sync_barrier_wait(sync_ctx_t *sctx, const char *inst_name) {
 	     taskel != NULL;
 	     taskel = next_taskel) {
 		bev = NULL;
-		CHECK(sync_barrierev_create(sctx, inst_name, &bev));
+		CHECK(sync_barrierev_create(sctx, inst, &bev));
 		next_taskel = NEXT(taskel, link);
 		UNLINK(sctx->tasks, taskel, link);
 		ev = (isc_event_t *)bev;

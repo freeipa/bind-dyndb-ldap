@@ -82,7 +82,7 @@ void
 settings_set_free(settings_set_t **set) ATTR_NONNULLS;
 
 isc_result_t
-settings_set_fill(settings_set_t *set, const char *const *argv)
+settings_set_fill(settings_set_t *set, unsigned int argc, char **argv)
 		  ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_boolean_t

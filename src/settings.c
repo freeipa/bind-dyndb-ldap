@@ -579,14 +579,14 @@ settings_set_free(settings_set_t **set) {
  * @endcode
  */
 isc_result_t
-settings_set_fill(settings_set_t *set, const char *const *argv)
+settings_set_fill(settings_set_t *set, unsigned int argc, char **argv)
 {
 	isc_result_t result;
-	int i;
+	unsigned int i;
 	const char *name;
 	char *value;
 
-	for (i = 0; argv[i] != NULL; i++) {
+	for (i = 0; i < argc; i++) {
 		char buff[SETTING_LINE_MAXLENGTH] = "";
 		CHECK(isc_string_copy(buff, SETTING_LINE_MAXLENGTH, argv[i]));
 		value = buff;

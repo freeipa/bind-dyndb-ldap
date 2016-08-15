@@ -49,7 +49,7 @@ isc_result_t
 sync_task_add(sync_ctx_t *sctx, isc_task_t *task) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
-sync_barrier_wait(sync_ctx_t *sctx, const char *inst_name) ATTR_NONNULLS ATTR_CHECKRESULT;
+sync_barrier_wait(sync_ctx_t *sctx, ldap_instance_t *inst) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
 sync_concurr_limit_wait(sync_ctx_t *sctx) ATTR_NONNULLS ATTR_CHECKRESULT;
