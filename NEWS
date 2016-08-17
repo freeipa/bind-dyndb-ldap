@@ -1,3 +1,11 @@
+10.1
+====
+[1] Prevent crash while reloading previously invalid but now valid DNS zone.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/166
+
+[2] Fix zone removal to respect forward configuration inheritance.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/167
+
 10.0
 ====
 [1] Default TTL can be configured at zone level in dNSdefaultTTL attribute.
