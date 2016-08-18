@@ -10,7 +10,7 @@
 
 #include <isc/dir.h>
 #include <isc/file.h>
-#include <isc/errno2result.h>
+#include <isc/errno.h>
 #include <isc/result.h>
 #include <isc/string.h>
 #include <isc/util.h>
@@ -37,7 +37,7 @@ fs_dir_create(const char *dir_name)
 	if (ret == 0)
 		result = ISC_R_SUCCESS;
 	else
-		result = isc__errno2result(errno);
+		result = isc_errno_toresult(errno);
 
 	if (result != ISC_R_SUCCESS && result != ISC_R_FILEEXISTS) {
 		log_error_r("unable to create directory '%s', working directory "
@@ -50,7 +50,7 @@ fs_dir_create(const char *dir_name)
 		 * solely for this purpose. */
 		ret = chmod(dir_name, dir_mode);
 		if (ret != 0) {
-			result = isc__errno2result(errno);
+			result = isc_errno_toresult(errno);
 			log_error_r("unable to chmod directory '%s', "
 				    "working directory is '%s'",
 				    dir_name, dir_curr);
