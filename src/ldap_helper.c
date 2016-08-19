@@ -4051,7 +4051,6 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 	dns_name_t *zone_name = NULL;
 	dns_zone_t *zone_ptr = NULL;
 	char *dn = NULL;
-	isc_mem_t *mctx = NULL;
 	isc_taskaction_t action = NULL;
 	isc_task_t *task = NULL;
 	isc_boolean_t synchronous;
@@ -4063,8 +4062,6 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 	log_debug(20, "syncrepl_update change type: add%d, del%d, mod%d",
 		  SYNCREPL_ADD(chgtype), SYNCREPL_DEL(chgtype),
 		  SYNCREPL_MOD(chgtype));
-
-	isc_mem_attach(inst->mctx, &mctx);
 
 	if (entry->class & LDAP_ENTRYCLASS_MASTER)
 		zone_name = &entry->fqdn;
@@ -4121,7 +4118,8 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 		goto cleanup;
 	}
 
-	pevent->mctx = mctx;
+	pevent->mctx = NULL;
+	isc_mem_attach(inst->mctx, &pevent->mctx);
 	pevent->inst = inst;
 	pevent->prevdn = NULL;
 	pevent->chgtype = chgtype;
@@ -4141,8 +4139,8 @@ cleanup:
 	if (pevent != NULL) {
 		/* Event was not sent */
 		sync_concurr_limit_signal(inst->sctx);
-		if (mctx != NULL)
-			isc_mem_detach(&mctx);
+		if (pevent->mctx != NULL)
+			isc_mem_detach(&pevent->mctx);
 		ldap_entry_destroy(entryp);
 		if (task != NULL)
 			isc_task_detach(&task);
