@@ -200,7 +200,6 @@ static const setting_t settings_local_default[] = {
 	{ "connections",		no_default_uint		},
 	{ "reconnect_interval",		no_default_uint		},
 	{ "timeout",			no_default_uint		},
-	{ "cache_ttl",			no_default_string	}, /* No longer supported */
 	{ "base",			no_default_string	},
 	{ "auth_method",		no_default_string	},
 	{ "auth_method_enum",		no_default_uint		},
@@ -214,12 +213,9 @@ static const setting_t settings_local_default[] = {
 	{ "sasl_password",		no_default_string	},
 	{ "krb5_keytab",		no_default_string	},
 	{ "fake_mname",			no_default_string	},
-	{ "zone_refresh",		no_default_string	}, /* No longer supported */
-	{ "psearch",			no_default_string	}, /* No longer supported */
 	{ "ldap_hostname",		no_default_string	},
 	{ "sync_ptr",			no_default_boolean	},
 	{ "dyn_update",			no_default_boolean	},
-	{ "serial_autoincrement",	no_default_string	}, /* No longer supported */
 	{ "verbose_checks",		no_default_boolean	},
 	{ "directory",			no_default_string	},
 	{ "nsec3param",			default_string("0 0 0 00")	}, /* NSEC only */
@@ -345,14 +341,6 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 	const char *dir_name = NULL;
 	isc_boolean_t dir_default;
 	ld_string_t *buff = NULL;
-
-	/* handle cache_ttl, psearch, serial_autoincrement, and zone_refresh
-	 * in special way */
-	const char *obsolete_value = NULL;
-	char *obsolete_options[] = {"cache_ttl", "psearch",
-				    "serial_autoincrement", "zone_refresh",
-				    NULL};
-
 	char print_buff[PRINT_BUFF_SIZE];
 	const char *auth_method_str = NULL;
 	ldap_auth_t auth_method_enum = AUTH_INVALID;
@@ -477,12 +465,6 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 	} else if (auth_method_enum == AUTH_SASL) {
 		log_info("SASL mechanisms other than GSSAPI+Kerberos "
 			 "are untested; expect problems");
-	}
-
-	for (char **option = obsolete_options; *option != NULL; option++) {
-		CHECK(setting_get_str(*option, set, &obsolete_value));
-		if (memcmp("", obsolete_value, 1) != 0)
-			log_error("option '%s' is not supported, ignoring", *option);
 	}
 
 	if (settings_set_isfilled(set) != ISC_TRUE)
