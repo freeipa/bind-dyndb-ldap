@@ -313,7 +313,12 @@ and is used for logging purposes and for naming working directories.
 Library path must point to a shared object file that will be opened and loaded.
 
 Name and library path have to be followed by set of options enclosed between
-curly brackets.
+curly brackets. Example:
+dyndb "example-ldap" "/usr/lib64/bind/ldap.so" {
+	uri "ldap://ldap.example.com";
+	base "cn=dns, dc=example,dc=com";
+	auth_method "none";
+};
 
 5.1 Configuration options
 -------------------------
@@ -325,7 +330,7 @@ uri
 	The Uniform Resource Identifier pointing to the LDAP server we
 	wish to connect to. This string is directly passed to the
 	ldap_initialize(3) function. This option is mandatory.
-	Example: ldap://ldap.example.com
+	Example: "ldap://ldap.example.com"
 
 connections (default 2)
 	Number of connections the LDAP driver should try to establish to
@@ -336,7 +341,8 @@ connections (default 2)
 
 base
 	This is the search base that will be used by the LDAP back-end
-	to search for DNS zones. It is mandatory.
+	to search for DNS zones. This option is mandatory.
+	Example: "cn=dns, dc=example,dc=com";
 
 auth_method (default "none")
 	The method used to authenticate to the LDAP server. Currently
@@ -371,7 +377,7 @@ sasl_realm
 krb5_keytab
 	Path to the kerberos keytab containing service credentials to be used
 	for SASL authentication. Append the "FILE:" prefix to the file path.
-	(FILE:/etc/named.keytab, for example)
+	Example: "FILE:/etc/named.keytab"
 
 krb5_principal
 	Kerberos principal of the service, used for SASL authentication.
@@ -398,7 +404,7 @@ ldap_hostname (default "")
 
 5.1.2 Special DNS features
 --------------------------
-fake_mname (default "")
+fake_mname
 	Ignore value of the idnsSOAmName (primary master DNS name) attribute
 	and use this value instead. This allows multiple BIND processes to share
 	one LDAP database and every BIND reports itself as a primary master in
@@ -443,11 +449,10 @@ options {
 	directory "/var/named/";
 };
 
-dynamic-db "my_db_name" {
-	library "ldap.so";
-	arg "uri ldap://ldap.example.com";
-	arg "base cn=dns, dc=example, dc=com";
-	arg "auth_method none";
+dyndb "my_db_name" "/usr/lib64/bind/ldap.so" {
+	uri "ldap://ldap.example.com";
+	base "cn=dns, dc=example,dc=com";
+	auth_method "none";
 };
 
 With this configuration, the LDAP back-end will try to connect to server

@@ -42,6 +42,7 @@
 #include <isc/string.h>
 
 #include <isccfg/cfg.h>
+#include <isccfg/grammar.h>
 
 #include <alloca.h>
 #define LDAP_DEPRECATED 1
@@ -226,6 +227,50 @@ static const setting_t settings_local_default[] = {
 	{ "forwarders",			no_default_string	},
 	{ "server_id",			no_default_string	},
 	end_of_settings
+};
+
+/**
+ * This is list of values configurable in dyndb section of named.conf.
+ * Names and data types must match settings_local_default.
+ * Settings which are not user-configurable must be omitted from this structure.
+ */
+static cfg_clausedef_t
+dyndb_ldap_conf_clauses[] = {
+	{ "auth_method",        &cfg_type_qstring,	0	},
+	{ "base",               &cfg_type_qstring,	0	},
+	{ "bind_dn",            &cfg_type_qstring,	0	},
+	{ "connections",        &cfg_type_uint32,	0	},
+	{ "directory",          &cfg_type_qstring,	0	},
+	{ "dyn_update",         &cfg_type_boolean,	0	},
+	{ "fake_mname",         &cfg_type_qstring,	0	},
+	{ "krb5_keytab",        &cfg_type_qstring,	0	},
+	{ "krb5_principal",     &cfg_type_qstring,	0	},
+	{ "ldap_hostname",      &cfg_type_qstring,	0	},
+	{ "password",           &cfg_type_sstring,	0	},
+	{ "reconnect_interval", &cfg_type_uint32,	0	},
+	{ "sasl_auth_name",     &cfg_type_qstring,	0	},
+	{ "sasl_mech",          &cfg_type_qstring,	0	},
+	{ "sasl_password",      &cfg_type_qstring,	0	},
+	{ "sasl_realm",         &cfg_type_qstring,	0	},
+	{ "sasl_user",          &cfg_type_qstring,	0	},
+	{ "server_id",          &cfg_type_qstring,	0	},
+	{ "sync_ptr",           &cfg_type_boolean,	0	},
+	{ "timeout",            &cfg_type_uint32,	0	},
+	{ "uri",                &cfg_type_qstring,	0	},
+	{ "verbose_checks",     &cfg_type_boolean,	0	},
+	{ NULL,			NULL,			0	}
+};
+
+static cfg_clausedef_t *
+dyndb_ldap_clausulesets[] = {
+	dyndb_ldap_conf_clauses,
+	NULL
+};
+
+/** Entry point for configuration parser used on dyndb section of named.conf. */
+static cfg_type_t cfg_type_dyndb_conf = {
+	"dyndb_ldap_conf", cfg_parse_mapbody, cfg_print_mapbody,
+	cfg_doc_mapbody, &cfg_rep_map, dyndb_ldap_clausulesets
 };
 
 /** Global settings from idnsConfig object. */
@@ -481,9 +526,9 @@ cleanup:
 
 #define PRINT_BUFF_SIZE 255
 isc_result_t
-new_ldap_instance(isc_mem_t *mctx, const char *db_name, unsigned int argc,
-		  char **argv, const dns_dyndbctx_t *dctx,
-		  ldap_instance_t **ldap_instp)
+new_ldap_instance(isc_mem_t *mctx, const char *db_name, const char *parameters,
+		  const char *file, unsigned long line,
+		  const dns_dyndbctx_t *dctx, ldap_instance_t **ldap_instp)
 {
 	isc_result_t result;
 	ldap_instance_t *ldap_inst;
@@ -523,7 +568,9 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name, unsigned int argc,
 	      sizeof(settings_global_default), settings_name,
 	      ldap_inst->local_settings, &ldap_inst->global_settings));
 
-	CHECK(settings_set_fill(ldap_inst->local_settings, argc, argv));
+	CHECK(setting_set_parse_conf(mctx, ldap_inst->db_name,
+				     &cfg_type_dyndb_conf, parameters, file,
+				     line, ldap_inst->local_settings));
 
 	/* copy global forwarders setting for configuration roll back in
 	 * configure_zone_forwarders() */

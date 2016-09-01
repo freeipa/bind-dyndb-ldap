@@ -9,6 +9,7 @@
 #include <isc/string.h>
 #include <isc/int.h>
 #include <isc/parseint.h>
+
 #include <dns/name.h>
 
 #include <ctype.h>
@@ -553,66 +554,72 @@ settings_set_free(settings_set_t **set) {
 }
 
 /**
- * Set all values specified by vector of strings to setting set. Setting name
- * is separated from it's argument with one or more characters defined by
- * @link SETTING_NAME_SEPARATORS@endlink.
+ * Append textlen bytes from text to isc_buffer pointed to by closure.
  *
- * @retval ISC_R_SUCCESS All strings in argument vector were processed and set.
- * @retval Others        Memory or parsing errors.
- *
- * @warning One string in argument vector is limited to
- * @link SETTING_LINE_MAXLENGTH@endlink.
- *
- * @note
- * @code{.txt}
- * Calling settings_set_fill() with argument array
- *
- * {"setting1	value 1 ",
- *  "bind_dn cn=Directory manager" }
- *
- * will result in setting values to two separate settings:
- *
- * "setting1" = "value 1 "
- * "bind_dn"  = "cn=Directory manager"
- *
- * Please note the positions of white spaces.
- * @endcode
+ * @pre closure is an initialized isc_buffer with autoreallocation enabled.
  */
-isc_result_t
-settings_set_fill(settings_set_t *set, unsigned int argc, char **argv)
+static void
+cfg_printer(void *closure, const char *text, int textlen) {
+	isc_buffer_t *logbuffer = closure;
+
+	REQUIRE(logbuffer != NULL);
+	REQUIRE(logbuffer->autore == ISC_TRUE);
+
+	isc_buffer_putmem(logbuffer, (const unsigned char *)text, textlen);
+}
+
+/**
+ * Copy values from cfg map to set of settings.
+ * Only setting names specified in set of settings are copied.
+ *
+ * @param[in]  config
+ * @param[out] set
+ *
+ * @retval ISC_R_SUCCESS Items listed in set of settings were copied from cfg map.
+ * @retval Others        Memory or parsing errors.
+ */
+static isc_result_t
+settings_set_fill(const cfg_obj_t *config, settings_set_t *set)
 {
 	isc_result_t result;
-	unsigned int i;
-	const char *name;
-	char *value;
+	setting_t *setting;
+	isc_buffer_t *buf_value = NULL;
+	const cfg_obj_t *cfg_value;
+	const char *str_value;
 
-	for (i = 0; i < argc; i++) {
-		char buff[SETTING_LINE_MAXLENGTH] = "";
-		CHECK(isc_string_copy(buff, SETTING_LINE_MAXLENGTH, argv[i]));
-		value = buff;
-		name = isc_string_separate(&value, SETTING_NAME_SEPARATORS);
-		if (name == NULL || value == NULL)
-			CLEANUP_WITH(ISC_R_UNEXPECTEDEND);
-		value += strspn(value, SETTING_NAME_SEPARATORS);
-		if (setting_find(name, set, ISC_FALSE, ISC_TRUE, NULL)
-		    != ISC_R_NOTFOUND) {
-			log_error("multiple definitions of setting '%s' in "
-				  "set of settings '%s'", name, set->name);
-			CLEANUP_WITH(ISC_R_EXISTS);
+	REQUIRE(cfg_obj_ismap(config) == ISC_TRUE);
+
+	CHECK(isc_buffer_allocate(set->mctx, &buf_value, ISC_BUFFER_INCR));
+	isc_buffer_setautorealloc(buf_value, ISC_TRUE);
+
+	for (setting = set->first_setting;
+	     setting->name != NULL;
+	     setting++) {
+		cfg_value = NULL;
+		result = cfg_map_get(config, setting->name, &cfg_value);
+		if (result == ISC_R_NOTFOUND)
+			continue; /* setting not configured in map */
+		else if (result != ISC_R_SUCCESS)
+			goto cleanup;
+		if (cfg_obj_isstring(cfg_value)) {
+			/* this avoids additional quotes around the string */
+			str_value = cfg_obj_asstring(cfg_value);
+		} else {
+			cfg_printx(cfg_value, 0, cfg_printer, buf_value);
+			isc_buffer_putmem(buf_value, (unsigned char *)"\0", 1);
+			str_value = isc_buffer_base(buf_value);
 		}
-		result = setting_set(name, set, value);
+		result = set_value(set->mctx, set, setting, str_value);
 		if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
 			goto cleanup;
+		isc_buffer_clear(buf_value);
 	}
 
-	return ISC_R_SUCCESS;
-
 cleanup:
-	log_error_r("cannot parse settings from '%s': "
-		    "problematic configuration line:"
-		    "\n%s\n"
-		    "error code", set->name, argv[i]);
-	/* TODO: Free memory in case of error. */
+	if (result != ISC_R_SUCCESS)
+		log_error_r("cannot parse settings for '%s'", set->name);
+	if (buf_value != NULL)
+		isc_buffer_free(&buf_value);
 	return result;
 }
 
@@ -642,6 +649,71 @@ settings_set_isfilled(settings_set_t *set) {
 		}
 	}
 	return isfiled;
+}
+
+/**
+ * Parse string with dyndb configuration and fill in settings_set_t structure.
+ *
+ * @param[in]  name		name of dyndb instance
+ * @param[in]  cfg_type_conf	configuration grammar for ISC parser
+ * @param[in]  parameters	string with complete dyndb configuration
+ * @param[in]  file		name of configuration file
+ * @param[in]  line		line on which config starts
+ * @param[out] settings		set of settings filled with values from config
+ *
+ * @pre Names and data types of respective paremeters
+ * 	in cfg_type_conf and set of settings must match.
+ */
+isc_result_t
+setting_set_parse_conf(isc_mem_t *mctx, const char *name,
+		       cfg_type_t *cfg_type_conf, const char *parameters,
+		       const char *file, unsigned long line,
+		       settings_set_t *settings)
+{
+	isc_result_t result;
+	cfg_obj_t *config = NULL;
+	isc_buffer_t in_buf;
+	isc_buffer_t *log_buf = NULL;
+	cfg_parser_t *parser = NULL;
+	unsigned int len;
+
+	REQUIRE(parameters != NULL);
+
+	CHECK(isc_buffer_allocate(mctx, &log_buf, ISC_BUFFER_INCR));
+	isc_buffer_setautorealloc(log_buf, ISC_TRUE);
+
+	len = strlen(parameters);
+	isc_buffer_constinit(&in_buf, parameters, len);
+	isc_buffer_add(&in_buf, len);
+
+	CHECK(cfg_parser_create(mctx, dns_lctx, &parser));
+	result = cfg_parse_buffer2(parser, &in_buf, name, cfg_type_conf,
+				   &config);
+	if (result == ISC_R_SUCCESS) {
+		cfg_printx(config, CFG_PRINTER_XKEY, cfg_printer, log_buf);
+		cfg_obj_log(config, dns_lctx, ISC_LOG_DEBUG(10),
+			    "configuration for dyndb instance '%s' "
+			    "(starting in file %s on line %lu):\n"
+			    "%.*s",
+			    name, file, line, isc_buffer_usedlength(log_buf),
+			    (char *)isc_buffer_base(log_buf));
+	} else {
+		log_error("configuration for dyndb instance '%s' "
+			  "(starting in file %s on line %lu) is invalid",
+			  name, file, line);
+		goto cleanup;
+	}
+
+	CHECK(settings_set_fill(config, settings));
+
+cleanup:
+	if (log_buf != NULL)
+		isc_buffer_free(&log_buf);
+	if (config != NULL)
+		cfg_obj_destroy(parser, &config);
+	if (parser != NULL)
+		cfg_parser_destroy(&parser);
+	return result;
 }
 
 isc_result_t

@@ -1042,9 +1042,6 @@ dyndb_init(isc_mem_t *mctx, const char *name, const char *parameters,
 	   const char *file, unsigned long line, const dns_dyndbctx_t *dctx,
 	   void **instp)
 {
-	unsigned int argc;
-	char **argv = NULL;
-	char *tmps = NULL;
 	ldap_instance_t *inst = NULL;
 	isc_result_t result;
 	static isc_once_t library_init_once = ISC_ONCE_INIT;
@@ -1072,23 +1069,12 @@ dyndb_init(isc_mem_t *mctx, const char *name, const char *parameters,
 
 	log_debug(2, "registering dynamic ldap driver for %s.", name);
 
-	tmps = isc_mem_strdup(mctx, parameters);
-	if (tmps == NULL) {
-		result = ISC_R_NOMEMORY;
-		goto cleanup;
-	}
-	CHECK(isc_commandline_strtoargv(mctx, tmps, &argc, &argv, 0));
-
 	/* Finally, create the instance. */
-	CHECK(new_ldap_instance(mctx, name, argc, argv, dctx, &inst));
+	CHECK(new_ldap_instance(mctx, name, parameters, file, line, dctx,
+				&inst));
 	*instp = inst;
 
 cleanup:
-	if (tmps != NULL)
-		isc_mem_free(mctx, tmps);
-	if (argv != NULL)
-		isc_mem_put(mctx, argv, argc * sizeof(*argv));
-
 	return result;
 }
 
