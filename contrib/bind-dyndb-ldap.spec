@@ -48,7 +48,7 @@ rm -rf %{buildroot}
 
 %files
 %defattr(-,root,root,-)
-%doc NEWS README COPYING doc/{example.ldif,schema}
+%doc NEWS README.md COPYING doc/{example.ldif,schema}
 %dir %attr(770, root, named) %{_localstatedir}/named/dyndb-ldap
 %{_libdir}/bind/ldap.so
 
