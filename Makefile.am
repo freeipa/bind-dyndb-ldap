@@ -2,4 +2,4 @@ ACLOCAL_AMFLAGS = -I m4
 
 SUBDIRS = doc src
 
-doc_DATA = README NEWS
+dist_doc_DATA = README.md NEWS COPYING
