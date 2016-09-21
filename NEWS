@@ -1,3 +1,14 @@
+11.0
+====
+[1] The plugin was ported to BIND 9.11. Minimal BIND version is now 9.11.0rc1.
+    https://fedorahosted.org/bind-dyndb-ldap/ticket/161
+
+[2] Configuration format in named.conf is different
+    and incompatible with all previous versions. Please see README.md.
+
+[3] Obsolete plugin options were removed:
+    cache_ttl, psearch, serial_autoincrement, zone_refresh.
+
 10.1
 ====
 [1] Prevent crash while reloading previously invalid but now valid DNS zone.
