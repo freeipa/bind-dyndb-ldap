@@ -9,6 +9,7 @@
 
 #include <isc/eventclass.h>
 #include <isc/util.h>
+#include <isccfg/cfg.h>
 
 #include <ldap.h>
 
@@ -40,9 +41,9 @@ void free_rdatalist(isc_mem_t *mctx, dns_rdatalist_t *rdlist) ATTR_NONNULLS;
  */
 
 isc_result_t
-new_ldap_instance(isc_mem_t *mctx, const char *db_name,
-		  const char * const *argv, dns_dyndb_arguments_t *dyndb_args,
-		  isc_task_t *task, ldap_instance_t **ldap_instp) ATTR_NONNULLS;
+new_ldap_instance(isc_mem_t *mctx, const char *db_name, const char *parameters,
+		  const char *file, unsigned long line,
+		  const dns_dyndbctx_t *dctx, ldap_instance_t **ldap_instp) ATTR_NONNULLS;
 void destroy_ldap_instance(ldap_instance_t **ldap_inst) ATTR_NONNULLS;
 
 isc_result_t

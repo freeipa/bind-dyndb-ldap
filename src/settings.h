@@ -6,12 +6,13 @@
 #define _LD_SETTINGS_H_
 
 #include <isc/types.h>
+
+#include <isccfg/grammar.h>
+
 #include "types.h"
 #include "str.h"
 #include "ldap_entry.h"
 
-#define SETTING_LINE_MAXLENGTH 255
-#define SETTING_NAME_SEPARATORS " \t"
 #define SETTING_SET_NAME_LOCAL  "named.conf"
 #define SETTING_SET_NAME_SERVER "LDAP idnsServerConfig object"
 #define SETTING_SET_NAME_GLOBAL "LDAP idnsConfig object"
@@ -82,8 +83,10 @@ void
 settings_set_free(settings_set_t **set) ATTR_NONNULLS;
 
 isc_result_t
-settings_set_fill(settings_set_t *set, const char *const *argv)
-		  ATTR_NONNULLS ATTR_CHECKRESULT;
+setting_set_parse_conf(isc_mem_t *mctx, const char *name,
+		       cfg_type_t *cfg_type_conf, const char *parameters,
+		       const char *file, unsigned long line,
+		       settings_set_t *settings) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_boolean_t
 settings_set_isfilled(settings_set_t *set) ATTR_NONNULLS ATTR_CHECKRESULT;

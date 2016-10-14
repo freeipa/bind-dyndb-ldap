@@ -4,7 +4,6 @@ bindplugindir=$(libdir)/bind
 HDRS =				\
 	acl.h			\
 	bindcfg.h		\
-	compat.h		\
 	empty_zones.h		\
 	fs.h			\
 	fwd.h			\
@@ -27,7 +26,6 @@ HDRS =				\
 	types.h			\
 	util.h			\
 	zone.h			\
-	zone_manager.h		\
 	zone_register.h
 
 ldap_la_SOURCES =		\
@@ -54,7 +52,6 @@ ldap_la_SOURCES =		\
 	syncrepl.c		\
 	str.c			\
 	zone.c			\
-	zone_manager.c		\
 	zone_register.c
 
 ldap_la_CFLAGS = -Wall -Wextra @WERROR@ -std=gnu99 -O2

@@ -43,7 +43,7 @@ typedef struct ldap_syncreplevent ldap_syncreplevent_t;
 struct ldap_syncreplevent {
 	ISC_EVENT_COMMON(ldap_syncreplevent_t);
 	isc_mem_t *mctx;
-	char *dbname;
+	ldap_instance_t	*inst;
 	char *prevdn;
 	int chgtype;
 	ldap_entry_t *entry;

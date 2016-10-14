@@ -9,13 +9,17 @@
 #endif
 
 #include <isc/buffer.h>
+#include <isc/commandline.h>
+#include <isc/hash.h>
+#include <isc/lib.h>
 #include <isc/mem.h>
+#include <isc/once.h>
 #include <isc/refcount.h>
 #include <isc/util.h>
 
 #include <dns/db.h>
 #include <dns/diff.h>
-#include <dns/dynamic_db.h>
+#include <dns/dyndb.h>
 #include <dns/dbiterator.h>
 #include <dns/rdata.h>
 #include <dns/rdataclass.h>
@@ -29,13 +33,12 @@
 
 #include <string.h> /* For memcpy */
 
-#include "compat.h"
+#include "bindcfg.h"
 #include "ldap_driver.h"
 #include "ldap_helper.h"
 #include "ldap_convert.h"
 #include "log.h"
 #include "util.h"
-#include "zone_manager.h"
 #include "zone_register.h"
 
 #ifdef HAVE_VISIBILITY
@@ -181,18 +184,9 @@ detach(dns_db_t **dbp)
 
 /* !!! This could be required for optimizations (like on-disk cache). */
 static isc_result_t
-#if LIBDNS_VERSION_MAJOR < 140
-beginload(dns_db_t *db, dns_addrdatasetfunc_t *addp, dns_dbload_t **dbloadp)
-{
-
-	UNUSED(db);
-	UNUSED(addp);
-	UNUSED(dbloadp);
-#else /* LIBDNS_VERSION_MAJOR >= 140 */
 beginload(dns_db_t *db, dns_rdatacallbacks_t *callbacks) {
 	UNUSED(db);
 	UNUSED(callbacks);
-#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 
 	fatal_error("ldapdb: method beginload() should never be called");
 
@@ -207,17 +201,9 @@ beginload(dns_db_t *db, dns_rdatacallbacks_t *callbacks) {
 
 /* !!! This could be required for optimizations (like on-disk cache). */
 static isc_result_t
-#if LIBDNS_VERSION_MAJOR < 140
-endload(dns_db_t *db, dns_dbload_t **dbloadp)
-{
-
-	UNUSED(db);
-	UNUSED(dbloadp);
-#else /* LIBDNS_VERSION_MAJOR >= 140 */
 endload(dns_db_t *db, dns_rdatacallbacks_t *callbacks) {
 	UNUSED(db);
 	UNUSED(callbacks);
-#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 
 	fatal_error("ldapdb: method endload() should never be called");
 
@@ -225,7 +211,6 @@ endload(dns_db_t *db, dns_rdatacallbacks_t *callbacks) {
 	return ISC_R_SUCCESS;
 }
 
-#if LIBDNS_VERSION_MAJOR >= 140
 static isc_result_t
 serialize(dns_db_t *db, dns_dbversion_t *version, FILE *file)
 {
@@ -235,23 +220,17 @@ serialize(dns_db_t *db, dns_dbversion_t *version, FILE *file)
 
 	return dns_db_serialize(ldapdb->rbtdb, version, file);
 }
-#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 
 /* !!! This could be required for optimizations (like on-disk cache). */
 static isc_result_t
-dump(dns_db_t *db, dns_dbversion_t *version, const char *filename
-#if LIBDNS_VERSION_MAJOR >= 31
-     , dns_masterformat_t masterformat
-#endif
-     )
+dump(dns_db_t *db, dns_dbversion_t *version, const char *filename,
+     dns_masterformat_t masterformat)
 {
 
 	UNUSED(db);
 	UNUSED(version);
 	UNUSED(filename);
-#if LIBDNS_VERSION_MAJOR >= 31
 	UNUSED(masterformat);
-#endif
 
 	fatal_error("ldapdb: method dump() should never be called");
 
@@ -422,22 +401,14 @@ printnode(dns_db_t *db, dns_dbnode_t *node, FILE *out)
 }
 
 static isc_result_t
-createiterator(dns_db_t *db,
-#if LIBDNS_VERSION_MAJOR >= 50
-	       unsigned int options,
-#else
-	       isc_boolean_t relative_names,
-#endif
+createiterator(dns_db_t *db,  unsigned int options,
 	       dns_dbiterator_t **iteratorp)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
-#if LIBDNS_VERSION_MAJOR >= 50
+
 	return dns_db_createiterator(ldapdb->rbtdb, options, iteratorp);
-#else
-	return dns_db_createiterator(ldapdb->rbtdb, relative_names, iteratorp);
-#endif
 }
 
 static isc_result_t
@@ -675,7 +646,6 @@ settask(dns_db_t *db, isc_task_t *task)
 	dns_db_settask(ldapdb->rbtdb, task);
 }
 
-#if LIBDNS_VERSION_MAJOR >= 31
 static isc_result_t
 getoriginnode(dns_db_t *db, dns_dbnode_t **nodep)
 {
@@ -685,9 +655,7 @@ getoriginnode(dns_db_t *db, dns_dbnode_t **nodep)
 
 	return dns_db_getoriginnode(ldapdb->rbtdb, nodep);
 }
-#endif /* LIBDNS_VERSION_MAJOR >= 31 */
 
-#if LIBDNS_VERSION_MAJOR >= 45
 static void
 transfernode(dns_db_t *db, dns_dbnode_t **sourcep, dns_dbnode_t **targetp)
 {
@@ -698,9 +666,7 @@ transfernode(dns_db_t *db, dns_dbnode_t **sourcep, dns_dbnode_t **targetp)
 	dns_db_transfernode(ldapdb->rbtdb, sourcep, targetp);
 
 }
-#endif /* LIBDNS_VERSION_MAJOR >= 45 */
 
-#if LIBDNS_VERSION_MAJOR >= 50
 static isc_result_t
 getnsec3parameters(dns_db_t *db, dns_dbversion_t *version,
 			  dns_hash_t *hash, isc_uint8_t *flags,
@@ -767,9 +733,7 @@ isdnssec(dns_db_t *db)
 
 	return dns_db_isdnssec(ldapdb->rbtdb);
 }
-#endif /* LIBDNS_VERSION_MAJOR >= 50 */
 
-#if LIBDNS_VERSION_MAJOR >= 45
 static dns_stats_t *
 getrrsetstats(dns_db_t *db) {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
@@ -779,35 +743,7 @@ getrrsetstats(dns_db_t *db) {
 	return dns_db_getrrsetstats(ldapdb->rbtdb);
 
 }
-#endif /* LIBDNS_VERSION_MAJOR >= 45 */
 
-#if LIBDNS_VERSION_MAJOR >= 82 && LIBDNS_VERSION_MAJOR < 140
-static isc_result_t
-rpz_enabled(dns_db_t *db, dns_rpz_st_t *st)
-{
-	ldapdb_t *ldapdb = (ldapdb_t *) db;
-
-	REQUIRE(VALID_LDAPDB(ldapdb));
-
-	return dns_db_rpz_enabled(ldapdb->rbtdb, st);
-}
-
-static void
-rpz_findips(dns_rpz_zone_t *rpz, dns_rpz_type_t rpz_type,
-		   dns_zone_t *zone, dns_db_t *db, dns_dbversion_t *version,
-		   dns_rdataset_t *ardataset, dns_rpz_st_t *st,
-		   dns_name_t *query_qname)
-{
-	ldapdb_t *ldapdb = (ldapdb_t *) db;
-
-	REQUIRE(VALID_LDAPDB(ldapdb));
-
-	dns_db_rpz_findips(rpz, rpz_type, zone, ldapdb->rbtdb, version,
-			   ardataset, st, query_qname);
-}
-#endif /* LIBDNS_VERSION_MAJOR >= 82 && LIBDNS_VERSION_MAJOR < 140 */
-
-#if LIBDNS_VERSION_MAJOR >= 140
 void
 rpz_attach(dns_db_t *db, dns_rpz_zones_t *rpzs, dns_rpz_num_t rpz_num)
 {
@@ -827,9 +763,7 @@ rpz_ready(dns_db_t *db)
 
 	return dns_db_rpz_ready(ldapdb->rbtdb);
 }
-#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 
-#if LIBDNS_VERSION_MAJOR >= 90
 static isc_result_t
 findnodeext(dns_db_t *db, dns_name_t *name,
 		   isc_boolean_t create, dns_clientinfomethods_t *methods,
@@ -858,9 +792,7 @@ findext(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 			      nodep, foundname, methods, clientinfo, rdataset,
 			      sigrdataset);
 }
-#endif /* LIBDNS_VERSION_MAJOR >= 90 */
 
-#if LIBDNS_VERSION_MAJOR >= 140
 isc_result_t
 setcachestats(dns_db_t *db, isc_stats_t *stats)
 {
@@ -871,11 +803,7 @@ setcachestats(dns_db_t *db, isc_stats_t *stats)
 	return dns_db_setcachestats(ldapdb->rbtdb, stats);
 }
 
-#if LIBDNS_VERSION_MAJOR >= 164
 size_t
-#else
-unsigned int
-#endif /* LIBDNS_VERSION_MAJOR >= 164 */
 hashsize(dns_db_t *db)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
@@ -884,16 +812,23 @@ hashsize(dns_db_t *db)
 
 	return dns_db_hashsize(ldapdb->rbtdb);
 }
-#endif /* LIBDNS_VERSION_MAJOR >= 140 */
+
+isc_result_t
+nodefullname(dns_db_t *db, dns_dbnode_t *node, dns_name_t *name)
+{
+	ldapdb_t *ldapdb = (ldapdb_t *) db;
+
+	REQUIRE(VALID_LDAPDB(ldapdb));
+
+	return dns_db_nodefullname(ldapdb->rbtdb, node, name);
+}
 
 static dns_dbmethods_t ldapdb_methods = {
 	attach,
 	detach,
 	beginload,
 	endload,
-#if LIBDNS_VERSION_MAJOR >= 140
 	serialize, /* see dns_db_serialize(), implementation is not mandatory */
-#endif /* LIBDNS_VERSION_MAJOR >= 140 */
 	dump,
 	currentversion,
 	newversion,
@@ -917,37 +852,22 @@ static dns_dbmethods_t ldapdb_methods = {
 	ispersistent,
 	overmem,
 	settask,
-#if LIBDNS_VERSION_MAJOR >= 31
 	getoriginnode,
-#endif /* LIBDNS_VERSION_MAJOR >= 31 */
-#if LIBDNS_VERSION_MAJOR >= 45
 	transfernode,
-#if LIBDNS_VERSION_MAJOR >= 50
 	getnsec3parameters,
 	findnsec3node,
 	setsigningtime,
 	getsigningtime,
 	resigned,
 	isdnssec,
-#endif /* LIBDNS_VERSION_MAJOR >= 50 */
 	getrrsetstats,
-#endif /* LIBDNS_VERSION_MAJOR >= 45 */
-#if LIBDNS_VERSION_MAJOR >= 82 && LIBDNS_VERSION_MAJOR < 140
-	rpz_enabled,
-	rpz_findips,
-#endif /* LIBDNS_VERSION_MAJOR >= 82 && LIBDNS_VERSION_MAJOR < 140 */
-#if LIBDNS_VERSION_MAJOR >= 140
 	rpz_attach,
 	rpz_ready,
-#endif /* LIBDNS_VERSION_MAJOR >= 140 */
-#if LIBDNS_VERSION_MAJOR >= 90
 	findnodeext,
 	findext,
-#endif /* LIBDNS_VERSION_MAJOR >= 90 */
-#if LIBDNS_VERSION_MAJOR >= 140
 	setcachestats,
-	hashsize
-#endif /* LIBDNS_VERSION_MAJOR >= 140 */
+	hashsize,
+	nodefullname
 };
 
 isc_result_t ATTR_NONNULLS
@@ -1002,18 +922,17 @@ ldapdb_associate(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 		 void *driverarg, dns_db_t **dbp) {
 
 	isc_result_t result;
-	ldap_instance_t *ldap_inst = NULL;
+	ldap_instance_t *ldap_inst = driverarg;
 	zone_register_t *zr = NULL;
 
-	UNUSED(driverarg); /* Currently we don't need any data */
-
 	REQUIRE(ISCAPI_MCTX_VALID(mctx));
-	REQUIRE(argc == LDAP_DB_ARGC);
 	REQUIRE(type == LDAP_DB_TYPE);
 	REQUIRE(rdclass == LDAP_DB_RDATACLASS);
+	REQUIRE(argc == 0);
+	UNUSED(argv);
+	REQUIRE(driverarg != NULL);
 	REQUIRE(dbp != NULL && *dbp == NULL);
 
-	CHECK(manager_get_ldap_instance(argv[0], &ldap_inst));
 	zr = ldap_instance_getzr(ldap_inst);
 	if (zr == NULL)
 		CLEANUP_WITH(ISC_R_NOTFOUND);
@@ -1026,19 +945,16 @@ cleanup:
 
 isc_result_t
 ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
-	      dns_rdataclass_t rdclass, unsigned int argc, char *argv[],
-	      void *driverarg, dns_db_t **dbp)
+	      dns_rdataclass_t rdclass, void *driverarg, dns_db_t **dbp)
 {
 	ldapdb_t *ldapdb = NULL;
 	isc_result_t result;
 	isc_boolean_t lock_ready = ISC_FALSE;
 
-	UNUSED(driverarg); /* Currently we don't need any data */
-
 	/* Database instance name. */
-	REQUIRE(argc == LDAP_DB_ARGC);
 	REQUIRE(type == LDAP_DB_TYPE);
 	REQUIRE(rdclass == LDAP_DB_RDATACLASS);
+	REQUIRE(driverarg != NULL);
 	REQUIRE(dbp != NULL && *dbp == NULL);
 
 	CHECKED_MEM_GET_PTR(mctx, ldapdb);
@@ -1060,7 +976,7 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 	CHECK(dns_name_dupwithoffsets(name, mctx, &ldapdb->common.origin));
 
 	CHECK(isc_refcount_init(&ldapdb->refs, 1));
-	CHECK(manager_get_ldap_instance(argv[0], &ldapdb->ldap_inst));
+	ldapdb->ldap_inst = driverarg;
 
 	CHECK(dns_db_create(mctx, "rbt", name, dns_dbtype_zone,
 			    dns_rdataclass_in, 0, NULL, &ldapdb->rbtdb));
@@ -1084,50 +1000,91 @@ cleanup:
 	return result;
 }
 
-static dns_dbimplementation_t *ldapdb_imp;
-const char *ldapdb_impname = "dynamic-ldap";
-
-
-VISIBLE isc_result_t
-dynamic_driver_init(isc_mem_t *mctx, const char *name, const char * const *argv,
-		    dns_dyndb_arguments_t *dyndb_args)
+static void
+library_init(void)
 {
-	dns_dbimplementation_t *ldapdb_imp_new = NULL;
+       log_info("bind-dyndb-ldap version " VERSION
+                " compiled at " __TIME__ " " __DATE__
+                ", compiler " __VERSION__);
+       cfg_init_types();
+}
+
+/*
+ * Driver version is called when loading the driver to ensure there
+ * is no API mismatch betwen the driver and the caller.
+ */
+VISIBLE int
+dyndb_version(unsigned int *flags) {
+	UNUSED(flags);
+
+	return (DNS_DYNDB_VERSION);
+}
+
+/*
+ * Driver init is called for each dyndb section in named.conf
+ * once during startup and then again on every reload.
+ *
+ * @code
+ * dyndb example-name "sample.so" { param1 param2 };
+ * @endcode
+ *
+ * @param[in] name        User-defined string from dyndb "name" {}; definition
+ *                        in named.conf.
+ *                        The example above will have name = "example-name".
+ * @param[in] parameters  User-defined parameters from dyndb section as one
+ *                        string. The example above will have
+ *                        params = "param1 param2";
+ * @param[out] instp      Pointer to instance-specific data
+ *                        (for one dyndb section).
+ */
+VISIBLE isc_result_t
+dyndb_init(isc_mem_t *mctx, const char *name, const char *parameters,
+	   const char *file, unsigned long line, const dns_dyndbctx_t *dctx,
+	   void **instp)
+{
+	ldap_instance_t *inst = NULL;
 	isc_result_t result;
+	static isc_once_t library_init_once = ISC_ONCE_INIT;
 
 	REQUIRE(name != NULL);
-	REQUIRE(argv != NULL);
-	REQUIRE(dyndb_args != NULL);
+	REQUIRE(parameters != NULL);
+	REQUIRE(dctx != NULL);
+	REQUIRE(instp != NULL && *instp == NULL);
+
+	RUNTIME_CHECK(isc_once_do(&library_init_once, library_init)
+		      == ISC_R_SUCCESS);
+
+	/*
+	 * Depending on how dlopen() was called, we may not have
+	 * access to named's global namespace, in which case we need
+	 * to initialize libisc/libdns
+	 */
+	if (dctx->refvar != &isc_bind9) {
+		isc_lib_register();
+		isc_log_setcontext(dctx->lctx);
+		dns_log_setcontext(dctx->lctx);
+	}
+
+	isc_hash_set_initializer(dctx->hashinit);
 
 	log_debug(2, "registering dynamic ldap driver for %s.", name);
 
-	/*
-	 * We need to discover what rdataset methods does
-	 * dns_rdatalist_tordataset use. We then make a copy for ourselves
-	 * with the exception that we modify the disassociate method to free
-	 * the rdlist we allocate for it in clone_rdatalist_to_rdataset().
-	 */
-
-	/* Register new DNS DB implementation. */
-	result = dns_db_register(ldapdb_impname, &ldapdb_associate, NULL, mctx,
-				 &ldapdb_imp_new);
-	if (result != ISC_R_SUCCESS && result != ISC_R_EXISTS)
-		return result;
-	else if (result == ISC_R_SUCCESS)
-		ldapdb_imp = ldapdb_imp_new;
-
 	/* Finally, create the instance. */
-	result = manager_create_db_instance(mctx, name, argv, dyndb_args);
+	CHECK(new_ldap_instance(mctx, name, parameters, file, line, dctx,
+				&inst));
+	*instp = inst;
 
+cleanup:
 	return result;
 }
 
+/*
+ * Driver destroy is called for every instance on every reload and then once
+ * during shutdown.
+ *
+ * @param[out] instp Pointer to instance-specific data (for one dyndb section).
+ */
 VISIBLE void
-dynamic_driver_destroy(void)
-{
-	/* Only unregister the implementation if it was registered by us. */
-	if (ldapdb_imp != NULL)
-		dns_db_unregister(&ldapdb_imp);
-
-	destroy_manager();
+dyndb_destroy(void **instp) {
+	destroy_ldap_instance((ldap_instance_t **)instp);
 }

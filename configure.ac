@@ -1,9 +1,9 @@
 AC_PREREQ([2.59])
-AC_INIT([bind-dyndb-ldap], [10.1], [freeipa-devel@redhat.com])
+AC_INIT([bind-dyndb-ldap], [11.0], [freeipa-devel@redhat.com])
 
 AM_INIT_AUTOMAKE([-Wall foreign dist-bzip2])
 
-AC_CONFIG_SRCDIR([src/zone_manager.h])
+AC_CONFIG_SRCDIR([src/ldap_driver.c])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_MACRO_DIR([m4])
 
@@ -105,18 +105,18 @@ int main(void) {
 [AC_MSG_ERROR([Cross compiling is not supported.])]
 )
 
-dnl isc__errno2result() is typically not present in standard header files
-AC_MSG_CHECKING([isc__errno2result availability in header files])
+dnl isc_errno_toresult() was not available in older header files
+AC_MSG_CHECKING([isc_errno_toresult availability])
 AC_TRY_RUN([
-#include <isc/errno2result.h>
+#include <isc/errno.h>
 int main(void) {
-	isc__errno2result(0);
+	isc_errno_toresult(0);
 	return 0;
 }],
 [AC_MSG_RESULT([yes])],
 [AC_MSG_ERROR([
- Can't find isc__errno2result() or header isc/errno2result.h:
- Please install bind-lite-devel package or similar.])],
+ Can't find isc_errno_toresult() or header isc/errno.h:
+ Please install bind-devel package or similar.])],
 [AC_MSG_ERROR([Cross compiling is not supported.])]
 )
 
