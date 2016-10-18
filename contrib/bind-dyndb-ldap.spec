@@ -14,6 +14,7 @@ BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildRequires:  bind-devel >= 32:9.9.0, bind-lite-devel >= 32:9.9.0
 BuildRequires:  krb5-devel
 BuildRequires:  openldap-devel
+BuildRequires:  libuuid-devel
 BuildRequires:  automake, autoconf, libtool
 
 Requires:       bind >= 32:9.9.0
