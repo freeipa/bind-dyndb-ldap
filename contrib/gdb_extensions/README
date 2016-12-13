@@ -1,0 +1,16 @@
+This directory contains pretty-printers which make easier to read
+bind-dyndb-ldap data structures in GDB with Python support.
+
+To use them, simply source the files into GDB:
+(gdb) source /path/to/pretty/printer.py
+
+BEWARE:
+The pretty printers work well if memory is not corrupted.
+Disable pretty printers if you suspect memory corruption:
+(gdb) disable pretty-printer
+
+Pretty-printers for BIND 9 data structures might be handy, too:
+https://github.com/pspacek/bind-gdb-pretty-printers
+
+For further information see
+https://sourceware.org/gdb/onlinedocs/gdb/Python-API.html
