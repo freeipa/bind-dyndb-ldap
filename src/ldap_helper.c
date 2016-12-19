@@ -668,6 +668,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name, const char *parameters,
 	result = isc_thread_create(ldap_syncrepl_watcher, ldap_inst,
 				   &ldap_inst->watcher);
 	if (result != ISC_R_SUCCESS) {
+		ldap_inst->watcher = 0;
 		log_error("Failed to create syncrepl watcher thread");
 		goto cleanup;
 	}
@@ -684,6 +685,38 @@ cleanup:
 }
 #undef PRINT_BUFF_SIZE
 
+/**
+ * Send SIGUSR1 to the SyncRepl watcher thread and wait for it to terminate.
+ *
+ * If the thread has already been terminated and a signal can't be sent to it,
+ * log an error instead. The thread is still joined, but since it is no longer
+ * running, it is instantaneous and doesn't block.
+ *
+ * @param[in]  ldap_inst	LDAP instance with ID of watcher thread
+ */
+static void ATTR_NONNULLS
+ldap_syncrepl_watcher_shutdown(ldap_instance_t *ldap_inst)
+{
+	REQUIRE(ldap_inst != NULL);
+
+	ldap_inst->exiting = ISC_TRUE;
+	/*
+	 * Wake up the watcher thread. This might look like a hack
+	 * but isc_thread_t is actually pthread_t and libisc don't
+	 * have any isc_thread_kill() func.
+	 *
+	 * We use SIGUSR1 to not to interfere with any signal
+	 * used by BIND itself.
+	 */
+	if (pthread_kill(ldap_inst->watcher, SIGUSR1) != 0) {
+		log_error("unable to send signal to SyncRepl watcher thread "
+				  "(already terminated?)");
+	}
+
+	RUNTIME_CHECK(isc_thread_join(ldap_inst->watcher, NULL)
+		      == ISC_R_SUCCESS);
+}
+
 void
 destroy_ldap_instance(ldap_instance_t **ldap_instp)
 {
@@ -696,18 +729,7 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 		return;
 
 	if (ldap_inst->watcher != 0) {
-		ldap_inst->exiting = ISC_TRUE;
-		/*
-		 * Wake up the watcher thread. This might look like a hack
-		 * but isc_thread_t is actually pthread_t and libisc don't
-		 * have any isc_thread_kill() func.
-		 *
-		 * We use SIGUSR1 to not to interfere with any signal
-		 * used by BIND itself.
-		 */
-		REQUIRE(pthread_kill(ldap_inst->watcher, SIGUSR1) == 0);
-		RUNTIME_CHECK(isc_thread_join(ldap_inst->watcher, NULL)
-			      == ISC_R_SUCCESS);
+		ldap_syncrepl_watcher_shutdown(ldap_inst);
 		ldap_inst->watcher = 0;
 	}
 
