@@ -11,13 +11,13 @@ URL:            https://fedorahosted.org/bind-dyndb-ldap
 Source0:        https://fedorahosted.org/released/%{name}/%{name}-%{VERSION}.tar.bz2
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 
-BuildRequires:  bind-devel >= 32:9.9.0, bind-lite-devel >= 32:9.9.0
+BuildRequires:  bind-devel >= 32:9.11.0-6.P2, bind-lite-devel >= 32:9.11.0-6.P2
 BuildRequires:  krb5-devel
 BuildRequires:  openldap-devel
 BuildRequires:  libuuid-devel
 BuildRequires:  automake, autoconf, libtool
 
-Requires:       bind >= 32:9.9.0
+Requires:       bind >= 32:9.11.0-6.P2
 
 %description
 This package provides an LDAP back-end plug-in for BIND. It features
@@ -42,6 +42,46 @@ mkdir -m 770 -p %{buildroot}/%{_localstatedir}/named/dyndb-ldap
 rm %{buildroot}%{_libdir}/bind/ldap.la
 rm -r %{buildroot}%{_datadir}/doc/%{name}
 
+%post
+# Transform named.conf if it still has old-style API.
+PLATFORM=$(uname -m)
+
+if [ $PLATFORM == "x86_64" ] ; then
+    LIBPATH=/usr/lib64
+else
+    LIBPATH=/usr/lib
+fi
+
+# The following sed script:
+#   - scopes the named.conf changes to dynamic-db
+#   - replaces arg "name value" syntax with name "value"
+#   - changes dynamic-db header to dyndb
+#   - uses the new way the define path to the library
+#   - removes no longer supported arguments (library, cache_ttl,
+#       psearch, serial_autoincrement, zone_refresh)
+while read -r PATTERN
+do
+    SEDSCRIPT+="$PATTERN"
+done <<EOF
+/^\s*dynamic-db/,/};/ {
+
+  s/\(\s*\)arg\s\+\(["']\)\([a-Z_]\+\s\)/\1\3\2/g;
+
+  s/^dynamic-db/dyndb/;
+
+  s@\(dyndb "[^"]\+"\)@\1 "$LIBPATH/bind/ldap.so"@;
+  s@\(dyndb '[^']\+'\)@\1 '$LIBPATH/bind/ldap.so'@;
+
+  /\s*library[^;]\+;/d;
+  /\s*cache_ttl[^;]\+;/d;
+  /\s*psearch[^;]\+;/d;
+  /\s*serial_autoincrement[^;]\+;/d;
+  /\s*zone_refresh[^;]\+;/d;
+}
+EOF
+
+sed -i.bak -e "$SEDSCRIPT" /etc/named.conf
+
 
 %clean
 rm -rf %{buildroot}
@@ -55,6 +95,10 @@ rm -rf %{buildroot}
 
 
 %changelog
+* Thu Jan 26 2017 Tomas Krizek <tkrizek@redhat.com>
+- Added named.conf API transofrmation script
+- Bumped the required BIND version to 9.11.0-6.P2
+
 * Tue Jan 28 2014 Petr Spacek <pspacek redhat com>
 - package /var/named/dyndb-ldap directory
 
