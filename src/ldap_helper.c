@@ -2349,7 +2349,7 @@ free_rdatalist(isc_mem_t *mctx, dns_rdatalist_t *rdlist)
  * @retval  others         Unexpected errors.
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-ldap_substitute_rr_template(isc_mem_t *mctx, const settings_set_t const * set,
+ldap_substitute_rr_template(isc_mem_t *mctx, const settings_set_t * set,
 			    ld_string_t *orig_val, ld_string_t **output) {
 	isc_result_t result;
 	regex_t regex;
