@@ -1,3 +1,8 @@
+11.1
+====
+[1] Prevent crash when server is shutting down and LDAP connection is down.
+    https://pagure.io/bind-dyndb-ldap/issue/149
+
 11.0
 ====
 [1] The plugin was ported to BIND 9.11. Minimal BIND version is now 9.11.0rc1.
