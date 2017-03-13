@@ -65,7 +65,7 @@ do
 done <<EOF
 /^\s*dynamic-db/,/};/ {
 
-  s/\(\s*\)arg\s\+\(["']\)\([a-Z_]\+\s\)/\1\3\2/g;
+  s/\(\s*\)arg\s\+\(["']\)\([a-zA-Z_]\+\s\)/\1\3\2/g;
 
   s/^dynamic-db/dyndb/;
 
@@ -95,6 +95,9 @@ rm -rf %{buildroot}
 
 
 %changelog
+* Mon Mar 13 2017 Tomas Krizek <tkrizek@redhat.com>
+- Fixed sed script regex error
+
 * Thu Jan 26 2017 Tomas Krizek <tkrizek@redhat.com>
 - Added named.conf API transofrmation script
 - Bumped the required BIND version to 9.11.0-6.P2
