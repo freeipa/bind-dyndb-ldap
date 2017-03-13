@@ -7,17 +7,18 @@ Summary:        LDAP back-end plug-in for BIND
 
 Group:          System Environment/Libraries
 License:        GPLv2+
-URL:            https://fedorahosted.org/bind-dyndb-ldap
-Source0:        https://fedorahosted.org/released/%{name}/%{name}-%{VERSION}.tar.bz2
+URL:            https://releases.pagure.org/bind-dyndb-ldap
+Source0:        https://releases.pagure.org/%{name}/%{name}-%{VERSION}.tar.bz2
+Source1:        https://releases.pagure.org/%{name}/%{name}-%{VERSION}.tar.bz2.asc
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 
-BuildRequires:  bind-devel >= 32:9.11.0-6.P2, bind-lite-devel >= 32:9.11.0-6.P2
+BuildRequires:  bind-devel >= 32:9.11.0-6.P2, bind-lite-devel >= 32:9.11.0-6.P2, bind-pkcs11-devel >= 32:9.11.0-6.P2
 BuildRequires:  krb5-devel
 BuildRequires:  openldap-devel
 BuildRequires:  libuuid-devel
 BuildRequires:  automake, autoconf, libtool
 
-Requires:       bind >= 32:9.11.0-6.P2
+Requires:       bind-pkcs11 >= 32:9.11.0-6.P2, bind-pkcs11-utils >= 32:9.11.0-6.P2
 
 %description
 This package provides an LDAP back-end plug-in for BIND. It features
@@ -29,6 +30,7 @@ off of your LDAP server.
 %setup -q -n %{name}-%{VERSION}
 
 %build
+autoreconf -fiv
 %configure
 make %{?_smp_mflags}
 
@@ -43,6 +45,15 @@ rm %{buildroot}%{_libdir}/bind/ldap.la
 rm -r %{buildroot}%{_datadir}/doc/%{name}
 
 %post
+# SELinux boolean named_write_master_zones has to be enabled
+# otherwise the plugin will not be able to write to /var/named.
+# This scriptlet enables the boolean after installation or upgrade.
+# SELinux is sensitive area so I want to inform user about the change.
+if [ -x "/usr/sbin/setsebool" ] ; then
+        echo "Enabling SELinux boolean named_write_master_zones"
+        /usr/sbin/setsebool -P named_write_master_zones=1 || :
+fi
+
 # Transform named.conf if it still has old-style API.
 PLATFORM=$(uname -m)
 
@@ -83,13 +94,21 @@ EOF
 sed -i.bak -e "$SEDSCRIPT" /etc/named.conf
 
 
+# This scriptlet disables the boolean after uninstallation.
+%postun
+if [ "0$1" -eq "0" ] && [ -x "/usr/sbin/setsebool" ] ; then
+        echo "Disabling SELinux boolean named_write_master_zones"
+        /usr/sbin/setsebool -P named_write_master_zones=0 || :
+fi
+
+
 %clean
 rm -rf %{buildroot}
 
 
 %files
 %defattr(-,root,root,-)
-%doc NEWS README COPYING doc/{example,schema}.ldif
+%doc NEWS README.md COPYING doc/{example,schema}.ldif
 %dir %attr(770, root, named) %{_localstatedir}/named/dyndb-ldap
 %{_libdir}/bind/ldap.so
 
@@ -97,6 +116,7 @@ rm -rf %{buildroot}
 %changelog
 * Mon Mar 13 2017 Tomas Krizek <tkrizek@redhat.com>
 - Fixed sed script regex error
+- Re-synced specfile with fedora
 
 * Thu Jan 26 2017 Tomas Krizek <tkrizek@redhat.com>
 - Added named.conf API transofrmation script
