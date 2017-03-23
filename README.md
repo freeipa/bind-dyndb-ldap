@@ -1,12 +1,10 @@
-1. Introduction
-===============
+# 1. Introduction
 The dynamic LDAP back-end is a plug-in for BIND that provides an LDAP
 database back-end capabilities. It requires dyndb interface which is present
 in BIND versions >= 9.11.0rc1.
 
 
-2. Features
-===========
+# 2. Features
 
 * support for dynamic updates
 * SASL authentication
@@ -16,14 +14,15 @@ in BIND versions >= 9.11.0rc1.
 * DNSSEC in-line signing is supported, including dynamic updates
 
 
-3. Installation
-===============
+# 3. Installation
 
 To install the LDAP back-end, extract the tarball and go to the unpacked
 directory. Then follow these steps:
 
-	$ ./configure --libdir=<libdir>
-	$ make
+```console
+$ ./configure --libdir=<libdir>
+$ make
+```
 
 Where `<libdir>` is a directory where your libdns is installed. This is
 typically going to be `/usr/lib` or `/usr/lib64` on 64 bit systems.
@@ -32,29 +31,34 @@ If configure script complains that it `Can't obtain libdns version`,
 please verify you have installed bind development files (package bind9-dev
 or bind-devel) and you exported correct CPPFLAGS via
 
-	$ export CPPFLAGS=`isc-config.sh --cflags`
+```console
+$ export CPPFLAGS=`isc-config.sh --cflags`
+```
 
 Then, to install, run this as root:
 
-	$ make install
+```console
+$ make install
+```
 
 This will install the file `ldap.so` into the `<libdir>/bind/` directory.
 
 Alternatively, the latest version can be obtained from Git repository.
 You can use following commands to prepare latest source tree for compilation:
 
-	$ git clone https://git.fedorahosted.org/git/bind-dyndb-ldap.git
-	$ cd bind-dyndb-ldap
-	$ autoreconf -fvi
+```console
+$ git clone https://git.fedorahosted.org/git/bind-dyndb-ldap.git
+$ cd bind-dyndb-ldap
+$ autoreconf -fvi
+```
 
-4. LDAP schema
-==============
+# 4. LDAP schema
 
 You can find the complete LDAP schema in the documentation directory. An
 example zone ldif is available in the doc directory.
 
-4.1 Master zone (idnsZone)
---------------------------
+## 4.1 Master zone (idnsZone)
+
 Object class `idnsZone` is equivalent to type `master` statement in `named.conf`.
 
 ### Attributes
@@ -193,8 +197,8 @@ Object class `idnsZone` is equivalent to type `master` statement in `named.conf`
 	Zone without NSEC3PARAM RR will use NSEC by default.
 
 
-4.2 Forward zone (idnsForwardZone)
-----------------------------------
+## 4.2 Forward zone (idnsForwardZone)
+
 Object class `idnsForwardZone` is equivalent to type `forward` statement
 in named.conf.
 
@@ -243,8 +247,8 @@ Unloaded empty zones will not be loaded back even if the forward zone is later
 deleted. The empty zones will be loaded on each BIND reload.
 
 
-4.3 Global configuration object (idnsConfigObject)
---------------------------------------------------
+## 4.3 Global configuration object (idnsConfigObject)
+
 Object class idnsConfigObject provides global configuration common
 for all zones.
 
@@ -261,8 +265,8 @@ for all zones.
 	Syntax is the same as in forward zone, please see previous section.
 
 
-4.4 Per-server configuration object (idnsServerConfigObject)
-------------------------------------------------------------
+## 4.4 Per-server configuration object (idnsServerConfigObject)
+
 Object class idnsConfigObject provides global configuration common
 for all zones. A plugin instance will read configuration
 only from entries with matching idnsServerId.
@@ -296,8 +300,8 @@ only from entries with matching idnsServerId.
 	LIMITATION: Current plugin version supports only `ipalocation` variable
 
 
-4.5 Record template (idnsTemplateObject)
-----------------------------------------
+## 4.5 Record template (idnsTemplateObject)
+
 Object class idnsTemplateObject provides facility for dynamic resource record
 generation. The template entry must contain idnsTemplateAttribute with
 string template.
@@ -333,8 +337,7 @@ by the template string are defined.
 	https://fedorahosted.org/bind-dyndb-ldap/wiki/Design/RecordGenerator
 
 
-5. Configuration
-================
+# 5. Configuration
 
 To configure dynamic loading of back-end, you must put a `dyndb`
 clause into your named.conf. The clause must then be followed by a
@@ -354,12 +357,12 @@ curly brackets. Example:
 		auth_method "none";
 	};
 
-5.1 Configuration options
--------------------------
+## 5.1 Configuration options
+
 List of configuration options follows:
 
-5.1.1 LDAP connection
----------------------
+### 5.1.1 LDAP connection
+
 * uri
 
 	The Uniform Resource Identifier pointing to the LDAP server we
@@ -451,8 +454,8 @@ List of configuration options follows:
 	`/bin/hostname` output.
 
 
-5.1.2 Special DNS features
---------------------------
+### 5.1.2 Special DNS features
+
 * fake_mname
 
 	Ignore value of the idnsSOAmName (primary master DNS name) attribute
@@ -476,8 +479,8 @@ List of configuration options follows:
 	by idnsAllowDynUpdate attribute.
 
 
-5.1.3 Plumbing
---------------
+### 5.1.3 Plumbing
+
 * verbose_checks (default no)
 
 	Set this option to `yes` if you would like to log all failures
@@ -495,8 +498,8 @@ List of configuration options follows:
 	The path is relative to `directory` specified in BIND options.
 	See section 6 (DNSSEC) for examples.
 
-5.2 Sample configuration
-------------------------
+### 5.2 Sample configuration
+
 Let's take a look at a sample configuration:
 
 	options {
@@ -521,24 +524,24 @@ Working directory for the plug-in will be `/var/named/dyndb-ldap/my_db_name/`,
 so hypothetical zone `example.com` will use sub-directory
 `/var/named/dyndb-ldap/my_db_name/master/example.com/`.
 
-5.3 Configuration in LDAP
--------------------------
+### 5.3 Configuration in LDAP
+
 Some options can be configured in LDAP as `idnsConfigObject` attributes.
 Value configured in LDAP has priority over value in configuration file.
 (This behavior will change in future versions!)
 
 Following options are supported (option = attribute equivalent):
-option     | LDAP attribute
------------| --------------
-forwarders | idnsForwarders (BIND native option)
-forward    | idnsForwardPolicy (BIND native option)
-sync_ptr   | idnsAllowSyncPTR
+
+| option       | LDAP attribute                           |
+| ------------ | ---------------------------------------- |
+| `forwarders` | `idnsForwarders` (BIND native option)    |
+| `forward`    | `idnsForwardPolicy` (BIND native option) |
+| `sync_ptr`   | `idnsAllowSyncPTR`                       |
 
 Forward policy option cannot be set without setting forwarders at the same time.
 
 
-6. DNSSEC support
-=================
+# 6. DNSSEC support
 
 In-line signing support in this plugin allows to use this BIND feature
 for zones in LDAP.
@@ -557,13 +560,15 @@ Key management has to be handled by user, i.e. user has to
 generate/delete keys and configure key timestamps as appropriate.
 
 Key directory for particular DNS zone is automatically configured to value:
-	<plugin-instance-dir>/master/<zone-name>/keys
+
+    <plugin-instance-dir>/master/<zone-name>/keys
 
 `<plugin-instance-dir>` is described in section 5.1.3 of this file.
 `<zone-name>` is (transformed) textual representation of zone name without
 trailing period.
 
 Zone name will be automatically transformed before usage:
+
 - root zone is translated to `@` to prevent collision with filesystem `.`
 - digits, hyphen and underscore are left intact
 - letters of English alphabet are downcased
@@ -571,21 +576,23 @@ Zone name will be automatically transformed before usage:
 - final dot is omited
 - labels are separated with `.`
 
-Example:
+## Example
+
 * BIND directory: `/var/named`
 * bind-dyndb-ldap directory: `dyndb-ldap`
 * LDAP instance name: `ipa`
 * DNS zone: `example.com.`
 * Resulting keys directory: `/var/named/dyndb-ldap/ipa/master/example.com/keys`
 
+### Character encoding
+
 * DNS zone: `TEST.0/1.a.`
 * Resulting keys directory: `/var/named/dyndb-ldap/ipa/master/test.0%2F1.a/keys`
 
-Make sure that keys directory and files is readable by user used for BIND.
+*Make sure that keys directory and files is readable by user used for BIND.*
 
 
-7. License
-==========
+# 7. License
 
 This package is licensed under the GNU General Public License, version 2
 only. See file COPYING for more information.
