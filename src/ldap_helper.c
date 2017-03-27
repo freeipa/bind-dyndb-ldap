@@ -3714,6 +3714,7 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	mctx = pevent->mctx;
 	dns_name_init(&prevname, NULL);
 
+	REQUIRE(inst != NULL);
 	INSIST(task == inst->task); /* For task-exclusive mode */
 
 	if (SYNCREPL_DEL(pevent->chgtype)) {
@@ -3730,12 +3731,11 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	}
 
 cleanup:
-	if (inst != NULL) {
-		sync_concurr_limit_signal(inst->sctx);
-		sync_event_signal(inst->sctx, pevent);
-		if (dns_name_dynamic(&prevname))
-			dns_name_free(&prevname, inst->mctx);
-	}
+	sync_concurr_limit_signal(inst->sctx);
+	sync_event_signal(inst->sctx, pevent);
+	if (dns_name_dynamic(&prevname))
+		dns_name_free(&prevname, inst->mctx);
+
 	if (result != ISC_R_SUCCESS)
 		log_error_r("update_zone (syncrepl) failed for %s. "
 			    "Zones can be outdated, run `rndc reload`",
@@ -3760,14 +3760,14 @@ update_config(isc_task_t * task, isc_event_t *event)
 
 	mctx = pevent->mctx;
 
+	REQUIRE(inst != NULL);
 	INSIST(task == inst->task); /* For task-exclusive mode */
 	CHECK(ldap_parse_configentry(entry, inst));
 
 cleanup:
-	if (inst != NULL) {
-		sync_concurr_limit_signal(inst->sctx);
-		sync_event_signal(inst->sctx, pevent);
-	}
+	sync_concurr_limit_signal(inst->sctx);
+	sync_event_signal(inst->sctx, pevent);
+
 	if (result != ISC_R_SUCCESS)
 		log_error_r("update_config (syncrepl) failed for %s. "
 			    "Configuration can be outdated, run `rndc reload`",
@@ -3790,14 +3790,14 @@ update_serverconfig(isc_task_t * task, isc_event_t *event)
 
 	mctx = pevent->mctx;
 
+	REQUIRE(inst != NULL);
 	INSIST(task == inst->task); /* For task-exclusive mode */
 	CHECK(ldap_parse_serverconfigentry(entry, inst));
 
 cleanup:
-	if (inst != NULL) {
-		sync_concurr_limit_signal(inst->sctx);
-		sync_event_signal(inst->sctx, pevent);
-	}
+	sync_concurr_limit_signal(inst->sctx);
+	sync_event_signal(inst->sctx, pevent);
+
 	if (result != ISC_R_SUCCESS)
 		log_error_r("update_serverconfig (syncrepl) failed for %s. "
 			    "Configuration can be outdated, run `rndc reload`",
@@ -3860,6 +3860,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 	dns_name_init(&prevname, NULL);
 	dns_name_init(&prevorigin, NULL);
 
+	REQUIRE(inst != NULL);
 	CHECK(zr_get_zone_ptr(inst->zone_register, &entry->zone_name, &raw, &secure));
 	zone_found = ISC_TRUE;
 
@@ -4020,13 +4021,12 @@ cleanup:
 			    ldap_entry_logname(entry), pevent->chgtype);
 	}
 
-	if (inst != NULL) {
-		sync_concurr_limit_signal(inst->sctx);
-		if (dns_name_dynamic(&prevname))
-			dns_name_free(&prevname, inst->mctx);
-		if (dns_name_dynamic(&prevorigin))
-			dns_name_free(&prevorigin, inst->mctx);
-	}
+	sync_concurr_limit_signal(inst->sctx);
+	if (dns_name_dynamic(&prevname))
+		dns_name_free(&prevname, inst->mctx);
+	if (dns_name_dynamic(&prevorigin))
+		dns_name_free(&prevorigin, inst->mctx);
+
 	if (raw != NULL)
 		dns_zone_detach(&raw);
 	if (secure != NULL)
@@ -4106,6 +4106,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 	isc_task_t *task = NULL;
 	isc_boolean_t synchronous;
 
+	REQUIRE(inst != NULL);
 	REQUIRE(entryp != NULL);
 	entry = *entryp;
 	REQUIRE(entry->class != LDAP_ENTRYCLASS_NONE);
