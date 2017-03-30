@@ -21,13 +21,8 @@ bumpver.py
 Increments version number in configure.ac and SPEC file and creates a signed
 tag for current release.
 
-tracvers.py
-~~~~~~~~~~~
-Creates Trac version for each Git tag.
-
 
 Auxiliary scripts
 -----------------
 These scripts are not intended for usage from command line:
 - srcversion.py
-- trac.py
