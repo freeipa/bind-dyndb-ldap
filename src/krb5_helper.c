@@ -65,8 +65,8 @@ check_credentials(krb5_context context,
 
 	krberr = krb5_timeofday(context, &now);
 	CHECK_KRB5(context, krberr, "Failed to get timeofday");
-	log_debug(2, "krb5_timeofday() = %u ; creds.times.endtime = %u",
-		  now, creds.times.endtime);
+	log_debug(2, "krb5_timeofday() = %ld ; creds.times.endtime = %ld",
+		  (long) now, (long) creds.times.endtime);
 
 	if (now > (creds.times.endtime - MIN_TIME)) {
 		log_debug(2, "Credentials in cache expired");
