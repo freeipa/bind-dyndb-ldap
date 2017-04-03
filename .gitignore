@@ -21,6 +21,20 @@ Makefile.in
 /m4
 /missing
 
+# configure
+Makefile
+/config.h
+/config.log
+/config.status
+/libtool
+.deps/
+/stamp-h1
+
+# make
+.libs/
+*.la
+*.lo
+
 # Eclipse
 .project
 .cproject
