@@ -12,13 +12,13 @@ Source0:        https://releases.pagure.org/%{name}/%{name}-%{VERSION}.tar.bz2
 Source1:        https://releases.pagure.org/%{name}/%{name}-%{VERSION}.tar.bz2.asc
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 
-BuildRequires:  bind-devel >= 32:9.11.0-6.P2, bind-lite-devel >= 32:9.11.0-6.P2, bind-pkcs11-devel >= 32:9.11.0-6.P2
+BuildRequires:  bind-devel >= 32:9.11.0-6.P2, bind-lite-devel >= 32:9.11.0-6.P2
 BuildRequires:  krb5-devel
 BuildRequires:  openldap-devel
 BuildRequires:  libuuid-devel
 BuildRequires:  automake, autoconf, libtool
 
-Requires:       bind-pkcs11 >= 32:9.11.0-6.P2, bind-pkcs11-utils >= 32:9.11.0-6.P2
+Requires:       bind >= 32:9.11.0-6.P2
 
 %description
 This package provides an LDAP back-end plug-in for BIND. It features
@@ -114,6 +114,9 @@ rm -rf %{buildroot}
 
 
 %changelog
+* Fri Apr 07 2017 Tomas Krizek <tkrizek@redhat.com>
+- Removed unnecessary bind-pkcs11 dependency
+
 * Mon Mar 13 2017 Tomas Krizek <tkrizek@redhat.com>
 - Fixed sed script regex error
 - Re-synced specfile with fedora
