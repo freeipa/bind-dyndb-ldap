@@ -33,9 +33,7 @@ static const setting_t settings_default[] = {
 	{ "uri",			no_default_string		}, /* User have to set this */
 	{ "connections",		default_uint(2)			},
 	{ "reconnect_interval",		default_uint(60)		},
-	{ "zone_refresh",		default_string("")		}, /* No longer supported */
 	{ "timeout",			default_uint(10)		},
-	{ "cache_ttl",			default_string("")		}, /* No longer supported */
 	{ "timeout",			default_uint(10)		},
 	{ "base",	 		no_default_string		}, /* User have to set this */
 	{ "auth_method",		default_string("none")		},
@@ -49,7 +47,6 @@ static const setting_t settings_default[] = {
 	{ "sasl_password",		default_string("")		},
 	{ "krb5_keytab",		default_string("")		},
 	{ "fake_mname",			default_string("")		},
-	{ "psearch",			default_string("")		}, /* No longer supported */
 	{ "ldap_hostname",		default_string("")		},
 	{ "sync_ptr",			default_boolean(ISC_FALSE)	},
 	{ "dyn_update",			default_boolean(ISC_FALSE)	},
@@ -60,7 +57,6 @@ static const setting_t settings_default[] = {
 	 * SSU table defined by empty string contains no rules =>
 	 * dns_ssutable_checkrules() will return deny. */
 	{ "update_policy",		default_string("")		},
-	{ "serial_autoincrement",	default_string("")		},
 	{ "verbose_checks",		default_boolean(ISC_FALSE)	},
 	{ "directory",			default_string("")		},
 	{ "server_id",			default_string("")		},
