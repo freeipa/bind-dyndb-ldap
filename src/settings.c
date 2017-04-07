@@ -597,8 +597,11 @@ settings_set_fill(const cfg_obj_t *config, settings_set_t *set)
 	     setting++) {
 		cfg_value = NULL;
 		result = cfg_map_get(config, setting->name, &cfg_value);
-		if (result == ISC_R_NOTFOUND)
-			continue; /* setting not configured in map */
+		if (result == ISC_R_NOTFOUND) {
+			/* setting not configured in map */
+			result = ISC_R_SUCCESS;
+			continue;
+		}
 		else if (result != ISC_R_SUCCESS)
 			goto cleanup;
 		if (cfg_obj_isstring(cfg_value)) {
