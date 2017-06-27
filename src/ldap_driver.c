@@ -867,7 +867,8 @@ static dns_dbmethods_t ldapdb_methods = {
 	findext,
 	setcachestats,
 	hashsize,
-	nodefullname
+	nodefullname,
+	NULL, // getsize method not implemented (related BZ1353563)
 };
 
 isc_result_t ATTR_NONNULLS
