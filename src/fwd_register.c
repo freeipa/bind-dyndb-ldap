@@ -3,6 +3,7 @@
  */
 
 #include <isc/rwlock.h>
+#include <isc/util.h>
 #include <dns/name.h>
 
 #include "rbt_helper.h"

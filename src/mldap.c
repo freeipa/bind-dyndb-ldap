@@ -119,13 +119,13 @@ void mldap_cur_generation_bump(mldapdb_t *mldap) {
  * reference counter value.
  */
 STATIC_ASSERT((isc_uint32_t)
-		(typeof(isc_refcount_current((isc_refcount_t *)0)))
+		(typeof(((isc_refcount_t *)0)->refs))
 		-1
 	      == 0xFFFFFFFF, \
 	      "negative isc_refcount_t cannot be properly shortened to 32 bits");
 
 STATIC_ASSERT((isc_uint32_t)
-		(typeof(isc_refcount_current((isc_refcount_t *)0)))
+		(typeof(((isc_refcount_t *)0)->refs))
 		0x90ABCDEF12345678
 	      == 0x12345678, \
 	      "positive isc_refcount_t cannot be properly shortened to 32 bits");

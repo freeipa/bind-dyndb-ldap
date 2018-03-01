@@ -6,6 +6,7 @@
 
 #include "config.h"
 
+#include <isc/util.h>
 #include <isccfg/grammar.h>
 #include <isccfg/namedconf.h>
 

@@ -2,6 +2,7 @@
  * Copyright (C) 2013-2014  bind-dyndb-ldap authors; see COPYING for license
  */
 
+#include <isc/util.h>
 #include <dns/rbt.h>
 
 #include "util.h"

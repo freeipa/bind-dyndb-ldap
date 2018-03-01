@@ -6,7 +6,6 @@
 #define _LD_LDAP_ENTRY_H_
 
 #include <isc/lex.h>
-#include <isc/util.h>
 #include <dns/types.h>
 
 #include "fwd_register.h"
@@ -19,15 +18,15 @@
 
 /* Represents values associated with LDAP attribute */
 typedef struct ldap_value ldap_value_t;
-typedef LIST(ldap_value_t) ldap_valuelist_t;
+typedef ISC_LIST(ldap_value_t) ldap_valuelist_t;
 struct ldap_value {
         char                    *value;
-        LINK(ldap_value_t)      link;
+        ISC_LINK(ldap_value_t)      link;
 };
 
 /* Represents LDAP attribute and it's values */
 typedef struct ldap_attribute	ldap_attribute_t;
-typedef LIST(ldap_attribute_t)	ldap_attributelist_t;
+typedef ISC_LIST(ldap_attribute_t)	ldap_attributelist_t;
 
 /* Represents LDAP entry and it's attributes */
 typedef unsigned char		ldap_entryclass_t;
@@ -41,7 +40,7 @@ struct ldap_entry {
 
 	ldap_attribute_t	*lastattr;
 	ldap_attributelist_t	attrs;
-	LINK(ldap_entry_t)	link;
+	ISC_LINK(ldap_entry_t)	link;
 
 	/* Parsing. */
 	isc_lex_t		*lex;
@@ -59,7 +58,7 @@ struct ldap_attribute {
 	char			**ldap_values;
 	ldap_value_t		*lastval;
 	ldap_valuelist_t	values;
-	LINK(ldap_attribute_t)	link;
+	ISC_LINK(ldap_attribute_t)	link;
 };
 
 #define LDAP_ENTRYCLASS_NONE	0x0
