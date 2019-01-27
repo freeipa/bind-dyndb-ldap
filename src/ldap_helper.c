@@ -4102,7 +4102,6 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 	ldap_entry_t *entry = NULL;
 	dns_name_t *zone_name = NULL;
 	dns_zone_t *zone_ptr = NULL;
-	char *dn = NULL;
 	isc_taskaction_t action = NULL;
 	isc_task_t *task = NULL;
 	isc_boolean_t synchronous;
@@ -4156,7 +4155,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 	else if ((entry->class & LDAP_ENTRYCLASS_RR) != 0)
 		action = update_record;
 	else {
-		log_error("unsupported objectClass: dn '%s'", dn);
+		log_error("unsupported objectClass: dn '%s'", entry->dn);
 		result = ISC_R_NOTIMPLEMENTED;
 		goto cleanup;
 	}
