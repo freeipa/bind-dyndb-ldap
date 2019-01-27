@@ -6,6 +6,8 @@
 #define _LD_SETTINGS_H_
 
 #include <isc/types.h>
+#include <isc/boolean.h>
+#include <isc/int.h>
 
 #include <isccfg/grammar.h>
 

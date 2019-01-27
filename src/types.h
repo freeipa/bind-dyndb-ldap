@@ -5,7 +5,9 @@
 #ifndef _LD_TYPES_H_
 #define _LD_TYPES_H_
 
+#include <isc/boolean.h>
 #include <isc/event.h>
+#include <isc/int.h>
 #include <isc/refcount.h>
 #include <dns/name.h>
 

@@ -7,6 +7,7 @@
 
 #include "types.h"
 
+#include <isc/boolean.h>
 #include <isc/eventclass.h>
 #include <isc/util.h>
 #include <isccfg/cfg.h>

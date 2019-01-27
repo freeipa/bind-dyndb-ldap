@@ -7,6 +7,7 @@
 #include <dns/ttl.h>
 #include <dns/types.h>
 
+#include <isc/int.h>
 #include <isc/region.h>
 #include <isc/types.h>
 #include <isc/util.h>

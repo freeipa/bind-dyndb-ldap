@@ -26,6 +26,7 @@
 
 #include <isc/buffer.h>
 #include <isc/dir.h>
+#include <isc/int.h>
 #include <isc/mem.h>
 #include <isc/mutex.h>
 #include <isc/region.h>

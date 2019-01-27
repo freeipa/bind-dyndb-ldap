@@ -6,6 +6,8 @@
 
 #include "config.h"
 
+#include <isc/boolean.h>
+
 #include <isccfg/grammar.h>
 
 #include <dns/forward.h>

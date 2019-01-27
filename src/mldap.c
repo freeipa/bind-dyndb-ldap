@@ -10,6 +10,7 @@
 #include <uuid/uuid.h>
 
 #include <isc/boolean.h>
+#include <isc/int.h>
 #include <isc/net.h>
 #include <isc/refcount.h>
 #include <isc/result.h>
