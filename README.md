@@ -463,6 +463,18 @@ List of configuration options follows:
 	one LDAP database and every BIND reports itself as a primary master in
 	SOA record, for example.
 
+	NOTE: for idnsSOAmName value following priority list shows where
+	override can come from:
+
+        - fake_mname value in the server configuration in named.conf
+        - Server configuration from LDAP (idnsServerConfig)
+        - Zone configuration from LDAP
+
+	Thus, if server is supposed to respond with a different primary master
+	DNS name depending on a zone, remove 'fake_mname' from the named.conf
+	and idnsSOAmName attribute value from the server configuration in LDAP
+        and define it per-zone in LDAP.
+
 * sync_ptr (default no)
 
 	Set this option to `yes` if you would like to keep PTR record 
