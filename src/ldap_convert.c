@@ -372,23 +372,40 @@ ldap_attribute_to_rdatatype(const char *ldap_attribute, dns_rdatatype_t *rdtype)
 {
 	isc_result_t result;
 	unsigned len;
+	const char *attribute = NULL;
 	isc_consttextregion_t region;
 
 	len = strlen(ldap_attribute);
 	if (len <= LDAP_RDATATYPE_SUFFIX_LEN)
 		return ISC_R_UNEXPECTEDEND;
 
-	/* Does attribute name end with RECORD_SUFFIX? */
-	if (strcasecmp(ldap_attribute + len - LDAP_RDATATYPE_SUFFIX_LEN,
-		       LDAP_RDATATYPE_SUFFIX) == 0) {
-		region.base = ldap_attribute;
-		region.length = len - LDAP_RDATATYPE_SUFFIX_LEN;
+
+	/* Before looking up rdtype, we need to see if rdtype is
+	 * an LDAP subtype (type;subtype) and if so, strip one of
+	 * the known prefixes. We also need to remove 'record' suffix
+	 * if it exists. The resulting rdtype text name should have no
+	 * 'extra' details: A, AAAA, CNAME, etc. */
+	attribute = ldap_attribute;
+
+	/* Does attribute name start with with TEMPLATE_PREFIX? */
+	if (strncasecmp(LDAP_RDATATYPE_TEMPLATE_PREFIX,
+			ldap_attribute,
+			LDAP_RDATATYPE_TEMPLATE_PREFIX_LEN) == 0) {
+		attribute = ldap_attribute + LDAP_RDATATYPE_TEMPLATE_PREFIX_LEN;
+		len -= LDAP_RDATATYPE_TEMPLATE_PREFIX_LEN;
 	/* Does attribute name start with with UNKNOWN_PREFIX? */
-	} else if (strncasecmp(ldap_attribute,
-			      LDAP_RDATATYPE_UNKNOWN_PREFIX,
-			      LDAP_RDATATYPE_UNKNOWN_PREFIX_LEN) == 0) {
-		region.base = ldap_attribute + LDAP_RDATATYPE_UNKNOWN_PREFIX_LEN;
-		region.length = len - LDAP_RDATATYPE_UNKNOWN_PREFIX_LEN;
+	} else if (strncasecmp(LDAP_RDATATYPE_UNKNOWN_PREFIX,
+			       ldap_attribute,
+			       LDAP_RDATATYPE_UNKNOWN_PREFIX_LEN) == 0) {
+		attribute = ldap_attribute + LDAP_RDATATYPE_UNKNOWN_PREFIX_LEN;
+		len -= LDAP_RDATATYPE_UNKNOWN_PREFIX_LEN;
+	}
+
+	/* Does attribute name end with RECORD_SUFFIX? */
+	if (strcasecmp(attribute + len - LDAP_RDATATYPE_SUFFIX_LEN,
+		       LDAP_RDATATYPE_SUFFIX) == 0) {
+		region.base = attribute;
+		region.length = len - LDAP_RDATATYPE_SUFFIX_LEN;
 	} else
 		return ISC_R_UNEXPECTED;
 

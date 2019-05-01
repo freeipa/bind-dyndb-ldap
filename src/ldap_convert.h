@@ -17,6 +17,8 @@
 #define LDAP_RDATATYPE_SUFFIX_LEN	(sizeof(LDAP_RDATATYPE_SUFFIX) - 1)
 #define LDAP_RDATATYPE_UNKNOWN_PREFIX	"UnknownRecord;"
 #define LDAP_RDATATYPE_UNKNOWN_PREFIX_LEN	(sizeof(LDAP_RDATATYPE_UNKNOWN_PREFIX) - 1)
+#define LDAP_RDATATYPE_TEMPLATE_PREFIX "idnsTemplateAttribute;"
+#define LDAP_RDATATYPE_TEMPLATE_PREFIX_LEN	(sizeof(LDAP_RDATATYPE_TEMPLATE_PREFIX) - 1)
 
 /*
  * Convert LDAP DN 'dn', to dns_name_t 'target'. 'target' needs to be

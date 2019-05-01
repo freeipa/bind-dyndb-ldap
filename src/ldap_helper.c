@@ -2396,7 +2396,7 @@ ldap_substitute_rr_template(isc_mem_t *mctx, const settings_set_t * set,
 		result = setting_find(setting_name, set, isc_boolean_true,
 				      isc_boolean_true, &setting);
 		if (result != ISC_R_SUCCESS) {
-			log_debug(3, "setting '%s' is not defined so it "
+			log_debug(5, "setting '%s' is not defined so it "
 				  "cannot be substituted into template '%s'",
 				  setting_name, str_buf(orig_val));
 			CLEANUP_WITH(ISC_R_IGNORE);
@@ -2459,23 +2459,22 @@ ldap_parse_rrentry_template(isc_mem_t *mctx, ldap_entry_t *entry,
 	dns_rdatatype_t rdtype;
 	dns_rdatalist_t *rdlist = NULL;
 	isc_boolean_t did_something = ISC_FALSE;
-	static const char prefix[] = "idnsTemplateAttribute;";
-	static const char prefix_len = sizeof(prefix) - 1;
 
 	CHECK(str_new(mctx, &orig_val));
 	rdclass = ldap_entry_getrdclass(entry);
 	ttl = ldap_entry_getttl(entry, settings);
 
 	while ((attr = ldap_entry_nextattr(entry)) != NULL) {
-		if (strncasecmp(prefix, attr->name, prefix_len) != 0)
+		if (strncasecmp(LDAP_RDATATYPE_TEMPLATE_PREFIX,
+				attr->name,
+				LDAP_RDATATYPE_TEMPLATE_PREFIX_LEN) != 0)
 			continue;
 
-		result = ldap_attribute_to_rdatatype(attr->name + prefix_len,
-						     &rdtype);
+		result = ldap_attribute_to_rdatatype(attr->name, &rdtype);
 		if (result != ISC_R_SUCCESS) {
 			log_bug("%s: substitution into '%s' is not supported",
 				ldap_entry_logname(entry),
-				attr->name + prefix_len);
+				attr->name + LDAP_RDATATYPE_TEMPLATE_PREFIX_LEN);
 			continue;
 		}
 
@@ -2559,6 +2558,14 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
 	for (result = ldap_entry_firstrdtype(entry, &attr, &rdtype);
 	     result == ISC_R_SUCCESS;
 	     result = ldap_entry_nextrdtype(entry, &attr, &rdtype)) {
+		/* If we reached this point and found a template attribute,
+		 * skip it because it was not translated above due to missing
+		 * defaults or some other errors. */
+		if (((entry->class & LDAP_ENTRYCLASS_TEMPLATE) != 0) &&
+		    strncasecmp(LDAP_RDATATYPE_TEMPLATE_PREFIX,
+				attr->name,
+				LDAP_RDATATYPE_TEMPLATE_PREFIX_LEN) == 0)
+			continue;
 
 		CHECK(findrdatatype_or_create(mctx, rdatalist, rdclass,
 					      rdtype, ttl, &rdlist));
