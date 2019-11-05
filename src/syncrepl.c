@@ -93,8 +93,8 @@ struct sync_ctx {
 	ISC_LIST(task_element_t)	tasks;	/**< list of tasks processing
 						     events from initial
 						     synchronization phase */
-	isc_uint32_t			next_id;  /**< next sequential id */
-	isc_uint32_t			last_id;  /**< last processed event */
+	uint32_t			next_id;  /**< next sequential id */
+	uint32_t			last_id;  /**< last processed event */
 };
 
 /**
@@ -202,7 +202,7 @@ barrier_decrement(isc_task_t *task, isc_event_t *event) {
 	sync_barrierev_t *bev = NULL;
 	sync_barrierev_t *fev = NULL;
 	isc_event_t *ev = NULL;
-	isc_uint32_t cnt;
+	uint32_t cnt;
 	bool locked = false;
 
 	REQUIRE(ISCAPI_TASK_VALID(task));
@@ -445,7 +445,7 @@ sync_state_reset(sync_ctx_t *sctx) {
 isc_result_t
 sync_task_add(sync_ctx_t *sctx, isc_task_t *task) {
 	isc_result_t result = ISC_R_SUCCESS;
-	isc_uint32_t cnt;
+	uint32_t cnt;
 	task_element_t *newel = NULL;
 
 	REQUIRE(sctx != NULL);
@@ -593,7 +593,7 @@ sync_event_send(sync_ctx_t *sctx, isc_task_t *task, ldap_syncreplevent_t **ev,
 		bool synchronous) {
 	isc_result_t result;
 	isc_time_t abs_timeout;
-	isc_uint32_t seqid;
+	uint32_t seqid;
 	bool locked = false;
 
 	REQUIRE(sctx != NULL);

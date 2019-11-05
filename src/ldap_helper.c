@@ -26,7 +26,7 @@
 
 #include <isc/buffer.h>
 #include <isc/dir.h>
-#include <isc/int.h>
+#include <inttypes.h>
 #include <isc/mem.h>
 #include <isc/mutex.h>
 #include <isc/region.h>
@@ -376,7 +376,7 @@ isc_result_t
 validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 	isc_result_t result;
 
-	isc_uint32_t uint;
+	uint32_t uint;
 	const char *sasl_mech = NULL;
 	const char *sasl_user = NULL;
 	const char *sasl_realm = NULL;
@@ -536,7 +536,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name, const char *parameters,
 	dns_forwarders_t *named_conf_forwarders = NULL;
 	isc_buffer_t *forwarders_list = NULL;
 	const char *forward_policy = NULL;
-	isc_uint32_t connections;
+	uint32_t connections;
 	char settings_name[PRINT_BUFF_SIZE];
 	ldap_globalfwd_handleez_t *gfwdevent = NULL;
 	const char *server_id = NULL;
@@ -1052,7 +1052,7 @@ static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 load_zone(dns_zone_t *zone, bool log) {
 	isc_result_t result;
 	bool zone_dynamic;
-	isc_uint32_t serial;
+	uint32_t serial;
 	dns_zone_t *raw = NULL;
 
 	result = dns_zone_load(zone);
@@ -1700,9 +1700,9 @@ cleanup:
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_replace_serial(ldap_instance_t *inst, dns_name_t *zone,
-		    isc_uint32_t serial) {
+		    uint32_t serial) {
 	isc_result_t result;
-#define MAX_SERIAL_LENGTH sizeof("4294967295") /* SOA serial is isc_uint32_t */
+#define MAX_SERIAL_LENGTH sizeof("4294967295") /* SOA serial is uint32_t */
 	char serial_char[MAX_SERIAL_LENGTH];
 	char *values[2] = { serial_char, NULL };
 	LDAPMod change;
@@ -1936,7 +1936,7 @@ zone_sync_apex(const ldap_instance_t * const inst,
 	       dns_dbversion_t * const version,
 	       const settings_set_t * const zone_settings,
 	       dns_diff_t * const diff,
-	       isc_uint32_t * const new_serial,
+	       uint32_t * const new_serial,
 	       bool * const ldap_writeback,
 	       bool * const data_changed) {
 	isc_result_t result;
@@ -1946,7 +1946,7 @@ zone_sync_apex(const ldap_instance_t * const inst,
 	 * This is workaround for ISC-Bug #35080. */
 	dns_dbnode_t *node = NULL;
 	dns_difftuple_t *soa_tuple = NULL;
-	isc_uint32_t curr_serial;
+	uint32_t curr_serial;
 
 	REQUIRE(ldap_writeback != NULL);
 
@@ -2083,7 +2083,7 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 	settings_set_t *zone_settings = NULL;
 	bool ldap_writeback;
 	bool data_changed = false; /* GCC */
-	isc_uint32_t new_serial;
+	uint32_t new_serial;
 
 	dns_db_t *rbtdb = NULL;
 	dns_db_t *ldapdb = NULL;
@@ -2761,7 +2761,7 @@ ldap_connect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 	isc_result_t result = ISC_R_FAILURE;
 	const char *uri = NULL;
 	const char *ldap_hostname = NULL;
-	isc_uint32_t timeout_sec;
+	uint32_t timeout_sec;
 
 	REQUIRE(ldap_inst != NULL);
 	REQUIRE(ldap_conn != NULL);
@@ -2827,7 +2827,7 @@ ldap_reconnect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
 	const char *krb5_principal = NULL;
 	const char *krb5_keytab = NULL;
 	ldap_auth_t auth_method_enum = AUTH_INVALID;
-	isc_uint32_t reconnect_interval;
+	uint32_t reconnect_interval;
 
 	if (force)
 		goto force_reconnect;
@@ -3324,7 +3324,7 @@ modify_soa_record(ldap_instance_t *ldap_inst, const char *zone_dn,
 
 	REQUIRE(ldap_inst != NULL);
 
-/* all values in SOA record are isc_uint32_t, i.e. max. 2^32-1 */
+/* all values in SOA record are uint32_t, i.e. max. 2^32-1 */
 #define MAX_SOANUM_LENGTH (10 + 1)
 #define SET_LDAP_MOD(index, name) \
 	change[index].mod_op = LDAP_MOD_REPLACE; \
@@ -3837,7 +3837,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 	dns_zone_t *secure = NULL;
 	bool zone_found = false;
 	bool zone_reloaded = false;
-	isc_uint32_t serial;
+	uint32_t serial;
 	ldap_entry_t *entry = pevent->entry;
 
 	dns_db_t *rbtdb = NULL;
@@ -4680,7 +4680,7 @@ ldap_syncrepl_watcher(isc_threadarg_t arg)
 	int ret;
 	isc_result_t result;
 	sigset_t sigset;
-	isc_uint32_t reconnect_interval;
+	uint32_t reconnect_interval;
 	sync_state_t state;
 
 	log_debug(1, "Entering ldap_syncrepl_watcher");

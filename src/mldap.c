@@ -9,7 +9,7 @@
 #include <stddef.h>
 #include <uuid/uuid.h>
 
-#include <isc/int.h>
+#include <inttypes.h>
 #include <isc/net.h>
 #include <isc/refcount.h>
 #include <isc/result.h>
@@ -111,20 +111,20 @@ void mldap_cur_generation_bump(mldapdb_t *mldap) {
 }
 
 /*
- * Verify that isc_refcount_t can be casted properly to isc_uint32_t
+ * Verify that isc_refcount_t can be casted properly to uint32_t
  * so isc_serial_* functions can be safely used for comparison.
  *
  * The spell 'typeof(isc_refcount_current((isc_refcount_t *)0))' walks through
  * isc_refcount_t abstractions and returns underlying type used for storing the
  * reference counter value.
  */
-STATIC_ASSERT((isc_uint32_t)
+STATIC_ASSERT((uint32_t)
 		(typeof(((isc_refcount_t *)0)->refs))
 		-1
 	      == 0xFFFFFFFF, \
 	      "negative isc_refcount_t cannot be properly shortened to 32 bits");
 
-STATIC_ASSERT((isc_uint32_t)
+STATIC_ASSERT((uint32_t)
 		(typeof(((isc_refcount_t *)0)->refs))
 		0x90ABCDEF12345678
 	      == 0x12345678, \
@@ -135,9 +135,9 @@ STATIC_ASSERT((isc_uint32_t)
  *
  * Generation numbers have to be compared using isc_serial_* functions.
  */
-isc_uint32_t
+uint32_t
 mldap_cur_generation_get(mldapdb_t *mldap) {
-	return (isc_uint32_t)isc_refcount_current(&mldap->generation);
+	return (uint32_t)isc_refcount_current(&mldap->generation);
 }
 
 /**
@@ -230,7 +230,7 @@ mldap_generation_store(mldapdb_t *mldap, metadb_node_t *node) {
 	unsigned char buff[sizeof(mldap->generation)];
 	isc_region_t region = { .base = buff, .length = sizeof(buff) };
 	dns_rdata_t rdata;
-	isc_uint32_t generation;
+	uint32_t generation;
 
 	STATIC_ASSERT(sizeof(mldap_cur_generation_get(mldap)) == sizeof(struct in_addr), \
 		      "mldapdb_t->generation value is too big for A rdata type");
@@ -251,7 +251,7 @@ cleanup:
 }
 
 static isc_result_t
-mldap_generation_get(metadb_node_t *node, isc_uint32_t *generationp) {
+mldap_generation_get(metadb_node_t *node, uint32_t *generationp) {
 	isc_result_t result;
 	dns_rdataset_t rdataset;
 	dns_rdata_t rdata;
@@ -430,14 +430,14 @@ mldap_iter_deadnodes_start(mldapdb_t *mldap, metadb_iter_t **iterp,
 	REQUIRE(iterp != NULL && *iterp == NULL);
 
 	CHECK(metadb_iterator_create(mldap->mdb, &iter));
-	CHECKED_MEM_GET(mldap->mctx, iter->state, sizeof(isc_uint32_t));
+	CHECKED_MEM_GET(mldap->mctx, iter->state, sizeof(uint32_t));
 	result = dns_dbiterator_seek(iter->iter, &uuid_rootname);
 	if (result == ISC_R_NOTFOUND) /* metaLDAP is empty */
 		CLEANUP_WITH(ISC_R_NOMORE);
 	else if (result != ISC_R_SUCCESS)
 		goto cleanup;
 	/* store current generation value for sanity checking */
-	*(isc_uint32_t *)iter->state = mldap_cur_generation_get(mldap);
+	*(uint32_t *)iter->state = mldap_cur_generation_get(mldap);
 
 	CHECK(mldap_iter_deadnodes_next(mldap, &iter, uuid));
 
@@ -446,7 +446,7 @@ mldap_iter_deadnodes_start(mldapdb_t *mldap, metadb_iter_t **iterp,
 
 cleanup:
 	if (iter != NULL) {
-		SAFE_MEM_PUT(mldap->mctx, iter->state, sizeof(isc_uint32_t));
+		SAFE_MEM_PUT(mldap->mctx, iter->state, sizeof(uint32_t));
 		iter->state = NULL;
 		metadb_iterator_destroy(&iter);
 	}
@@ -478,8 +478,8 @@ mldap_iter_deadnodes_next(mldapdb_t *mldap, metadb_iter_t **iterp,
 	isc_result_t result;
 	dns_dbnode_t *rbt_node = NULL;
 	metadb_iter_t *iter = NULL;
-	isc_uint32_t node_generation;
-	isc_uint32_t cur_generation;
+	uint32_t node_generation;
+	uint32_t cur_generation;
 	metadb_node_t metadb_node;
 	DECLARE_BUFFERED_NAME(name);
 	isc_region_t name_region;
@@ -511,7 +511,7 @@ mldap_iter_deadnodes_next(mldapdb_t *mldap, metadb_iter_t **iterp,
 		       == ISC_R_SUCCESS);
 		cur_generation = mldap_cur_generation_get(mldap);
 		/* sanity check: generation number cannot change during iteration */
-		INSIST(*(isc_uint32_t *)(*iterp)->state == cur_generation);
+		INSIST(*(uint32_t *)(*iterp)->state == cur_generation);
 
 		if (isc_serial_lt(node_generation, cur_generation))
 			break; /* this node is from previous mLDAP generation */
@@ -531,7 +531,7 @@ cleanup:
 	if (rbt_node != NULL)
 		dns_db_detachnode(iter->rbtdb, &rbt_node);
 	if (result != ISC_R_SUCCESS) {
-		SAFE_MEM_PUT(iter->mctx, iter->state, sizeof(isc_uint32_t));
+		SAFE_MEM_PUT(iter->mctx, iter->state, sizeof(uint32_t));
 		iter->state = NULL;
 		metadb_iterator_destroy(iterp);
 	}

@@ -6,7 +6,7 @@
 #define _LD_TYPES_H_
 
 #include <isc/event.h>
-#include <isc/int.h>
+#include <inttypes.h>
 #include <isc/refcount.h>
 #include <dns/name.h>
 
@@ -48,7 +48,7 @@ struct ldap_syncreplevent {
 	char *prevdn;
 	int chgtype;
 	ldap_entry_t *entry;
-	isc_uint32_t seqid;
+	uint32_t seqid;
 };
 
 #endif /* !_LD_TYPES_H_ */

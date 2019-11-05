@@ -45,7 +45,7 @@ mldap_dnsname_store(dns_name_t *fqdn, dns_name_t *zone, metadb_node_t *node);
 void ATTR_NONNULLS
 mldap_cur_generation_bump(mldapdb_t *mldap);
 
-isc_uint32_t ATTR_CHECKRESULT ATTR_NONNULLS
+uint32_t ATTR_CHECKRESULT ATTR_NONNULLS
 mldap_cur_generation_get(mldapdb_t *mldap);
 
 isc_result_t ATTR_CHECKRESULT ATTR_NONNULLS

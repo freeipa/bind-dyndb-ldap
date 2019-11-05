@@ -2,7 +2,7 @@
  * Copyright (C) 2014-2015  bind-dyndb-ldap authors; see COPYING for license
  */
 
-#include <isc/int.h>
+#include <inttypes.h>
 #include <isc/types.h>
 #include <isc/util.h>
 
@@ -52,8 +52,8 @@ cleanup:
  */
 isc_result_t ATTR_NONNULL(2) ATTR_CHECKRESULT
 zone_soaserial_updatetuple(dns_updatemethod_t method, dns_difftuple_t *soa_tuple,
-		  isc_uint32_t *new_serial) {
-	isc_uint32_t serial;
+		  uint32_t *new_serial) {
+	uint32_t serial;
 
 	REQUIRE(DNS_DIFFTUPLE_VALID(soa_tuple));
 	REQUIRE(soa_tuple->op == DNS_DIFFOP_ADD ||
@@ -80,7 +80,7 @@ zone_soaserial_updatetuple(dns_updatemethod_t method, dns_difftuple_t *soa_tuple
 isc_result_t ATTR_NONNULL(1,2,3,4) ATTR_CHECKRESULT
 zone_soaserial_addtuple(isc_mem_t *mctx, dns_db_t *db,
 			dns_dbversion_t *version, dns_diff_t *diff,
-			isc_uint32_t *new_serial) {
+			uint32_t *new_serial) {
 	isc_result_t result;
 	dns_difftuple_t *del = NULL;
 	dns_difftuple_t *add = NULL;

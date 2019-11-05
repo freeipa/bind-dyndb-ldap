@@ -5,7 +5,7 @@
 #ifndef SRC_ZONE_H_
 #define SRC_ZONE_H_
 
-#include <isc/int.h>
+#include <inttypes.h>
 #include <isc/types.h>
 
 #include <dns/diff.h>
@@ -19,12 +19,12 @@ zone_journal_adddiff(isc_mem_t *mctx, dns_zone_t *zone, dns_diff_t *diff);
 
 isc_result_t ATTR_NONNULL(2) ATTR_CHECKRESULT
 zone_soaserial_updatetuple(dns_updatemethod_t method, dns_difftuple_t *soa_tuple,
-		  isc_uint32_t *new_serial);
+		  uint32_t *new_serial);
 
 isc_result_t ATTR_NONNULL(1,2,3,4) ATTR_CHECKRESULT
 zone_soaserial_addtuple(isc_mem_t *mctx, dns_db_t *db,
 			dns_dbversion_t *version, dns_diff_t *diff,
-			isc_uint32_t *new_serial);
+			uint32_t *new_serial);
 
 isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 rdatalist_to_diff(isc_mem_t *mctx, dns_diffop_t op, dns_name_t *name,

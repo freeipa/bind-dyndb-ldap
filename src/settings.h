@@ -6,7 +6,7 @@
 #define _LD_SETTINGS_H_
 
 #include <isc/types.h>
-#include <isc/int.h>
+#include <inttypes.h>
 
 #include <isccfg/grammar.h>
 
@@ -33,7 +33,7 @@ struct setting {
 	setting_type_t	type;
 	union {
 		char		*value_char;
-		isc_uint32_t	value_uint;
+		uint32_t	value_uint;
 		bool	value_boolean;
 	} value;
 	bool	filled;
@@ -99,7 +99,7 @@ setting_find(const char *name, const settings_set_t *set,
 
 isc_result_t
 setting_get_uint(const char * const name, const settings_set_t * const set,
-		 isc_uint32_t * target) ATTR_NONNULLS ATTR_CHECKRESULT;
+		 uint32_t * target) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
 setting_get_str(const char * const name, const settings_set_t * const set,

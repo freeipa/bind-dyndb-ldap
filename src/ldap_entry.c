@@ -7,7 +7,7 @@
 #include <dns/ttl.h>
 #include <dns/types.h>
 
-#include <isc/int.h>
+#include <inttypes.h>
 #include <isc/region.h>
 #include <isc/types.h>
 #include <isc/util.h>
@@ -523,7 +523,7 @@ ldap_entry_getttl(ldap_entry_t *entry, const settings_set_t * settings)
 	isc_textregion_t ttl_text;
 	ldap_valuelist_t values;
 	isc_result_t result;
-	isc_uint32_t ttl;
+	uint32_t ttl;
 
 	REQUIRE(entry != NULL);
 
