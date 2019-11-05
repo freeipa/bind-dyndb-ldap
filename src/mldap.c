@@ -9,7 +9,6 @@
 #include <stddef.h>
 #include <uuid/uuid.h>
 
-#include <isc/boolean.h>
 #include <isc/int.h>
 #include <isc/net.h>
 #include <isc/refcount.h>
@@ -98,7 +97,7 @@ mldap_newversion(mldapdb_t *mldap) {
 }
 
 void
-mldap_closeversion(mldapdb_t *mldap, isc_boolean_t commit) {
+mldap_closeversion(mldapdb_t *mldap, bool commit) {
 	return metadb_closeversion(mldap->mdb, commit);
 }
 
@@ -497,14 +496,14 @@ mldap_iter_deadnodes_next(mldapdb_t *mldap, metadb_iter_t **iterp,
 	metadb_node.rbtdb = iter->rbtdb;
 
 	/* skip nodes which do not belong to UUID sub-tree or are 'fresh' */
-	while (ISC_TRUE) {
+	while (true) {
 		if (rbt_node != NULL)
 			dns_db_detachnode(iter->rbtdb, &rbt_node);
 		dns_name_reset(&name);
 
 		CHECK(dns_dbiterator_next(iter->iter));
 		CHECK(dns_dbiterator_current(iter->iter, &rbt_node, &name));
-		if (dns_name_issubdomain(&name, &uuid_rootname) == ISC_FALSE)
+		if (dns_name_issubdomain(&name, &uuid_rootname) == false)
 			continue;
 		metadb_node.dbnode = rbt_node;
 

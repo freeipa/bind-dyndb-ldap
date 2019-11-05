@@ -6,8 +6,6 @@
 
 #include "config.h"
 
-#include <isc/boolean.h>
-
 #include <isccfg/grammar.h>
 
 #include <dns/forward.h>
@@ -308,15 +306,15 @@ fwdr_list_free(isc_mem_t *mctx, dns_forwarderlist_t *fwdrs) {
  * a) policy = none
  * b) (policy != none) && (non-empty list of forwarders)
  *
- * @param[out] isexplicit ISC_TRUE if conditions for explicit configuration
- *                        are met, ISC_FALSE otherwise
+ * @param[out] isexplicit true if conditions for explicit configuration
+ *                        are met, false otherwise
  *
  * @retval ISC_R_SUCCESS isexplicit is set appropriately
  * @retval other         memory allocation or parsing errors etc.
  */
 static isc_result_t
 fwd_setting_isexplicit(isc_mem_t *mctx, const settings_set_t *set,
-		       isc_boolean_t *isexplicit) {
+		       bool *isexplicit) {
 	isc_result_t result;
 	setting_t *setting = NULL;
 	dns_fwdpolicy_t	fwdpolicy;
@@ -325,16 +323,16 @@ fwd_setting_isexplicit(isc_mem_t *mctx, const settings_set_t *set,
 	REQUIRE(isexplicit != NULL);
 	ISC_LIST_INIT(fwdrs);
 
-	CHECK(setting_find("forward_policy", set, ISC_FALSE, ISC_TRUE, &setting));
+	CHECK(setting_find("forward_policy", set, false, true, &setting));
 	INSIST(get_enum_value(forwarder_policy_txts, setting->value.value_char,
 			      (int *)&fwdpolicy) == ISC_R_SUCCESS);
 	if (fwdpolicy == dns_fwdpolicy_none) {
-		*isexplicit = ISC_TRUE;
+		*isexplicit = true;
 		return ISC_R_SUCCESS;
 	}
 
 	setting = NULL;
-	CHECK(setting_find("forwarders", set, ISC_FALSE, ISC_TRUE, &setting));
+	CHECK(setting_find("forwarders", set, false, true, &setting));
 	CHECK(fwd_parse_str(setting->value.value_char, mctx, &fwdrs));
 
 cleanup:
@@ -356,7 +354,7 @@ static isc_result_t
 fwd_setting_find_explicit(isc_mem_t *mctx, const settings_set_t *start_set,
 			  const settings_set_t **found) {
 	isc_result_t result;
-	isc_boolean_t isexplicit;
+	bool isexplicit;
 
 	REQUIRE(found != NULL && *found == NULL);
 
@@ -365,7 +363,7 @@ fwd_setting_find_explicit(isc_mem_t *mctx, const settings_set_t *start_set,
 	     set = set->parent_set)
 	{
 		CHECK(fwd_setting_isexplicit(mctx, set, &isexplicit));
-		if (isexplicit == ISC_TRUE) {
+		if (isexplicit == true) {
 			*found = set;
 			CLEANUP_WITH(ISC_R_SUCCESS);
 		}
@@ -436,7 +434,7 @@ fwd_parse_ldap(ldap_entry_t *entry, settings_set_t *set) {
 	first = result;
 	if (result != ISC_R_SUCCESS && result != ISC_R_IGNORE)
 		goto cleanup;
-	result = setting_find("forward_policy", set, ISC_FALSE, ISC_TRUE, NULL);
+	result = setting_find("forward_policy", set, false, true, NULL);
 	if (result == ISC_R_NOTFOUND) {
 		log_debug(2, "defaulting to forward policy 'first' for "
 			  "%s", ldap_entry_logname(entry));
@@ -503,7 +501,7 @@ fwd_configure_zone(const settings_set_t *set, ldap_instance_t *inst,
 	dns_view_t *view = NULL;
 	isc_result_t lock_state = ISC_R_IGNORE;
 	dns_forwarderlist_t fwdrs;
-	isc_boolean_t is_global_config;
+	bool is_global_config;
 	dns_fixedname_t foundname;
 	const char *msg_use_global_fwds;
 	const char *msg_obj_type;
@@ -515,7 +513,7 @@ fwd_configure_zone(const settings_set_t *set, ldap_instance_t *inst,
 	dns_fwdpolicy_t fwdpolicy;
 	const char *fwdpolicy_str = NULL;
 	const char *forwarders_str = NULL;
-	isc_boolean_t isconfigured;
+	bool isconfigured;
 	const settings_set_t *explicit_set = NULL;
 
 	REQUIRE(inst != NULL && name != NULL);
@@ -526,11 +524,11 @@ fwd_configure_zone(const settings_set_t *set, ldap_instance_t *inst,
 	ISC_LIST_INIT(fwdrs);
 
 	if (dns_name_equal(name, dns_rootname)) {
-		is_global_config = ISC_TRUE;
+		is_global_config = true;
 		msg_obj_type = "global forwarding configuration";
 		msg_use_global_fwds = "; global forwarders will be disabled";
 	} else {
-		is_global_config = ISC_FALSE;
+		is_global_config = false;
 		msg_obj_type = "zone";
 		msg_use_global_fwds = "; global forwarders will be used "
 				      "(if they are configured)";
@@ -543,10 +541,10 @@ fwd_configure_zone(const settings_set_t *set, ldap_instance_t *inst,
 	 * For all other zones (non-root) zones *do not* use recursive getter
 	 * and let BIND to handle inheritance in fwdtable itself. */
 	CHECK(fwd_setting_isexplicit(mctx, set, &isconfigured));
-	if (isconfigured == ISC_FALSE && is_global_config == ISC_TRUE) {
+	if (isconfigured == false && is_global_config == true) {
 		result = fwd_setting_find_explicit(mctx, set, &explicit_set);
 		if (result == ISC_R_SUCCESS) {
-			isconfigured = ISC_TRUE;
+			isconfigured = true;
 			if (set != explicit_set) {
 				log_debug(5, "%s was inherited from %s",
 					  msg_obj_type, explicit_set->name);
@@ -556,7 +554,7 @@ fwd_configure_zone(const settings_set_t *set, ldap_instance_t *inst,
 			goto cleanup;
 	}
 
-	if (isconfigured == ISC_TRUE) {
+	if (isconfigured == true) {
 		CHECK(setting_get_str("forward_policy", set, &fwdpolicy_str));
 		result = get_enum_value(forwarder_policy_txts,
 					fwdpolicy_str, (int *)&fwdpolicy);
@@ -580,7 +578,7 @@ fwd_configure_zone(const settings_set_t *set, ldap_instance_t *inst,
 	/* update forwarding table */
 	run_exclusive_enter(inst, &lock_state);
 	CHECK(fwd_delete_table(view, name, msg_obj_type, set->name));
-	if (isconfigured == ISC_TRUE) {
+	if (isconfigured == true) {
 		CHECK(dns_fwdtable_addfwd(view->fwdtable, name, &fwdrs,
 					  fwdpolicy));
 	}
@@ -592,7 +590,7 @@ fwd_configure_zone(const settings_set_t *set, ldap_instance_t *inst,
 		  dns_result_totext(result));
 
 	/* Handle collisions with automatic empty zones. */
-	if (isconfigured == ISC_TRUE)
+	if (isconfigured == true)
 		CHECK(empty_zone_handle_conflicts(name,
 						  view->zonetable,
 						  (fwdpolicy == dns_fwdpolicy_first)));
@@ -634,7 +632,7 @@ isc_result_t
 fwd_reconfig_global(ldap_instance_t *inst) {
 	isc_result_t result;
 	settings_set_t *toplevel_settings = NULL;
-	isc_boolean_t root_zone_is_active = ISC_FALSE;
+	bool root_zone_is_active = false;
 
 	/* we have to respect forwarding configuration for root zone */
 	result = zr_get_zone_settings(ldap_instance_getzr(inst), dns_rootname,
@@ -646,7 +644,7 @@ fwd_reconfig_global(ldap_instance_t *inst) {
 	else if (result != ISC_R_NOTFOUND)
 		goto cleanup;
 
-	if (root_zone_is_active == ISC_FALSE)
+	if (root_zone_is_active == false)
 		toplevel_settings = ldap_instance_getsettings_server(inst);
 
 	CHECK(fwd_configure_zone(toplevel_settings, inst, dns_rootname));

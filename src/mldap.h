@@ -22,7 +22,7 @@ isc_result_t ATTR_CHECKRESULT ATTR_NONNULLS
 mldap_newversion(mldapdb_t *mldap);
 
 void ATTR_NONNULLS
-mldap_closeversion(mldapdb_t *mldap, isc_boolean_t commit);
+mldap_closeversion(mldapdb_t *mldap, bool commit);
 
 isc_result_t ATTR_CHECKRESULT ATTR_NONNULLS
 mldap_entry_read(mldapdb_t *mldap, struct berval *uuid, metadb_node_t **nodep);

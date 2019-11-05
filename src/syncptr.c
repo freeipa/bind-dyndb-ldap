@@ -177,7 +177,7 @@ cleanup:
  *                       or LDAP_MOD_ADD if A/AAAA record is being added.
  * @param[out] rdataset  Will be set to the existing PTR RR set in the database.
  *                       RR set exists only if dns_rdataset_isassociated()
- *                       returns ISC_TRUE.
+ *                       returns true.
  *
  * @retval ISC_R_IGNORE  A and PTR records match, no change is required.
  * @retval ISC_R_SUCCESS Prerequisites fulfilled, update is allowed.
@@ -216,10 +216,10 @@ sync_ptr_validate(dns_name_t *a_name, const char *a_name_str, const char *ip_str
 	isc_result_t result;
 
 	char ptr_name_str[DNS_NAME_FORMATSIZE + 1];
-	isc_boolean_t ptr_found;
+	bool ptr_found;
 	dns_rdata_ptr_t ptr_rdata;
 	char ptr_rdata_str[DNS_NAME_FORMATSIZE + 1];
-	isc_boolean_t ptr_a_equal = ISC_FALSE; /* GCC requires initialization */
+	bool ptr_a_equal = false; /* GCC requires initialization */
 
 	dns_dbnode_t *ptr_node = NULL;
 	dns_fixedname_t found_name;
@@ -238,14 +238,14 @@ sync_ptr_validate(dns_name_t *a_name, const char *a_name_str, const char *ip_str
 	switch (result) {
 		case ISC_R_SUCCESS:
 			INSIST(dns_name_equal(dns_fixedname_name(&found_name),
-					      ptr_name) == ISC_TRUE);
-			ptr_found = ISC_TRUE;
+					      ptr_name) == true);
+			ptr_found = true;
 			break;
 
 		case DNS_R_NXDOMAIN:
 		case DNS_R_NXRRSET:
 		case DNS_R_EMPTYNAME:
-			ptr_found = ISC_FALSE;
+			ptr_found = false;
 			/* PTR RR does not exist */
 			break;
 
@@ -258,7 +258,7 @@ sync_ptr_validate(dns_name_t *a_name, const char *a_name_str, const char *ip_str
 	}
 
 	/* Find the value of PTR entry. */
-	if (ptr_found == ISC_TRUE) {
+	if (ptr_found == true) {
 		INSIST(dns_rdataset_count(rdataset) > 0);
 		if (dns_rdataset_count(rdataset) != 1) {
 			dns_name_format(ptr_name, ptr_name_str,
@@ -278,9 +278,9 @@ sync_ptr_validate(dns_name_t *a_name, const char *a_name_str, const char *ip_str
 		if (dns_name_isabsolute(a_name) &&
 		    dns_name_isabsolute(&ptr_rdata.ptr) &&
 		    dns_name_equal(&ptr_rdata.ptr, a_name)) {
-			ptr_a_equal = ISC_TRUE;
+			ptr_a_equal = true;
 		} else {
-			ptr_a_equal = ISC_FALSE;
+			ptr_a_equal = false;
 			dns_name_format(ptr_name, ptr_name_str,
 					DNS_NAME_FORMATSIZE);
 			append_trailing_dot(ptr_name_str,
@@ -293,13 +293,13 @@ sync_ptr_validate(dns_name_t *a_name, const char *a_name_str, const char *ip_str
 	}
 
 	if (mod_op == LDAP_MOD_DELETE) {
-		if (ptr_found == ISC_FALSE) {
+		if (ptr_found == false) {
 			dns_zone_log(zone, ISC_LOG_DEBUG(3), SYNCPTR_FMTPRE
 				     "skipped: no PTR records found",
 				     SYNCPTR_FMTPOST);
 			CLEANUP_WITH(ISC_R_IGNORE);
 
-		} else if (ptr_a_equal == ISC_FALSE) {
+		} else if (ptr_a_equal == false) {
 			dns_zone_log(zone, ISC_LOG_ERROR, SYNCPTR_FMTPRE "failed: "
 				  "existing PTR record '%s' contains unexpected "
 				  "value '%s' (value '%s' expected)",
@@ -308,8 +308,8 @@ sync_ptr_validate(dns_name_t *a_name, const char *a_name_str, const char *ip_str
 			CLEANUP_WITH(ISC_R_UNEXPECTEDTOKEN);
 
 		}
-	} else if (mod_op == LDAP_MOD_ADD && ptr_found == ISC_TRUE) {
-		if (ptr_a_equal == ISC_TRUE) {
+	} else if (mod_op == LDAP_MOD_ADD && ptr_found == true) {
+		if (ptr_a_equal == true) {
 			dns_zone_log(zone, ISC_LOG_DEBUG(3),
 				     SYNCPTR_FMTPRE "skipped: PTR record with "
 				     "desired value is already present",
@@ -380,7 +380,7 @@ sync_ptr_init(isc_mem_t *mctx, dns_zt_t * zonetable,
 	isc_result_t result;
 
 	settings_set_t *zone_settings = NULL;
-	isc_boolean_t zone_dyn_update;
+	bool zone_dyn_update;
 	char *a_name_str = NULL;
 
 	sync_ptrev_t *ev = NULL;
@@ -508,7 +508,7 @@ sync_ptr_handler(isc_task_t *task, isc_event_t *event) {
 	}
 
 	CHECK(dns_diff_apply(&diff, ldapdb, version));
-	dns_db_closeversion(ldapdb, &version, ISC_TRUE);
+	dns_db_closeversion(ldapdb, &version, true);
 
 cleanup:
 	if (dns_rdataset_isassociated(&old_rdataset))
@@ -519,7 +519,7 @@ cleanup:
 	if (ldapdb != NULL) {
 		/* rollback if something bad happened */
 		if (version != NULL)
-			dns_db_closeversion(ldapdb, &version, ISC_FALSE);
+			dns_db_closeversion(ldapdb, &version, false);
 		dns_db_detach(&ldapdb);
 	}
 	sync_ptr_destroyev(&ev);

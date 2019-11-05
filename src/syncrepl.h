@@ -40,7 +40,7 @@ void
 sync_state_get(sync_ctx_t *sctx, sync_state_t *statep) ATTR_NONNULLS;
 
 void
-sync_state_change(sync_ctx_t *sctx, sync_state_t new_state, isc_boolean_t lock) ATTR_NONNULLS;
+sync_state_change(sync_ctx_t *sctx, sync_state_t new_state, bool lock) ATTR_NONNULLS;
 
 void
 sync_state_reset(sync_ctx_t *sctx) ATTR_NONNULLS;
@@ -59,7 +59,7 @@ sync_concurr_limit_signal(sync_ctx_t *sctx) ATTR_NONNULLS;
 
 isc_result_t
 sync_event_send(sync_ctx_t *sctx, isc_task_t *task, ldap_syncreplevent_t **ev,
-		isc_boolean_t synchronous) ATTR_NONNULLS ATTR_CHECKRESULT;
+		bool synchronous) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 void
 sync_event_signal(sync_ctx_t *sctx, ldap_syncreplevent_t *ev) ATTR_NONNULLS;

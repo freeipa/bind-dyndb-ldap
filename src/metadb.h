@@ -49,7 +49,7 @@ isc_result_t ATTR_CHECKRESULT ATTR_NONNULLS
 metadb_newversion(metadb_t *mdb);
 
 void ATTR_NONNULLS
-metadb_closeversion(metadb_t *mdb, isc_boolean_t commit);
+metadb_closeversion(metadb_t *mdb, bool commit);
 
 isc_result_t ATTR_CHECKRESULT ATTR_NONNULLS
 metadb_iterator_create(metadb_t *mdb, metadb_iter_t **miterp);

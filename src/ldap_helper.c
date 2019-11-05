@@ -151,7 +151,7 @@ struct ldap_instance {
 
 	isc_task_t		*task;
 	isc_thread_t		watcher;
-	isc_boolean_t		exiting;
+	bool		exiting;
 	/* Non-zero if this instance is 'tainted' by an unrecoverable problem. */
 	isc_refcount_t		errors;
 
@@ -329,28 +329,28 @@ ldap_parse_rrentry(isc_mem_t *mctx, ldap_entry_t *entry, dns_name_t *origin,
 		   ldapdb_rdatalist_t *rdatalist) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 static isc_result_t ldap_connect(ldap_instance_t *ldap_inst,
-		ldap_connection_t *ldap_conn, isc_boolean_t force) ATTR_NONNULLS ATTR_CHECKRESULT;
+		ldap_connection_t *ldap_conn, bool force) ATTR_NONNULLS ATTR_CHECKRESULT;
 static isc_result_t ldap_reconnect(ldap_instance_t *ldap_inst,
-		ldap_connection_t *ldap_conn, isc_boolean_t force) ATTR_NONNULLS ATTR_CHECKRESULT;
+		ldap_connection_t *ldap_conn, bool force) ATTR_NONNULLS ATTR_CHECKRESULT;
 static isc_result_t handle_connection_error(ldap_instance_t *ldap_inst,
-		ldap_connection_t *ldap_conn, isc_boolean_t force) ATTR_NONNULLS;
+		ldap_connection_t *ldap_conn, bool force) ATTR_NONNULLS;
 
 /* Functions for writing to LDAP. */
 static isc_result_t ldap_rdttl_to_ldapmod(isc_mem_t *mctx,
 		dns_rdatalist_t *rdlist, LDAPMod **changep) ATTR_NONNULLS ATTR_CHECKRESULT;
 static isc_result_t ldap_rdatalist_to_ldapmod(isc_mem_t *mctx,
 		dns_rdatalist_t *rdlist, LDAPMod **changep, int mod_op,
-		isc_boolean_t unknown) ATTR_NONNULLS ATTR_CHECKRESULT;
+		bool unknown) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 static isc_result_t ldap_rdata_to_char_array(isc_mem_t *mctx,
 					     dns_rdata_t *rdata_head,
-					     isc_boolean_t unknown,
+					     bool unknown,
 					     char ***valsp)
 					     ATTR_NONNULLS ATTR_CHECKRESULT;
 
 static void free_char_array(isc_mem_t *mctx, char ***valsp) ATTR_NONNULLS;
 static isc_result_t modify_ldap_common(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_inst,
-		dns_rdatalist_t *rdlist, int mod_op, isc_boolean_t delete_node) ATTR_NONNULLS ATTR_CHECKRESULT;
+		dns_rdatalist_t *rdlist, int mod_op, bool delete_node) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 /* Functions for maintaining pool of LDAP connections */
 static isc_result_t ldap_pool_create(isc_mem_t *mctx, unsigned int connections,
@@ -385,7 +385,7 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 	const char *bind_dn = NULL;
 	const char *password = NULL;
 	const char *dir_name = NULL;
-	isc_boolean_t dir_default;
+	bool dir_default;
 	ld_string_t *buff = NULL;
 	char print_buff[PRINT_BUFF_SIZE];
 	const char *auth_method_str = NULL;
@@ -400,7 +400,7 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 	CHECK(str_new(inst->mctx, &buff));
 	CHECK(setting_get_str("directory", inst->local_settings, &dir_name));
 	dir_default = (strlen(dir_name) == 0);
-	if (dir_default == ISC_TRUE) {
+	if (dir_default == true) {
 		CHECK(str_cat_char(buff, "dyndb-ldap/"));
 		CHECK(str_cat_char(buff, inst->db_name));
 	} else
@@ -513,7 +513,7 @@ validate_local_instance_settings(ldap_instance_t *inst, settings_set_t *set) {
 			 "are untested; expect problems");
 	}
 
-	if (settings_set_isfilled(set) != ISC_TRUE)
+	if (settings_set_isfilled(set) != true)
 		result = ISC_R_FAILURE;
 
 cleanup:
@@ -622,7 +622,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name, const char *parameters,
 
 	CHECK(validate_local_instance_settings(ldap_inst,
 					       ldap_inst->local_settings));
-	if (settings_set_isfilled(ldap_inst->global_settings) != ISC_TRUE)
+	if (settings_set_isfilled(ldap_inst->global_settings) != true)
 		CLEANUP_WITH(ISC_R_FAILURE);
 
 	/* zero-length server_id means undefined value */
@@ -700,7 +700,7 @@ ldap_syncrepl_watcher_shutdown(ldap_instance_t *ldap_inst)
 {
 	REQUIRE(ldap_inst != NULL);
 
-	ldap_inst->exiting = ISC_TRUE;
+	ldap_inst->exiting = true;
 	/*
 	 * Wake up the watcher thread. This might look like a hack
 	 * but isc_thread_t is actually pthread_t and libisc don't
@@ -821,7 +821,7 @@ destroy_ldap_connection(ldap_connection_t **ldap_connp)
 static isc_result_t ATTR_NONNULLS
 cleanup_zone_files(dns_zone_t *zone) {
 	isc_result_t result;
-	isc_boolean_t failure = ISC_FALSE;
+	bool failure = false;
 	const char *filename = NULL;
 	dns_zone_t *raw = NULL;
 	int namelen;
@@ -853,11 +853,11 @@ cleanup_zone_files(dns_zone_t *zone) {
 
 cleanup:
 	failure = failure || (result != ISC_R_SUCCESS);
-	if (failure == ISC_TRUE)
+	if (failure == true)
 		dns_zone_log(zone, ISC_LOG_ERROR,
 			     "unable to remove files, expect problems");
 
-	if (failure == ISC_TRUE && result == ISC_R_SUCCESS)
+	if (failure == true && result == ISC_R_SUCCESS)
 		result = ISC_R_FAILURE;
 
 	return result;
@@ -912,7 +912,7 @@ zone_unload_ifempty(dns_view_t *view, dns_name_t *name) {
 
 	CHECK(dns_view_findzone(view, name, &zone));
 
-	if (zone_isempty(zone) == ISC_TRUE) {
+	if (zone_isempty(zone) == true) {
 		dns_name_format(name, zone_name, DNS_NAME_FORMATSIZE);
 		result = delete_bind_zone(view->zonetable, &zone);
 		if (result != ISC_R_SUCCESS)
@@ -933,7 +933,7 @@ cleanup:
 
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 configure_paths(isc_mem_t *mctx, ldap_instance_t *inst, dns_zone_t *zone,
-		isc_boolean_t issecure) {
+		bool issecure) {
 	isc_result_t result;
 	ld_string_t *file_name = NULL;
 	ld_string_t *key_dir = NULL;
@@ -942,7 +942,7 @@ configure_paths(isc_mem_t *mctx, ldap_instance_t *inst, dns_zone_t *zone,
 			       dns_zone_getorigin(zone),
 			       (issecure ? "signed" : "raw"), &file_name));
 	CHECK(dns_zone_setfile(zone, str_buf(file_name)));
-	if (issecure == ISC_TRUE) {
+	if (issecure == true) {
 		CHECK(zr_get_zone_path(mctx,
 				       ldap_instance_getsettings_local(inst),
 				       dns_zone_getorigin(zone), "keys/",
@@ -965,7 +965,7 @@ cleanup:
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 create_zone(ldap_instance_t * const inst, const char * const dn,
 	    dns_name_t * const name, dns_db_t * const ldapdb,
-	    const isc_boolean_t want_secure, dns_zone_t ** const rawp,
+	    const bool want_secure, dns_zone_t ** const rawp,
 	    dns_zone_t ** const securep)
 {
 	isc_result_t result;
@@ -992,9 +992,9 @@ create_zone(ldap_instance_t * const inst, const char * const dn,
 	/* dns_zone_setview(raw, view); */
 	CHECK(dns_zone_setdbtype(raw, sizeof(ldap_argv)/sizeof(ldap_argv[0]),
 				 ldap_argv));
-	CHECK(configure_paths(inst->mctx, inst, raw, ISC_FALSE));
+	CHECK(configure_paths(inst->mctx, inst, raw, false));
 
-	if (want_secure == ISC_FALSE) {
+	if (want_secure == false) {
 		CHECK(dns_zonemgr_managezone(inst->zmgr, raw));
 		CHECK(cleanup_zone_files(raw));
 	} else {
@@ -1006,8 +1006,8 @@ create_zone(ldap_instance_t * const inst, const char * const dn,
 		CHECK(dns_zone_setdbtype(secure, 1, rbt_argv));
 		CHECK(dns_zonemgr_managezone(inst->zmgr, secure));
 		CHECK(dns_zone_link(secure, raw));
-		dns_zone_rekey(secure, ISC_TRUE);
-		CHECK(configure_paths(inst->mctx, inst, secure, ISC_TRUE));
+		dns_zone_rekey(secure, true);
+		CHECK(configure_paths(inst->mctx, inst, secure, true));
 		CHECK(cleanup_zone_files(secure));
 	}
 
@@ -1049,9 +1049,9 @@ cleanup:
  * @warning Never call this on raw part of in-line secure zone.
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-load_zone(dns_zone_t *zone, isc_boolean_t log) {
+load_zone(dns_zone_t *zone, bool log) {
 	isc_result_t result;
-	isc_boolean_t zone_dynamic;
+	bool zone_dynamic;
 	isc_uint32_t serial;
 	dns_zone_t *raw = NULL;
 
@@ -1068,16 +1068,16 @@ load_zone(dns_zone_t *zone, isc_boolean_t log) {
 	}
 
 	CHECK(dns_zone_getserial2(raw, &serial));
-	if (log == ISC_TRUE)
+	if (log == true)
 		dns_zone_log(raw, ISC_LOG_INFO, "loaded serial %u", serial);
 	if (zone != NULL) {
 		result = dns_zone_getserial2(zone, &serial);
-		if (result == ISC_R_SUCCESS && log == ISC_TRUE)
+		if (result == ISC_R_SUCCESS && log == true)
 			dns_zone_log(zone, ISC_LOG_INFO, "loaded serial %u",
 				     serial);
 		/* in-line secure zone is loaded asynchonously in background */
 		else if (result == DNS_R_NOTLOADED) {
-			if (log == ISC_TRUE)
+			if (log == true)
 				dns_zone_log(zone, ISC_LOG_INFO,
 					     "signing in progress");
 			result = ISC_R_SUCCESS;
@@ -1101,7 +1101,7 @@ static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 publish_zone(isc_task_t *task, ldap_instance_t *inst, dns_zone_t *zone)
 {
 	isc_result_t result;
-	isc_boolean_t freeze = ISC_FALSE;
+	bool freeze = false;
 	dns_zone_t *zone_in_view = NULL;
 	dns_view_t *view_in_zone = NULL;
 	isc_result_t lock_state = ISC_R_IGNORE;
@@ -1141,7 +1141,7 @@ publish_zone(isc_task_t *task, ldap_instance_t *inst, dns_zone_t *zone)
 
 	run_exclusive_enter(inst, &lock_state);
 	if (inst->view->frozen) {
-		freeze = ISC_TRUE;
+		freeze = true;
 		dns_view_thaw(inst->view);
 	}
 
@@ -1189,7 +1189,7 @@ activate_zone(isc_task_t *task, ldap_instance_t *inst, dns_name_t *name) {
 		goto cleanup;
 	}
 
-	CHECK(load_zone(toview, ISC_TRUE));
+	CHECK(load_zone(toview, true));
 	if (secure != NULL) {
 		CHECK(zr_get_zone_settings(inst->zone_register, name,
 					   &zone_settings));
@@ -1218,7 +1218,7 @@ activate_zones(isc_task_t *task, ldap_instance_t *inst) {
 	unsigned int total_cnt = 0;
 	unsigned int active_cnt = 0;
 	settings_set_t *settings;
-	isc_boolean_t active;
+	bool active;
 
 	INIT_BUFFERED_NAME(name);
 	for(result = zr_rbt_iter_init(inst->zone_register, &iter, &name);
@@ -1231,7 +1231,7 @@ activate_zones(isc_task_t *task, ldap_instance_t *inst) {
 		INSIST(result == ISC_R_SUCCESS);
 
 		++total_cnt;
-		if (active == ISC_TRUE) {
+		if (active == true) {
 			++active_cnt;
 			result = activate_zone(task, inst, &name);
 			if (result == ISC_R_SUCCESS)
@@ -1338,12 +1338,12 @@ configure_zone_ssutable(dns_zone_t *zone, const char *update_str)
 
 /* Delete zone by dns zone name */
 isc_result_t
-ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock)
+ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, bool lock)
 {
 	isc_result_t result;
 	isc_result_t isforward = ISC_R_NOTFOUND;
 	isc_result_t lock_state = ISC_R_IGNORE;
-	isc_boolean_t freeze = ISC_FALSE;
+	bool freeze = false;
 	dns_zone_t *raw = NULL;
 	dns_zone_t *secure = NULL;
 	dns_zone_t *foundzone = NULL;
@@ -1380,7 +1380,7 @@ ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock)
 
 		if (lock) {
 			dns_view_thaw(inst->view);
-			freeze = ISC_TRUE;
+			freeze = true;
 		}
 	} /* else: zone wasn't in a view */
 
@@ -1414,13 +1414,13 @@ unpublish_zone(ldap_instance_t *inst, dns_name_t *name, const char *logname) {
 	dns_zone_t *raw = NULL;
 	dns_zone_t *secure = NULL;
 	dns_zone_t *zone_in_view = NULL;
-	isc_boolean_t freeze = ISC_FALSE;
+	bool freeze = false;
 
 	CHECK(zr_get_zone_ptr(inst->zone_register, name, &raw, &secure));
 
 	run_exclusive_enter(inst, &lock_state);
 	if (inst->view->frozen) {
-		freeze = ISC_TRUE;
+		freeze = true;
 		dns_view_thaw(inst->view);
 	}
 	CHECK(dns_view_findzone(inst->view, name, &zone_in_view));
@@ -1537,7 +1537,7 @@ ldap_parse_fwd_zoneentry(ldap_entry_t *entry, ldap_instance_t *inst)
 	if (HEAD(values) != NULL &&
 	    strcasecmp(HEAD(values)->value, "TRUE") != 0) {
 		/* Zone is not active */
-		result = ldap_delete_zone2(inst, &entry->fqdn, ISC_TRUE);
+		result = ldap_delete_zone2(inst, &entry->fqdn, true);
 		goto cleanup;
 	}
 
@@ -1621,14 +1621,14 @@ cleanup:
  * @param[out]	soa_latest	Pointer to last added SOA RR from tuple list.
  *				Result can be NULL if there is no added SOA RR
  *				in the tuple list.
- * @param[out]	data_changed	ISC_TRUE if any data other than SOA serial were
- * 				changed. ISC_FALSE if nothing (except SOA
+ * @param[out]	data_changed	true if any data other than SOA serial were
+ * 				changed. false if nothing (except SOA
  * 				serial) was changed.
  *
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 diff_analyze_serial(dns_diff_t *diff, dns_difftuple_t **soa_latest,
-		    isc_boolean_t *data_changed) {
+		    bool *data_changed) {
 	dns_difftuple_t *t = NULL;
 	dns_rdata_t *del_soa = NULL; /* last seen SOA with op == DEL */
 	dns_difftuple_t *tmp_tuple = NULL; /* tuple used for SOA comparison */
@@ -1639,13 +1639,13 @@ diff_analyze_serial(dns_diff_t *diff, dns_difftuple_t **soa_latest,
 	REQUIRE(soa_latest != NULL && *soa_latest == NULL);
 	REQUIRE(data_changed != NULL);
 
-	*data_changed = ISC_FALSE;
+	*data_changed = false;
 	for (t = HEAD(diff->tuples);
 	     t != NULL;
 	     t = NEXT(t, link)) {
 		INSIST(tmp_tuple == NULL);
 		if (t->rdata.type != dns_rdatatype_soa)
-			*data_changed = ISC_TRUE;
+			*data_changed = true;
 		else { /* SOA is always special case */
 			if (t->op == DNS_DIFFOP_DEL ||
 			    t->op == DNS_DIFFOP_DELRESIGN) {
@@ -1660,8 +1660,8 @@ diff_analyze_serial(dns_diff_t *diff, dns_difftuple_t **soa_latest,
 				/* we are adding SOA without preceding delete
 				 * -> we are initializing new empty zone */
 				if (del_soa == NULL) {
-					*data_changed = ISC_TRUE;
-				} else if (*data_changed == ISC_FALSE) {
+					*data_changed = true;
+				} else if (*data_changed == false) {
 					/* detect if fields other than serial
 					 * were changed (compute only if necessary) */
 					CHECK(dns_difftuple_copy(t, &tmp_tuple));
@@ -1669,7 +1669,7 @@ diff_analyze_serial(dns_diff_t *diff, dns_difftuple_t **soa_latest,
 							  &tmp_tuple->rdata);
 					ret = dns_rdata_compare(del_soa,
 								&tmp_tuple->rdata);
-					*data_changed = ISC_TF(ret != 0);
+					*data_changed = ret != 0;
 				}
 				if (tmp_tuple != NULL)
 					dns_difftuple_free(&tmp_tuple);
@@ -1719,7 +1719,7 @@ ldap_replace_serial(ldap_instance_t *inst, dns_name_t *zone,
 	change.mod_values = values;
 	CHECK(isc_string_printf(serial_char, MAX_SERIAL_LENGTH, "%u", serial));
 
-	CHECK(ldap_modify_do(inst, str_buf(dn), changep, ISC_FALSE));
+	CHECK(ldap_modify_do(inst, str_buf(dn), changep, false));
 
 cleanup:
 	str_destroy(&dn);
@@ -1754,7 +1754,7 @@ zone_master_reconfigure_nsec3param(settings_set_t *zone_settings,
 	CHECK(dns_zone_setnsec3param(secure, nsec3p_rr.hash, nsec3p_rr.flags,
 				     nsec3p_rr.iterations,
 				     nsec3p_rr.salt_length, nsec3p_rr.salt,
-				     ISC_TRUE));
+				     true));
 
 cleanup:
 	if (nsec3p_rdata != NULL) {
@@ -1778,7 +1778,7 @@ zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
 	isc_result_t result;
 	ldap_valuelist_t values;
 	isc_mem_t *mctx = NULL;
-	isc_boolean_t ssu_changed;
+	bool ssu_changed;
 	dns_zone_t *inview = NULL;
 
 	REQUIRE(entry != NULL);
@@ -1817,7 +1817,7 @@ zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
 		goto cleanup;
 
 	if (result == ISC_R_SUCCESS || ssu_changed) {
-		isc_boolean_t ssu_enabled;
+		bool ssu_enabled;
 		const char *ssu_policy = NULL;
 
 		CHECK(setting_get_bool("dyn_update", zone_settings, &ssu_enabled));
@@ -1886,7 +1886,7 @@ zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
 		dns_zone_setprivatetype(secure, 65534);
 
 		/* update-check-ksk */
-		dns_zone_setoption(secure, DNS_ZONEOPT_UPDATECHECKKSK, ISC_TRUE);
+		dns_zone_setoption(secure, DNS_ZONEOPT_UPDATECHECKKSK, true);
 
 		/* dnssec-loadkeys-interval */
 		CHECK(dns_zone_setrefreshkeyinterval(secure, 60));
@@ -1904,8 +1904,8 @@ zone_master_reconfigure(ldap_entry_t *entry, settings_set_t *zone_settings,
 			goto cleanup;
 
 		/* auto-dnssec = maintain */
-		dns_zone_setkeyopt(secure, DNS_ZONEKEY_ALLOW, ISC_TRUE);
-		dns_zone_setkeyopt(secure, DNS_ZONEKEY_MAINTAIN, ISC_TRUE);
+		dns_zone_setkeyopt(secure, DNS_ZONEKEY_ALLOW, true);
+		dns_zone_setkeyopt(secure, DNS_ZONEKEY_MAINTAIN, true);
 	}
 
 cleanup:
@@ -1923,7 +1923,7 @@ cleanup:
  * @param[out] diff     Initialized diff. It will be filled with differences
  *                      between RBTDB and LDAP object + SOA serial update.
  * @param[out] new_serial     SOA serial after update;
- *                            valid if ldap_writeback = ISC_TRUE.
+ *                            valid if ldap_writeback = true.
  * @param[out] ldap_writeback SOA serial was updated.
  * @param[out] data_changed   Other data were updated.
  *
@@ -1931,14 +1931,14 @@ cleanup:
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 zone_sync_apex(const ldap_instance_t * const inst,
 	       ldap_entry_t * const entry, dns_name_t name,
-	       const sync_state_t sync_state, const isc_boolean_t new_zone,
+	       const sync_state_t sync_state, const bool new_zone,
 	       dns_db_t * const ldapdb, dns_db_t * const rbtdb,
 	       dns_dbversion_t * const version,
 	       const settings_set_t * const zone_settings,
 	       dns_diff_t * const diff,
 	       isc_uint32_t * const new_serial,
-	       isc_boolean_t * const ldap_writeback,
-	       isc_boolean_t * const data_changed) {
+	       bool * const ldap_writeback,
+	       bool * const data_changed) {
 	isc_result_t result;
 	ldapdb_rdatalist_t rdatalist;
 	dns_rdatasetiter_t *rbt_rds_iterator = NULL;
@@ -1951,7 +1951,7 @@ zone_sync_apex(const ldap_instance_t * const inst,
 	REQUIRE(ldap_writeback != NULL);
 
 	INIT_LIST(rdatalist);
-	*ldap_writeback = ISC_FALSE; /* GCC */
+	*ldap_writeback = false; /* GCC */
 
 	CHECK(ldap_parse_rrentry(inst->mctx, entry, &name,
 				 zone_settings, &rdatalist));
@@ -1967,37 +1967,37 @@ zone_sync_apex(const ldap_instance_t * const inst,
 		goto cleanup;
 
 	/* New zone doesn't have serial defined yet. */
-	if (new_zone != ISC_TRUE)
+	if (new_zone != true)
 		CHECK(dns_db_getsoaserial(rbtdb, version, &curr_serial));
 
 	/* Detect if SOA serial is affected by the update or not.
 	 * Always bump serial in case of re-synchronization. */
 	CHECK(diff_analyze_serial(diff, &soa_tuple, data_changed));
-	if (new_zone == ISC_TRUE || *data_changed == ISC_TRUE ||
+	if (new_zone == true || *data_changed == true ||
 	    sync_state != sync_finished) {
 		if (soa_tuple == NULL) {
 			/* The diff doesn't contain new SOA serial
 			 * => generate new serial and write it back to LDAP. */
-			*ldap_writeback = ISC_TRUE;
+			*ldap_writeback = true;
 			CHECK(zone_soaserial_addtuple(inst->mctx, ldapdb,
 						      version, diff, new_serial));
-		} else if (new_zone == ISC_TRUE || sync_state != sync_finished ||
+		} else if (new_zone == true || sync_state != sync_finished ||
 			   isc_serial_le(dns_soa_getserial(&soa_tuple->rdata),
 					 curr_serial)) {
 			/* The diff tries to send SOA serial back!
 			 * => generate new serial and write it back to LDAP.
 			 * Force serial update if we are adding a new zone. */
-			*ldap_writeback = ISC_TRUE;
+			*ldap_writeback = true;
 			CHECK(zone_soaserial_updatetuple(dns_updatemethod_unixtime,
 							 soa_tuple, new_serial));
 		} else {
 			/* The diff contains new serial already
 			 * => do nothing. */
-			*ldap_writeback = ISC_FALSE;
+			*ldap_writeback = false;
 		}
 
-	} else {/* if (data_changed == ISC_FALSE) */
-		*ldap_writeback = ISC_FALSE;
+	} else {/* if (data_changed == false) */
+		*ldap_writeback = false;
 		if (soa_tuple == NULL) {
 			/* The diff is empty => do nothing. */
 			INSIST(EMPTY(diff->tuples));
@@ -2039,7 +2039,7 @@ zone_security_change(ldap_entry_t * const entry, dns_name_t * const name,
 	 * in period where old zone was deleted but the new zone was not
 	 * created yet. */
 	run_exclusive_enter(inst, &lock_state);
-	CHECK(ldap_delete_zone2(inst, name, ISC_FALSE));
+	CHECK(ldap_delete_zone2(inst, name, false));
 	CHECK(ldap_parse_master_zoneentry(entry, olddb, inst, task));
 
 cleanup:
@@ -2075,14 +2075,14 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 	dns_zone_t *toview = NULL;
 	isc_result_t result;
 	isc_result_t lock_state = ISC_R_IGNORE;
-	isc_boolean_t new_zone = ISC_FALSE;
-	isc_boolean_t want_secure = ISC_FALSE;
-	isc_boolean_t configured = ISC_FALSE;
-	isc_boolean_t activity_changed;
-	isc_boolean_t isactive = ISC_FALSE;
+	bool new_zone = false;
+	bool want_secure = false;
+	bool configured = false;
+	bool activity_changed;
+	bool isactive = false;
 	settings_set_t *zone_settings = NULL;
-	isc_boolean_t ldap_writeback;
-	isc_boolean_t data_changed = ISC_FALSE; /* GCC */
+	bool ldap_writeback;
+	bool data_changed = false; /* GCC */
 	isc_uint32_t new_serial;
 
 	dns_db_t *rbtdb = NULL;
@@ -2101,10 +2101,9 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 
 	result = ldap_entry_getvalues(entry, "idnsSecInlineSigning", &values);
 	if (result == ISC_R_NOTFOUND || HEAD(values) == NULL)
-		want_secure = ISC_FALSE;
+		want_secure = false;
 	else
-		want_secure = ISC_TF(strcasecmp(HEAD(values)->value, "TRUE")
-				     == 0);
+		want_secure = (strcasecmp(HEAD(values)->value, "TRUE") == 0);
 
 	/* Check if we are already serving given zone */
 	result = zr_get_zone_ptr(inst->zone_register, &entry->fqdn,
@@ -2112,13 +2111,13 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 	if (result == ISC_R_NOTFOUND || result == DNS_R_PARTIALMATCH) {
 		CHECK(create_zone(inst, entry->dn, &entry->fqdn, olddb,
 				  want_secure, &raw, &secure));
-		new_zone = ISC_TRUE;
+		new_zone = true;
 		log_debug(2, "created %s: raw %p; secure %p",
 			  ldap_entry_logname(entry), raw, secure);
 	} else if (result != ISC_R_SUCCESS)
 		goto cleanup;
-	else if (want_secure != ISC_TF(secure != NULL)) {
-		if (want_secure == ISC_TRUE)
+	else if (want_secure != (secure != NULL)) {
+		if (want_secure == true)
 			dns_zone_log(raw, ISC_LOG_INFO,
 				     "upgrading zone to secure");
 		else
@@ -2150,7 +2149,7 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 #else
 	dns_diff_print(&diff, NULL);
 #endif
-	if (ldap_writeback == ISC_TRUE) {
+	if (ldap_writeback == true) {
 		dns_zone_log(raw, ISC_LOG_DEBUG(5), "writing new zone serial "
 			     "%u to LDAP", new_serial);
 		result = ldap_replace_serial(inst, &entry->fqdn, new_serial);
@@ -2161,30 +2160,30 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 	}
 
 	if (!EMPTY(diff.tuples)) {
-		if (sync_state == sync_finished && new_zone == ISC_FALSE) {
+		if (sync_state == sync_finished && new_zone == false) {
 			/* write the transaction to journal */
 			CHECK(zone_journal_adddiff(inst->mctx, raw, &diff));
 		}
 
 		/* commit */
 		CHECK(dns_diff_apply(&diff, rbtdb, version));
-		dns_db_closeversion(ldapdb, &version, ISC_TRUE);
+		dns_db_closeversion(ldapdb, &version, true);
 		dns_zone_markdirty(raw);
 	} else {
 		/* It is necessary to release lock before calling load_zone()
 		 * otherwise it will deadlock on newversion() call
 		 * in journal roll-forward process! */
-		dns_db_closeversion(ldapdb, &version, ISC_FALSE);
+		dns_db_closeversion(ldapdb, &version, false);
 	}
-	configured = ISC_TRUE;
+	configured = true;
 
 	/* Detect active/inactive zone and activity changes */
 	result = setting_update_from_ldap_entry("active", zone_settings,
 						"idnsZoneActive", entry);
 	if (result == ISC_R_SUCCESS) {
-		activity_changed = ISC_TRUE;
+		activity_changed = true;
 	} else if (result == ISC_R_IGNORE) {
-		activity_changed = ISC_FALSE;
+		activity_changed = false;
 	} else
 		goto cleanup;
 	CHECK(setting_get_bool("active", zone_settings, &isactive));
@@ -2193,13 +2192,13 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 	if (sync_state != sync_finished)
 		goto cleanup;
 
-	toview = (want_secure == ISC_TRUE) ? secure : raw;
-	if (isactive == ISC_TRUE) {
-		if (new_zone == ISC_TRUE || activity_changed == ISC_TRUE)
+	toview = (want_secure == true) ? secure : raw;
+	if (isactive == true) {
+		if (new_zone == true || activity_changed == true)
 			CHECK(publish_zone(task, inst, toview));
-		CHECK(load_zone(toview, ISC_FALSE));
+		CHECK(load_zone(toview, false));
 		CHECK(fwd_configure_zone(zone_settings, inst, &entry->fqdn));
-	} else if (activity_changed == ISC_TRUE) { /* Zone was deactivated */
+	} else if (activity_changed == true) { /* Zone was deactivated */
 		CHECK(unpublish_zone(inst, &entry->fqdn,
 				     ldap_entry_logname(entry)));
 		/* emulate "no explicit forwarding config" */
@@ -2212,17 +2211,17 @@ ldap_parse_master_zoneentry(ldap_entry_t * const entry, dns_db_t * const olddb,
 cleanup:
 	dns_diff_clear(&diff);
 	if (rbtdb != NULL && version != NULL)
-		dns_db_closeversion(ldapdb, &version, ISC_FALSE); /* rollback */
+		dns_db_closeversion(ldapdb, &version, false); /* rollback */
 	if (rbtdb != NULL)
 		dns_db_detach(&rbtdb);
 	if (ldapdb != NULL)
 		dns_db_detach(&ldapdb);
-	if (new_zone == ISC_TRUE && configured == ISC_FALSE) {
+	if (new_zone == true && configured == false) {
 		/* Failure in ACL parsing or so. */
 		log_error_r("%s: publishing failed, rolling back due to",
 			    ldap_entry_logname(entry));
 		/* TODO: verify this */
-		result = ldap_delete_zone2(inst, &entry->fqdn, ISC_TRUE);
+		result = ldap_delete_zone2(inst, &entry->fqdn, true);
 		if (result != ISC_R_SUCCESS)
 			log_error_r("%s: rollback failed: ",
 				    ldap_entry_logname(entry));
@@ -2393,8 +2392,8 @@ ldap_substitute_rr_template(isc_mem_t *mctx, const settings_set_t * set,
 		setting_name = tmp + matches[2].rm_so;
 		tmp[matches[2].rm_eo] = '\0';
 		setting = NULL;
-		result = setting_find(setting_name, set, isc_boolean_true,
-				      isc_boolean_true, &setting);
+		result = setting_find(setting_name, set, true,
+				      true, &setting);
 		if (result != ISC_R_SUCCESS) {
 			log_debug(5, "setting '%s' is not defined so it "
 				  "cannot be substituted into template '%s'",
@@ -2458,7 +2457,7 @@ ldap_parse_rrentry_template(isc_mem_t *mctx, ldap_entry_t *entry,
 	dns_ttl_t ttl;
 	dns_rdatatype_t rdtype;
 	dns_rdatalist_t *rdlist = NULL;
-	isc_boolean_t did_something = ISC_FALSE;
+	bool did_something = false;
 
 	CHECK(str_new(mctx, &orig_val));
 	rdclass = ldap_entry_getrdclass(entry);
@@ -2493,7 +2492,7 @@ ldap_parse_rrentry_template(isc_mem_t *mctx, ldap_entry_t *entry,
 					  str_buf(new_val), &rdata));
 			APPEND(rdlist->rdata, rdata, link);
 			rdata = NULL;
-			did_something = ISC_TRUE;
+			did_something = true;
 		}
 	}
 
@@ -2753,7 +2752,7 @@ cleanup:
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_connect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
-	     isc_boolean_t force)
+	     bool force)
 {
 	LDAP *ld = NULL;
 	int ret;
@@ -2817,7 +2816,7 @@ cleanup:
 
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_reconnect(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
-	       isc_boolean_t force)
+	       bool force)
 {
 	isc_result_t result;
 	int ret = 0;
@@ -2951,7 +2950,7 @@ cleanup:
 
 static isc_result_t ATTR_NONNULLS
 handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn,
-			isc_boolean_t force)
+			bool force)
 {
 	int ret;
 	int err_code;
@@ -2989,7 +2988,7 @@ handle_connection_error(ldap_instance_t *ldap_inst, ldap_connection_t *ldap_conn
 		/* Try to reconnect on other errors. */
 		log_ldap_error(ldap_conn->handle, "connection error");
 reconnect:
-		if (ldap_conn->handle == NULL && force == ISC_FALSE)
+		if (ldap_conn->handle == NULL && force == false)
 			log_error("connection to the LDAP server was lost");
 		result = ldap_connect(ldap_inst, ldap_conn, force);
 		if (result == ISC_R_SUCCESS)
@@ -3011,12 +3010,12 @@ reconnect:
  */
 isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn, LDAPMod **mods,
-		isc_boolean_t delete_node)
+		bool delete_node)
 {
 	int ret;
 	int err_code;
 	const char *operation_str;
-	isc_boolean_t once = ISC_FALSE;
+	bool once = false;
 	isc_result_t result;
 	ldap_connection_t *ldap_conn = NULL;
 
@@ -3045,8 +3044,8 @@ ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn, LDAPMod **mods,
 		 * TODO: handle this case inside ldap_pool_getconnection()?
 		 */
 retry:
-		once = ISC_TRUE;
-		CHECK(handle_connection_error(ldap_inst, ldap_conn, ISC_FALSE));
+		once = true;
+		CHECK(handle_connection_error(ldap_inst, ldap_conn, false));
 	}
 
 	if (delete_node) {
@@ -3109,7 +3108,7 @@ retry:
 	if ((mods[0]->mod_op & ~LDAP_MOD_BVALUES) != LDAP_MOD_DELETE ||
 	    err_code != LDAP_NO_SUCH_ATTRIBUTE) {
 		result = ISC_R_FAILURE;
-		if (once == ISC_FALSE) {
+		if (once == false) {
 			log_error("retrying LDAP operation (%s) on entry '%s'",
 				  operation_str, dn);
 			goto retry;
@@ -3171,7 +3170,7 @@ cleanup:
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_rdatalist_to_ldapmod(isc_mem_t *mctx, dns_rdatalist_t *rdlist,
-			  LDAPMod **changep, int mod_op, isc_boolean_t unknown)
+			  LDAPMod **changep, int mod_op, bool unknown)
 {
 	isc_result_t result;
 	LDAPMod *change = NULL;
@@ -3198,12 +3197,12 @@ cleanup:
 /**
  * Convert list of DNS Rdata to array of LDAP values.
  *
- * @param[in]  unknown  ISC_TRUE  = use generic (RFC 3597) format,
- *                      ISC_FALSE = use record-specific syntax (if available).
+ * @param[in]  unknown  true  = use generic (RFC 3597) format,
+ *                      false = use record-specific syntax (if available).
  */
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
-			 isc_boolean_t unknown, char ***valsp)
+			 bool unknown, char ***valsp)
 {
 	isc_result_t result;
 	char **vals;
@@ -3231,7 +3230,7 @@ ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
 
 		/* Convert rdata to text. */
 		INIT_BUFFER(buffer);
-		if (unknown == ISC_FALSE)
+		if (unknown == false)
 			CHECK(dns_rdata_totext(rdata, NULL, &buffer));
 		else
 			CHECK(rdata_to_generic(rdata, &buffer));
@@ -3346,7 +3345,7 @@ modify_soa_record(ldap_instance_t *ldap_inst, const char *zone_dn,
 
 	dns_rdata_freestruct((void *)&soa);
 
-	result = ldap_modify_do(ldap_inst, zone_dn, changep, ISC_FALSE);
+	result = ldap_modify_do(ldap_inst, zone_dn, changep, false);
 
 cleanup:
 	return result;
@@ -3357,19 +3356,19 @@ cleanup:
 
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 modify_ldap_common(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_inst,
-		   dns_rdatalist_t *rdlist, int mod_op, isc_boolean_t delete_node)
+		   dns_rdatalist_t *rdlist, int mod_op, bool delete_node)
 {
 	isc_result_t result;
 	isc_mem_t *mctx = ldap_inst->mctx;
 	ld_string_t *owner_dn = NULL;
 	LDAPMod *change[3] = { NULL };
-	isc_boolean_t zone_sync_ptr;
+	bool zone_sync_ptr;
 	char **vals = NULL;
 	dns_name_t zone_name;
 	char *zone_dn = NULL;
 	settings_set_t *zone_settings = NULL;
 	int af; /* address family */
-	isc_boolean_t unknown_type = ISC_FALSE;
+	bool unknown_type = false;
 
 	/*
 	 * Find parent zone entry and check if Dynamic Update is allowed.
@@ -3388,7 +3387,7 @@ modify_ldap_common(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_in
 	}
 
 	CHECK(dn_to_dnsname(mctx, zone_dn, &zone_name, NULL, NULL));
-	INSIST(dns_name_equal(zone, &zone_name) == ISC_TRUE);
+	INSIST(dns_name_equal(zone, &zone_name) == true);
 
 	result = zr_get_zone_settings(ldap_inst->zone_register, &zone_name,
 				      &zone_settings);
@@ -3415,7 +3414,7 @@ modify_ldap_common(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_in
 
 	/* First, try to store data into named attribute like "URIRecord".
 	 * If that fails, try to store the data into "UnknownRecord;TYPE256". */
-	unknown_type = ISC_FALSE;
+	unknown_type = false;
 	do {
 		ldap_mod_free(mctx, &change[0]);
 		CHECK(ldap_rdatalist_to_ldapmod(mctx, rdlist, &change[0],
@@ -3423,7 +3422,7 @@ modify_ldap_common(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_in
 		result = ldap_modify_do(ldap_inst, str_buf(owner_dn), change,
 					delete_node);
 		unknown_type = !unknown_type; /* try again with unknown type */
-	} while (result == DNS_R_UNKNOWN && unknown_type == ISC_TRUE);
+	} while (result == DNS_R_UNKNOWN && unknown_type == true);
 
 	/* Keep the PTR of corresponding A/AAAA record synchronized. */
 	if (rdlist->type == dns_rdatatype_a || rdlist->type == dns_rdatatype_aaaa) {
@@ -3467,12 +3466,12 @@ cleanup:
 isc_result_t
 write_to_ldap(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_inst, dns_rdatalist_t *rdlist)
 {
-	return modify_ldap_common(owner, zone, ldap_inst, rdlist, LDAP_MOD_ADD, ISC_FALSE);
+	return modify_ldap_common(owner, zone, ldap_inst, rdlist, LDAP_MOD_ADD, false);
 }
 
 isc_result_t
 remove_values_from_ldap(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_inst,
-		 dns_rdatalist_t *rdlist, isc_boolean_t delete_node)
+		 dns_rdatalist_t *rdlist, bool delete_node)
 {
 	return modify_ldap_common(owner, zone, ldap_inst, rdlist, LDAP_MOD_DELETE,
 				  delete_node);
@@ -3489,7 +3488,7 @@ remove_rdtype_from_ldap(dns_name_t *owner, dns_name_t *zone,
 	LDAPMod *change[2] = { NULL };
 	ld_string_t *dn = NULL;
 	isc_result_t result;
-	isc_boolean_t unknown_type = ISC_FALSE;
+	bool unknown_type = false;
 
 	CHECK(str_new(ldap_inst->mctx, &dn));
 	CHECK(dnsname_to_dn(ldap_inst->zone_register, owner, zone, dn));
@@ -3503,10 +3502,10 @@ remove_rdtype_from_ldap(dns_name_t *owner, dns_name_t *zone,
 						  unknown_type));
 		CHECK(isc_string_copy(change[0]->mod_type, LDAP_ATTR_FORMATSIZE,
 				      attr));
-		CHECK(ldap_modify_do(ldap_inst, str_buf(dn), change, ISC_FALSE));
+		CHECK(ldap_modify_do(ldap_inst, str_buf(dn), change, false));
 		ldap_mod_free(ldap_inst->mctx, &change[0]);
 		unknown_type = !unknown_type;
-	} while (unknown_type == ISC_TRUE);
+	} while (unknown_type == true);
 
 cleanup:
 	ldap_mod_free(ldap_inst->mctx, &change[0]);
@@ -3533,7 +3532,7 @@ remove_entry_from_ldap(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *lda
 		 * successful
 		 * TODO: handle this case inside ldap_pool_getconnection()?
 		 */
-		CHECK(ldap_connect(ldap_inst, ldap_conn, ISC_FALSE));
+		CHECK(ldap_connect(ldap_inst, ldap_conn, false));
 	}
 	ret = ldap_delete_ext_s(ldap_conn->handle, str_buf(dn), NULL, NULL);
 	result = (ret == LDAP_SUCCESS) ? ISC_R_SUCCESS : ISC_R_FAILURE;
@@ -3669,7 +3668,7 @@ ldap_pool_connect(ldap_pool_t *pool, ldap_instance_t *ldap_inst)
 	for (i = 0; i < pool->connections; i++) {
 		ldap_conn = NULL;
 		CHECK(new_ldap_connection(pool, &ldap_conn));
-		result = ldap_connect(ldap_inst, ldap_conn, ISC_FALSE);
+		result = ldap_connect(ldap_inst, ldap_conn, false);
 		/* Continue even if LDAP server is down */
 		if (result != ISC_R_NOTCONNECTED && result != ISC_R_TIMEDOUT &&
 		    result != ISC_R_SUCCESS) {
@@ -3726,7 +3725,7 @@ update_zone(isc_task_t *task, isc_event_t *event)
 	INSIST(task == inst->task); /* For task-exclusive mode */
 
 	if (SYNCREPL_DEL(pevent->chgtype)) {
-		CHECK(ldap_delete_zone2(inst, &entry->fqdn, ISC_TRUE));
+		CHECK(ldap_delete_zone2(inst, &entry->fqdn, true));
 	} else {
 		if (entry->class & LDAP_ENTRYCLASS_MASTER)
 			CHECK(ldap_parse_master_zoneentry(entry, NULL, inst,
@@ -3836,8 +3835,8 @@ update_record(isc_task_t *task, isc_event_t *event)
 	settings_set_t *zone_settings = NULL;
 	dns_zone_t *raw = NULL;
 	dns_zone_t *secure = NULL;
-	isc_boolean_t zone_found = ISC_FALSE;
-	isc_boolean_t zone_reloaded = ISC_FALSE;
+	bool zone_found = false;
+	bool zone_reloaded = false;
 	isc_uint32_t serial;
 	ldap_entry_t *entry = pevent->entry;
 
@@ -3870,7 +3869,7 @@ update_record(isc_task_t *task, isc_event_t *event)
 
 	REQUIRE(inst != NULL);
 	CHECK(zr_get_zone_ptr(inst->zone_register, &entry->zone_name, &raw, &secure));
-	zone_found = ISC_TRUE;
+	zone_found = true;
 
 update_restart:
 	rbtdb = NULL;
@@ -3880,7 +3879,7 @@ update_restart:
 	CHECK(zr_get_zone_dbs(inst->zone_register, &entry->zone_name, &ldapdb, &rbtdb));
 	CHECK(dns_db_newversion(ldapdb, &version));
 
-	CHECK(dns_db_findnode(rbtdb, &entry->fqdn, ISC_TRUE, &node));
+	CHECK(dns_db_findnode(rbtdb, &entry->fqdn, true, &node));
 	result = dns_db_allrdatasets(rbtdb, node, version, 0, &rbt_rds_iterator);
 	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND)
 		goto cleanup;
@@ -3967,7 +3966,7 @@ update_restart:
 		}
 		/* commit */
 		CHECK(dns_diff_apply(&diff, rbtdb, version));
-		dns_db_closeversion(ldapdb, &version, ISC_TRUE);
+		dns_db_closeversion(ldapdb, &version, true);
 		dns_zone_markdirty(raw);
 	}
 
@@ -3989,7 +3988,7 @@ cleanup:
 		dns_db_detachnode(rbtdb, &node);
 	/* rollback */
 	if (rbtdb != NULL && version != NULL)
-		dns_db_closeversion(ldapdb, &version, ISC_FALSE);
+		dns_db_closeversion(ldapdb, &version, false);
 	if (rbtdb != NULL)
 		dns_db_detach(&rbtdb);
 	if (ldapdb != NULL)
@@ -4001,16 +4000,16 @@ cleanup:
 			     "reload triggered by change in %s",
 			     ldap_entry_logname(entry));
 		if (secure != NULL)
-			result = load_zone(secure, ISC_TRUE);
+			result = load_zone(secure, true);
 		else if (raw != NULL)
-			result = load_zone(raw, ISC_TRUE);
+			result = load_zone(raw, true);
 		if (result == ISC_R_SUCCESS || result == DNS_R_UPTODATE ||
 		    result == DNS_R_DYNAMIC || result == DNS_R_CONTINUE) {
 			/* zone reload succeeded, fire current event again */
 			log_debug(1, "restarting update_record after zone reload "
 				     "caused by change in %s",
 				     ldap_entry_logname(entry));
-			zone_reloaded = ISC_TRUE;
+			zone_reloaded = true;
 			result = dns_zone_getserial2(raw, &serial);
 			if (result == ISC_R_SUCCESS)
 				goto update_restart;
@@ -4050,7 +4049,7 @@ cleanup:
 
 isc_result_t
 ldap_dn_compare(const char *dn1_instr, const char *dn2_instr,
-		isc_boolean_t *isequal) {
+		bool *isequal) {
 	int ret;
 	isc_result_t result;
 	LDAPDN dn1_ldap = NULL;
@@ -4074,7 +4073,7 @@ ldap_dn_compare(const char *dn1_instr, const char *dn2_instr,
 	if (ret != LDAP_SUCCESS)
 		CLEANUP_WITH(ISC_R_FAILURE);
 
-	*isequal = ISC_TF(strcasecmp(dn1_outstr, dn2_outstr) == 0);
+	*isequal = (strcasecmp(dn1_outstr, dn2_outstr) == 0);
 	result = ISC_R_SUCCESS;
 
 cleanup:
@@ -4111,7 +4110,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 	dns_zone_t *zone_ptr = NULL;
 	isc_taskaction_t action = NULL;
 	isc_task_t *task = NULL;
-	isc_boolean_t synchronous;
+	bool synchronous;
 
 	REQUIRE(inst != NULL);
 	REQUIRE(entryp != NULL);
@@ -4135,12 +4134,12 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 		CHECK(zr_get_zone_ptr(inst->zone_register, zone_name,
 				      &zone_ptr, NULL));
 		dns_zone_gettask(zone_ptr, &task);
-		synchronous = ISC_FALSE;
+		synchronous = false;
 	} else {
 		/* For configuration object and zone object use single task
 		 * to make sure that the exclusive mode actually works. */
 		isc_task_attach(inst->task, &task);
-		synchronous = ISC_TRUE;
+		synchronous = true;
 	}
 	REQUIRE(task != NULL);
 
@@ -4216,9 +4215,9 @@ cleanup:
 /*
  * This "sane" sleep allows us to end if signal set the "exiting" variable.
  *
- * Returns ISC_FALSE if we should terminate, ISC_TRUE otherwise.
+ * Returns false if we should terminate, true otherwise.
  */
-static inline isc_boolean_t ATTR_NONNULLS
+static inline bool ATTR_NONNULLS
 sane_sleep(const ldap_instance_t *inst, unsigned int timeout)
 {
 	unsigned int remains = timeout;
@@ -4229,7 +4228,7 @@ sane_sleep(const ldap_instance_t *inst, unsigned int timeout)
 	if (remains)
 		log_debug(99, "sane_sleep: interrupted");
 
-	return inst->exiting ? ISC_FALSE : ISC_TRUE;
+	return inst->exiting ? false : true;
 }
 
 /* No-op signal handler for SIGUSR1 */
@@ -4245,7 +4244,7 @@ install_usr1handler(void)
 	struct sigaction sa;
 	struct sigaction oldsa;
 	int ret;
-	static isc_boolean_t once = ISC_FALSE;
+	static bool once = false;
 
 	if (once)
 		return;
@@ -4259,7 +4258,7 @@ install_usr1handler(void)
 	/* Don't attempt to replace already existing handler */
 	RUNTIME_CHECK(oldsa.sa_handler == NULL);
 
-	once = ISC_TRUE;
+	once = true;
 }
 
 /*
@@ -4296,8 +4295,8 @@ int ldap_sync_search_entry (
 	ldap_entry_t *new_entry = NULL;
 	isc_result_t result;
 	metadb_node_t *node = NULL;
-	isc_boolean_t mldap_open = ISC_FALSE;
-	isc_boolean_t modrdn = ISC_FALSE;
+	bool mldap_open = false;
+	bool modrdn = false;
 
 #ifdef RBTDB_DEBUG
 	static unsigned int count = 0;
@@ -4307,7 +4306,7 @@ int ldap_sync_search_entry (
 		return LDAP_SUCCESS;
 
 	CHECK(mldap_newversion(inst->mldapdb));
-	mldap_open = ISC_TRUE;
+	mldap_open = true;
 
 	CHECK(sync_concurr_limit_wait(inst->sctx));
 	log_debug(20, "ldap_sync_search_entry phase: %x", phase);
@@ -4335,7 +4334,7 @@ int ldap_sync_search_entry (
 						  &new_entry->zone_name)
 				   && dns_name_equal(&old_entry->fqdn,
 						     &new_entry->fqdn));
-		if (modrdn == ISC_TRUE) {
+		if (modrdn == true) {
 			log_debug(1, "detected entry rename: %s -> %s",
 				  ldap_entry_logname(old_entry),
 				  ldap_entry_logname(new_entry));
@@ -4346,7 +4345,7 @@ int ldap_sync_search_entry (
 					ldap_entry_logname(new_entry));
 		}
 	}
-	if (phase == LDAP_SYNC_CAPI_DELETE || modrdn == ISC_TRUE) {
+	if (phase == LDAP_SYNC_CAPI_DELETE || modrdn == true) {
 		/* delete old entry from zone and metaDB */
 		CHECK(syncrepl_update(inst, &old_entry, LDAP_SYNC_CAPI_DELETE));
 		CHECK(mldap_entry_delete(inst->mldapdb, entryUUID));
@@ -4361,11 +4360,11 @@ int ldap_sync_search_entry (
 						  &new_entry->zone_name, node));
 		/* commit new entry into metaLDAP DB before something breaks */
 		metadb_node_close(&node);
-		mldap_closeversion(inst->mldapdb, ISC_TRUE);
-		mldap_open = ISC_FALSE;
+		mldap_closeversion(inst->mldapdb, true);
+		mldap_open = false;
 		/* re-add entry under new DN, if necessary */
 		CHECK(syncrepl_update(inst, &new_entry,
-		                      (modrdn == ISC_TRUE)
+		                      (modrdn == true)
 					      ? LDAP_SYNC_CAPI_ADD : phase));
 	}
 	if (phase != LDAP_SYNC_CAPI_ADD && phase != LDAP_SYNC_CAPI_MODIFY &&
@@ -4382,9 +4381,9 @@ int ldap_sync_search_entry (
 
 cleanup:
 	metadb_node_close(&node);
-	if (mldap_open == ISC_TRUE)
+	if (mldap_open == true)
 		/* commit metaDB changes if the syncrepl event was sent */
-		mldap_closeversion(inst->mldapdb, ISC_TF(result == ISC_R_SUCCESS));
+		mldap_closeversion(inst->mldapdb, (result == ISC_R_SUCCESS));
 	if (result != ISC_R_SUCCESS) {
 		log_error_r("ldap_sync_search_entry failed");
 		sync_concurr_limit_signal(inst->sctx);
@@ -4717,7 +4716,7 @@ ldap_syncrepl_watcher(isc_threadarg_t arg)
 			goto retry;
 		}
 
-		result = ldap_connect(inst, conn, ISC_TRUE);
+		result = ldap_connect(inst, conn, true);
 		if (result != ISC_R_SUCCESS) {
 			log_error_r("reconnection to LDAP failed");
 			goto retry;
@@ -4756,7 +4755,7 @@ retry:
 				  reconnect_interval == 1 ? "": "s");
 			if (!sane_sleep(inst, reconnect_interval))
 				CLEANUP_WITH(ISC_R_SHUTTINGDOWN);
-			handle_connection_error(inst, conn, ISC_TRUE);
+			handle_connection_error(inst, conn, true);
 		}
 
 	}
@@ -4810,7 +4809,7 @@ ldap_instance_attachmem(ldap_instance_t *ldap_inst, isc_mem_t **mctx)
 	isc_mem_attach(ldap_inst->mctx, mctx);
 }
 
-isc_boolean_t
+bool
 ldap_instance_isexiting(ldap_instance_t *ldap_inst)
 {
 	return ldap_inst->exiting;
@@ -4825,9 +4824,9 @@ ldap_instance_taint(ldap_instance_t *ldap_inst) {
 	isc_refcount_increment0(&ldap_inst->errors, NULL);
 }
 
-isc_boolean_t
+bool
 ldap_instance_istained(ldap_instance_t *ldap_inst) {
-	return ISC_TF(isc_refcount_current(&ldap_inst->errors) != 0);
+	return (isc_refcount_current(&ldap_inst->errors) != 0);
 }
 
 /**

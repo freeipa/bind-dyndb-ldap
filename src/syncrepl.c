@@ -145,7 +145,7 @@ finish(isc_task_t *task, isc_event_t *event) {
 				    "sync_barrier_wait(): invalid state "
 				    "%u", bev->sctx->state);
 	}
-	sync_state_change(bev->sctx, new_state, ISC_FALSE);
+	sync_state_change(bev->sctx, new_state, false);
 	BROADCAST(&bev->sctx->cond);
 	UNLOCK(&bev->sctx->mutex);
 	if (new_state == sync_finished)
@@ -203,7 +203,7 @@ barrier_decrement(isc_task_t *task, isc_event_t *event) {
 	sync_barrierev_t *fev = NULL;
 	isc_event_t *ev = NULL;
 	isc_uint32_t cnt;
-	isc_boolean_t locked = ISC_FALSE;
+	bool locked = false;
 
 	REQUIRE(ISCAPI_TASK_VALID(task));
 	REQUIRE(event != NULL);
@@ -213,7 +213,7 @@ barrier_decrement(isc_task_t *task, isc_event_t *event) {
 	if (cnt == 0) {
 		log_debug(1, "sync_barrier_wait(): barrier reached");
 		LOCK(&bev->sctx->mutex);
-		locked = ISC_TRUE;
+		locked = true;
 		CHECK(sync_finishev_create(bev->sctx, bev->inst, &fev));
 		ev = (isc_event_t *)fev;
 		isc_task_send(ldap_instance_gettask(bev->sctx->inst), &ev);
@@ -265,9 +265,9 @@ isc_result_t
 sync_ctx_init(isc_mem_t *mctx, ldap_instance_t *inst, sync_ctx_t **sctxp) {
 	isc_result_t result;
 	sync_ctx_t *sctx = NULL;
-	isc_boolean_t lock_ready = ISC_FALSE;
-	isc_boolean_t cond_ready = ISC_FALSE;
-	isc_boolean_t refcount_ready = ISC_FALSE;
+	bool lock_ready = false;
+	bool cond_ready = false;
+	bool refcount_ready = false;
 
 	REQUIRE(sctxp != NULL && *sctxp == NULL);
 
@@ -278,13 +278,13 @@ sync_ctx_init(isc_mem_t *mctx, ldap_instance_t *inst, sync_ctx_t **sctxp) {
 	sctx->inst = inst;
 
 	CHECK(isc_mutex_init(&sctx->mutex));
-	lock_ready = ISC_TRUE;
+	lock_ready = true;
 	CHECK(isc_condition_init(&sctx->cond));
-	cond_ready = ISC_TRUE;
+	cond_ready = true;
 
 	/* refcount includes ldap_inst->task implicitly */
 	CHECK(isc_refcount_init(&sctx->task_cnt, 0));
-	refcount_ready = ISC_TRUE;
+	refcount_ready = true;
 
 	ISC_LIST_INIT(sctx->tasks);
 
@@ -297,12 +297,12 @@ sync_ctx_init(isc_mem_t *mctx, ldap_instance_t *inst, sync_ctx_t **sctxp) {
 	return ISC_R_SUCCESS;
 
 cleanup:
-	if (lock_ready == ISC_TRUE)
+	if (lock_ready == true)
 		DESTROYLOCK(&sctx->mutex);
-	if (cond_ready == ISC_TRUE)
+	if (cond_ready == true)
 		RUNTIME_CHECK(isc_condition_destroy(&sctx->cond)
 			      == ISC_R_SUCCESS);
-	if (refcount_ready == ISC_TRUE)
+	if (refcount_ready == true)
 		isc_refcount_destroy(&sctx->task_cnt);
 	MEM_PUT_AND_DETACH(sctx);
 	return result;
@@ -357,14 +357,14 @@ sync_state_get(sync_ctx_t *sctx, sync_state_t *statep) {
  *                 support recursive mutexes in ISC mutex API.
  *
  * @warning Caller has to ensure that sctx is properly locked either externally
- *          or by lock = ISC_TRUE parameter. Attempt to lock sctx recursively
+ *          or by lock = true parameter. Attempt to lock sctx recursively
  *          will lead to deadlock.
  */
 void
-sync_state_change(sync_ctx_t *sctx, sync_state_t new_state, isc_boolean_t lock) {
+sync_state_change(sync_ctx_t *sctx, sync_state_t new_state, bool lock) {
 	REQUIRE(sctx != NULL);
 
-	if (lock == ISC_TRUE)
+	if (lock == true)
 		LOCK(&sctx->mutex);
 
 	switch (sctx->state) {
@@ -399,7 +399,7 @@ sync_state_change(sync_ctx_t *sctx, sync_state_t new_state, isc_boolean_t lock) 
 
 	sctx->state = new_state;
 	log_debug(1, "sctx state %u reached", new_state);
-	if (lock == ISC_TRUE)
+	if (lock == true)
 		UNLOCK(&sctx->mutex);
 }
 
@@ -513,7 +513,7 @@ sync_barrier_wait(sync_ctx_t *sctx, ldap_instance_t *inst) {
 				    "%u", sctx->state);
 	}
 
-	sync_state_change(sctx, barrier_state, ISC_FALSE);
+	sync_state_change(sctx, barrier_state, false);
 	for (taskel = next_taskel = HEAD(sctx->tasks);
 	     taskel != NULL;
 	     taskel = next_taskel) {
@@ -553,7 +553,7 @@ sync_concurr_limit_wait(sync_ctx_t *sctx) {
 
 	REQUIRE(sctx != NULL);
 
-	while (ldap_instance_isexiting(sctx->inst) == ISC_FALSE) {
+	while (ldap_instance_isexiting(sctx->inst) == false) {
 		result = isc_time_nowplusinterval(&abs_timeout,
 						  &shutdown_timeout);
 		INSIST(result == ISC_R_SUCCESS);
@@ -590,22 +590,22 @@ sync_concurr_limit_signal(sync_ctx_t *sctx) {
  */
 isc_result_t
 sync_event_send(sync_ctx_t *sctx, isc_task_t *task, ldap_syncreplevent_t **ev,
-		isc_boolean_t synchronous) {
+		bool synchronous) {
 	isc_result_t result;
 	isc_time_t abs_timeout;
 	isc_uint32_t seqid;
-	isc_boolean_t locked = ISC_FALSE;
+	bool locked = false;
 
 	REQUIRE(sctx != NULL);
 
 	LOCK(&sctx->mutex);
-	locked = ISC_TRUE;
+	locked = true;
 	/* overflow is not a problem as long as the modulo is smaller than
 	 * constant used by sync_concurr_limit_wait() */
 	(*ev)->seqid = seqid = ++sctx->next_id % 0xffffffff;
 	isc_task_send(task, (isc_event_t **)ev);
-	while (synchronous == ISC_TRUE && sctx->last_id != seqid) {
-		if (ldap_instance_isexiting(sctx->inst) == ISC_TRUE)
+	while (synchronous == true && sctx->last_id != seqid) {
+		if (ldap_instance_isexiting(sctx->inst) == true)
 			CLEANUP_WITH(ISC_R_SHUTTINGDOWN);
 
 		result = isc_time_nowplusinterval(&abs_timeout, &shutdown_timeout);
@@ -617,7 +617,7 @@ sync_event_send(sync_ctx_t *sctx, isc_task_t *task, ldap_syncreplevent_t **ev,
 	result = ISC_R_SUCCESS;
 
 cleanup:
-	if (locked == ISC_TRUE)
+	if (locked == true)
 		UNLOCK(&sctx->mutex);
 	return result;
 }

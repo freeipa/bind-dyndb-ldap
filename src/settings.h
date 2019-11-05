@@ -6,7 +6,6 @@
 #define _LD_SETTINGS_H_
 
 #include <isc/types.h>
-#include <isc/boolean.h>
 #include <isc/int.h>
 
 #include <isccfg/grammar.h>
@@ -35,10 +34,10 @@ struct setting {
 	union {
 		char		*value_char;
 		isc_uint32_t	value_uint;
-		isc_boolean_t	value_boolean;
+		bool	value_boolean;
 	} value;
-	isc_boolean_t	filled;
-	isc_boolean_t	is_dynamic;
+	bool	filled;
+	bool	is_dynamic;
 };
 
 struct settings_set {
@@ -61,13 +60,13 @@ struct settings_set {
  *         "name", no_default_string, &target_variable
  * }
  */
-#define default_string(val)	ST_STRING, { .value_char = (val) }, ISC_TRUE, ISC_FALSE
-#define default_uint(val)	ST_UNSIGNED_INTEGER, { .value_uint = (val) }, ISC_TRUE, ISC_FALSE
-#define default_boolean(val)	ST_BOOLEAN, { .value_boolean = (val) }, ISC_TRUE, ISC_FALSE
+#define default_string(val)	ST_STRING, { .value_char = (val) }, true, false
+#define default_uint(val)	ST_UNSIGNED_INTEGER, { .value_uint = (val) }, true, false
+#define default_boolean(val)	ST_BOOLEAN, { .value_boolean = (val) }, true, false
 /* No defaults. */
-#define no_default_string	ST_STRING, { .value_char = NULL }, ISC_FALSE, ISC_FALSE
-#define no_default_uint		ST_UNSIGNED_INTEGER, { .value_uint = 0 }, ISC_FALSE, ISC_FALSE
-#define no_default_boolean	ST_BOOLEAN, { .value_boolean = ISC_FALSE }, ISC_FALSE, ISC_FALSE
+#define no_default_string	ST_STRING, { .value_char = NULL }, false, false
+#define no_default_uint		ST_UNSIGNED_INTEGER, { .value_uint = 0 }, false, false
+#define no_default_boolean	ST_BOOLEAN, { .value_boolean = false }, false, false
 
 /* This is used in the end of setting_t arrays. */
 #define end_of_settings	{ NULL, default_uint(0) }
@@ -90,12 +89,12 @@ setting_set_parse_conf(isc_mem_t *mctx, const char *name,
 		       const char *file, unsigned long line,
 		       settings_set_t *settings) ATTR_NONNULLS ATTR_CHECKRESULT;
 
-isc_boolean_t
+bool
 settings_set_isfilled(settings_set_t *set) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
 setting_find(const char *name, const settings_set_t *set,
-	     isc_boolean_t recursive, isc_boolean_t filled_only,
+	     bool recursive, bool filled_only,
 	     setting_t **found) ATTR_CHECKRESULT;
 
 isc_result_t
@@ -108,7 +107,7 @@ setting_get_str(const char * const name, const settings_set_t * const set,
 
 isc_result_t
 setting_get_bool(const char * const name, const settings_set_t * const set,
-		 isc_boolean_t * target) ATTR_NONNULLS ATTR_CHECKRESULT;
+		 bool * target) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
 setting_set(const char *const name, const settings_set_t *set,

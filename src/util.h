@@ -7,7 +7,6 @@
 
 #include <string.h>
 
-#include <isc/boolean.h>
 #include <isc/mem.h>
 #include <isc/buffer.h>
 #include <isc/result.h>
@@ -17,7 +16,7 @@
 
 #include "log.h"
 
-extern isc_boolean_t verbose_checks; /* from settings.c */
+extern bool verbose_checks; /* from settings.c */
 
 #define CLEANUP_WITH(result_code)				\
 	do {							\
@@ -29,7 +28,7 @@ extern isc_boolean_t verbose_checks; /* from settings.c */
 	do {							\
 		result = (op);					\
 		if (result != ISC_R_SUCCESS) {			\
-			if (verbose_checks == ISC_TRUE)		\
+			if (verbose_checks == true)		\
 				log_error_position("check failed: %s",		\
 						   dns_result_totext(result));	\
 			goto cleanup;				\

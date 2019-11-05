@@ -7,7 +7,6 @@
 
 #include "types.h"
 
-#include <isc/boolean.h>
 #include <isc/eventclass.h>
 #include <isc/util.h>
 #include <isccfg/cfg.h>
@@ -48,7 +47,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name, const char *parameters,
 void destroy_ldap_instance(ldap_instance_t **ldap_inst) ATTR_NONNULLS;
 
 isc_result_t
-ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, isc_boolean_t lock)
+ldap_delete_zone2(ldap_instance_t *inst, dns_name_t *name, bool lock)
 		  ATTR_NONNULLS;
 
 /* Functions for writing to LDAP. */
@@ -57,7 +56,7 @@ isc_result_t write_to_ldap(dns_name_t *owner, dns_name_t *zone, ldap_instance_t 
 
 isc_result_t
 remove_values_from_ldap(dns_name_t *owner, dns_name_t *zone, ldap_instance_t *ldap_inst,
-		dns_rdatalist_t *rdlist, isc_boolean_t delete_node) ATTR_NONNULLS;
+		dns_rdatalist_t *rdlist, bool delete_node) ATTR_NONNULLS;
 
 isc_result_t
 remove_rdtype_from_ldap(dns_name_t *owner, dns_name_t *zone,
@@ -72,7 +71,7 @@ ldap_mod_create(isc_mem_t *mctx, LDAPMod **changep);
 
 isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_modify_do(ldap_instance_t *ldap_inst, const char *dn, LDAPMod **mods,
-		isc_boolean_t delete_node);
+		bool delete_node);
 
 void ATTR_NONNULLS
 ldap_mod_free(isc_mem_t *mctx, LDAPMod **changep);
@@ -89,7 +88,7 @@ isc_result_t activate_zones(isc_task_t *task, ldap_instance_t *inst) ATTR_NONNUL
 
 isc_task_t * ldap_instance_gettask(ldap_instance_t *ldap_inst);
 
-isc_boolean_t ldap_instance_isexiting(ldap_instance_t *ldap_inst) ATTR_NONNULLS ATTR_CHECKRESULT;
+bool ldap_instance_isexiting(ldap_instance_t *ldap_inst) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 void ldap_instance_taint(ldap_instance_t *ldap_inst) ATTR_NONNULLS;
 

@@ -163,7 +163,7 @@ zr_destroy(zone_register_t **zrp)
 		if (result == ISC_R_SUCCESS) {
 			rbt_iter_stop(&iter);
 			result = ldap_delete_zone2(zr->ldap_inst,
-						   &name, ISC_FALSE);
+						   &name, false);
 			RUNTIME_CHECK(result == ISC_R_SUCCESS);
 		}
 	} while (result == ISC_R_SUCCESS);
@@ -221,7 +221,7 @@ zr_get_zone_path(isc_mem_t *mctx, settings_set_t *settings,
 
 	isc_buffer_init(&name_buf, name_char, sizeof(name_char));
 	CHECK(str_new(mctx, &zone_path));
-	CHECK(dns_name_tofilenametext(zone_name, ISC_TRUE, &name_buf));
+	CHECK(dns_name_tofilenametext(zone_name, true, &name_buf));
 	INSIST(isc_buffer_usedlength(&name_buf) > 0);
 
 	/* Root zone is special case: replace '.' with '@'
@@ -418,7 +418,7 @@ zr_del_zone(zone_register_t *zr, dns_name_t *origin)
 
 	RWLOCK(&zr->rwlock, isc_rwlocktype_write);
 
-	CHECK(dns_rbt_deletename(zr->rbt, origin, ISC_FALSE));
+	CHECK(dns_rbt_deletename(zr->rbt, origin, false));
 
 cleanup:
 	RWUNLOCK(&zr->rwlock, isc_rwlocktype_write);
@@ -601,21 +601,21 @@ delete_bind_zone(dns_zt_t *zt, dns_zone_t **zonep) {
 }
 
 /* Test if the existing zone is 'empty zone' per RFC 6303. */
-isc_boolean_t ATTR_NONNULLS ATTR_CHECKRESULT
+bool ATTR_NONNULLS ATTR_CHECKRESULT
 zone_isempty(dns_zone_t *zone) {
 	char **argv = NULL;
 	isc_mem_t *mctx = NULL;
-	isc_boolean_t result = ISC_FALSE;
+	bool result = false;
 
 	mctx = dns_zone_getmctx(zone);
 	if (dns_zone_getdbtype(zone, &argv, mctx) != ISC_R_SUCCESS)
-		CLEANUP_WITH(ISC_FALSE);
+		CLEANUP_WITH(false);
 
 	if (argv[0] != NULL && strcmp("_builtin", argv[0]) == 0 &&
 	    argv[1] != NULL && strcmp("empty", argv[1]) == 0) {
-		result = ISC_TRUE;
+		result = true;
 	} else {
-		result = ISC_FALSE;
+		result = false;
 	}
 	isc_mem_free(mctx, argv);
 

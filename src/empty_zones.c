@@ -153,7 +153,7 @@ empty_zone_search_next(empty_zone_search_t *iter) {
 	int order;
 	unsigned int nlabels;
 	dns_zone_t *zone = NULL;
-	isc_boolean_t isempty;
+	bool isempty;
 
 	REQUIRE(iter != NULL);
 	REQUIRE(iter->nextidx < sizeof(empty_zones));
@@ -184,12 +184,12 @@ empty_zone_search_next(empty_zone_search_t *iter) {
 				isempty = zone_isempty(zone);
 			else if (result == DNS_R_PARTIALMATCH
 				 || result == ISC_R_NOTFOUND)
-				isempty = ISC_FALSE;
+				isempty = false;
 			else
 				goto cleanup;
 			if (zone != NULL)
 				dns_zone_detach(&zone);
-			if (isempty == ISC_FALSE)
+			if (isempty == false)
 				continue;
 			++iter->nextidx;
 			CLEANUP_WITH(ISC_R_SUCCESS);
@@ -299,10 +299,10 @@ cleanup:
  */
 isc_result_t
 empty_zone_handle_conflicts(dns_name_t *name, dns_zt_t *zonetable,
-			    isc_boolean_t warn_only)
+			    bool warn_only)
 {
 	isc_result_t result;
-	isc_boolean_t first = ISC_TRUE;
+	bool first = true;
 	empty_zone_search_t eziter = {}; /* init with zeroes */
 	char name_char[DNS_NAME_FORMATSIZE];
 	char ezname_char[DNS_NAME_FORMATSIZE];
@@ -312,7 +312,7 @@ empty_zone_handle_conflicts(dns_name_t *name, dns_zt_t *zonetable,
 	     result = empty_zone_search_next(&eziter))
 	{
 		dns_name_format(name, name_char, DNS_NAME_FORMATSIZE);
-		if (warn_only == ISC_TRUE) {
+		if (warn_only == true) {
 			dns_name_format(&eziter.ezname, ezname_char,
 					DNS_NAME_FORMATSIZE);
 			log_warn("ignoring inherited 'forward first;' for zone "
@@ -325,10 +325,10 @@ empty_zone_handle_conflicts(dns_name_t *name, dns_zt_t *zonetable,
 		/* Shutdown automatic empty zone if it is present. */
 		result = empty_zone_unload(&eziter.ezname, zonetable);
 		if (result == ISC_R_SUCCESS) {
-			if (first == ISC_TRUE) {
+			if (first == true) {
 				log_info("shutting down automatic empty zones to "
 					 "enable forwarding for domain '%s'", name_char);
-				first = ISC_FALSE;
+				first = false;
 			}
 		} else if (result == DNS_R_DISALLOWED) {
 			/* A normal (non-empty) zone exists:

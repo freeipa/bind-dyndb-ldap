@@ -28,11 +28,11 @@
  */
 isc_result_t dn_to_dnsname(isc_mem_t *mctx, const char *dn,
 			   dns_name_t *target, dns_name_t *origin,
-			   isc_boolean_t *iszone)
+			   bool *iszone)
 			   ATTR_NONNULL(1, 2, 3) ATTR_CHECKRESULT;
 
 isc_result_t dn_want_zone(const char * const prefix, const char * const dn,
-			  isc_boolean_t dniszone, isc_boolean_t classiszone)
+			  bool dniszone, bool classiszone)
 			  ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t dnsname_to_dn(zone_register_t *zr, dns_name_t *name, dns_name_t *zone,
@@ -43,7 +43,7 @@ isc_result_t ldap_attribute_to_rdatatype(const char *ldap_record,
 
 isc_result_t
 rdatatype_to_ldap_attribute(dns_rdatatype_t rdtype, char *target,
-			    unsigned int size, isc_boolean_t unknown)
+			    unsigned int size, bool unknown)
 			    ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t

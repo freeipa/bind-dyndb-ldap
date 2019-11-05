@@ -141,7 +141,7 @@ free_ldapdb(ldapdb_t *ldapdb)
 			      dns_masterformat_text);
 	log_info("dump to '%s' finished: %s", str_buf(file_name),
 		 isc_result_totext(result));
-	dns_db_closeversion(ldapdb->rbtdb, &version, ISC_FALSE);
+	dns_db_closeversion(ldapdb->rbtdb, &version, false);
 
 cleanup:
 	if (result != ISC_R_SUCCESS) {
@@ -267,7 +267,7 @@ currentversion(dns_db_t *db, dns_dbversion_t **versionp)
 
 cleanup:
 	if (newversion != NULL)
-		dns_db_closeversion(ldapdb, &newversion, ISC_TRUE);
+		dns_db_closeversion(ldapdb, &newversion, true);
    @endverbatim
  */
 static isc_result_t
@@ -307,7 +307,7 @@ attachversion(dns_db_t *db, dns_dbversion_t *source,
  * @see newversion for related warnings and examples.
  */
 static void
-closeversion(dns_db_t *db, dns_dbversion_t **versionp, isc_boolean_t commit)
+closeversion(dns_db_t *db, dns_dbversion_t **versionp, bool commit)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *)db;
 	dns_dbversion_t *closed_version = *versionp;
@@ -322,7 +322,7 @@ closeversion(dns_db_t *db, dns_dbversion_t **versionp, isc_boolean_t commit)
 }
 
 static isc_result_t
-findnode(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
+findnode(dns_db_t *db, dns_name_t *name, bool create,
 	 dns_dbnode_t **nodep)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
@@ -467,7 +467,7 @@ cleanup:
 
 static isc_result_t
 node_isempty(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
-	     isc_stdtime_t now, isc_boolean_t *isempty) {
+	     isc_stdtime_t now, bool *isempty) {
 	dns_rdatasetiter_t *rds_iter = NULL;
 	dns_fixedname_t fname;
 	char buff[DNS_NAME_FORMATSIZE];
@@ -479,14 +479,14 @@ node_isempty(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 
 	result = dns_db_allrdatasets(db, node, version, now, &rds_iter);
 	if (result == ISC_R_NOTFOUND) {
-		*isempty = ISC_TRUE;
+		*isempty = true;
 	} else if (result == ISC_R_SUCCESS) {
 		result = dns_rdatasetiter_first(rds_iter);
 		if (result == ISC_R_NOMORE) {
-			*isempty = ISC_TRUE;
+			*isempty = true;
 			result = ISC_R_SUCCESS;
 		} else if (result == ISC_R_SUCCESS) {
-			*isempty = ISC_FALSE;
+			*isempty = false;
 			result = ISC_R_SUCCESS;
 		} else if (result != ISC_R_SUCCESS) {
 			dns_name_format(dns_fixedname_name(&fname),
@@ -516,7 +516,7 @@ subtractrdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	dns_fixedname_t fname;
 	dns_name_t *zname = NULL;
 	dns_rdatalist_t *rdlist = NULL;
-	isc_boolean_t empty_node = ISC_FALSE;
+	bool empty_node = false;
 	isc_result_t substract_result;
 	isc_result_t result;
 
@@ -561,7 +561,7 @@ deleterdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
 	dns_fixedname_t fname;
 	dns_name_t *zname = NULL;
-	isc_boolean_t empty_node;
+	bool empty_node;
 	isc_result_t result;
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
@@ -580,7 +580,7 @@ deleterdataset(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	CHECK(node_isempty(ldapdb->rbtdb, node, version, 0, &empty_node));
 	CHECK(ldapdb_name_fromnode(node, dns_fixedname_name(&fname)));
 
-	if (empty_node == ISC_TRUE) {
+	if (empty_node == true) {
 		CHECK(remove_entry_from_ldap(dns_fixedname_name(&fname), zname,
 					     ldapdb->ldap_inst));
 	} else {
@@ -592,7 +592,7 @@ cleanup:
 	return result;
 }
 
-static isc_boolean_t
+static bool
 issecure(dns_db_t *db)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
@@ -618,16 +618,16 @@ nodecount(dns_db_t *db)
  *
  * !!! This could be required for optimizations (like on-disk cache).
  */
-static isc_boolean_t
+static bool
 ispersistent(dns_db_t *db)
 {
 	UNUSED(db);
 
-	return ISC_TRUE;
+	return true;
 }
 
 static void
-overmem(dns_db_t *db, isc_boolean_t overmem)
+overmem(dns_db_t *db, bool overmem)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
 
@@ -683,7 +683,7 @@ getnsec3parameters(dns_db_t *db, dns_dbversion_t *version,
 }
 
 static isc_result_t
-findnsec3node(dns_db_t *db, dns_name_t *name, isc_boolean_t create,
+findnsec3node(dns_db_t *db, dns_name_t *name, bool create,
 	      dns_dbnode_t **nodep)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
@@ -724,7 +724,7 @@ resigned(dns_db_t *db, dns_rdataset_t *rdataset,
 	dns_db_resigned(ldapdb->rbtdb, rdataset, version);
 }
 
-static isc_boolean_t
+static bool
 isdnssec(dns_db_t *db)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
@@ -766,7 +766,7 @@ rpz_ready(dns_db_t *db)
 
 static isc_result_t
 findnodeext(dns_db_t *db, dns_name_t *name,
-		   isc_boolean_t create, dns_clientinfomethods_t *methods,
+		   bool create, dns_clientinfomethods_t *methods,
 		   dns_clientinfo_t *clientinfo, dns_dbnode_t **nodep)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
@@ -950,7 +950,7 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 {
 	ldapdb_t *ldapdb = NULL;
 	isc_result_t result;
-	isc_boolean_t lock_ready = ISC_FALSE;
+	bool lock_ready = false;
 
 	/* Database instance name. */
 	REQUIRE(type == LDAP_DB_TYPE);
@@ -963,7 +963,7 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 
 	isc_mem_attach(mctx, &ldapdb->common.mctx);
 	CHECK(isc_mutex_init(&ldapdb->newversion_lock));
-	lock_ready = ISC_TRUE;
+	lock_ready = true;
 	dns_name_init(&ldapdb->common.origin, NULL);
 	isc_ondestroy_init(&ldapdb->common.ondest);
 
@@ -988,7 +988,7 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 
 cleanup:
 	if (ldapdb != NULL) {
-		if (lock_ready == ISC_TRUE)
+		if (lock_ready == true)
 			RUNTIME_CHECK(isc_mutex_destroy(&ldapdb->newversion_lock)
 				      == ISC_R_SUCCESS);
 		if (dns_name_dynamic(&ldapdb->common.origin))

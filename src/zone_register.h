@@ -57,7 +57,7 @@ zr_get_mctx(zone_register_t *zr) ATTR_NONNULLS ATTR_CHECKRESULT;
 isc_result_t
 delete_bind_zone(dns_zt_t *zt, dns_zone_t **zonep) ATTR_NONNULLS ATTR_CHECKRESULT;
 
-isc_boolean_t
+bool
 zone_isempty(dns_zone_t *zone) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 #endif /* !_LD_ZONE_REGISTER_H_ */

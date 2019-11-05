@@ -67,7 +67,7 @@ const enum_txt_assoc_t acl_type_txts[] = {
 	} while (0)
 
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
-get_mode(const cfg_obj_t *obj, isc_boolean_t *value)
+get_mode(const cfg_obj_t *obj, bool *value)
 {
 	const char *str;
 
@@ -82,8 +82,8 @@ get_mode(const cfg_obj_t *obj, isc_boolean_t *value)
 	}
 	str = cfg_obj_asstring(obj);
 
-	MATCH("grant", ISC_TRUE);
-	MATCH("deny", ISC_FALSE);
+	MATCH("grant", true);
+	MATCH("deny", false);
 
 	log_bug("unsupported ACL mode '%s'", str);
 	return ISC_R_NOTIMPLEMENTED;
@@ -175,7 +175,7 @@ get_fixed_name(const cfg_obj_t *obj, const char *name, dns_fixedname_t *fname)
 	dns_fixedname_init(fname);
 
 	result = dns_name_fromtext(dns_fixedname_name(fname), &buf,
-				   dns_rootname, ISC_FALSE, NULL);
+				   dns_rootname, false, NULL);
 	if (result != ISC_R_SUCCESS)
 		log_error("'%s' is not a valid name", str);
 
@@ -296,7 +296,7 @@ acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone)
 
 	for (el = cfg_list_first(policy); el != NULL; el = cfg_list_next(el)) {
 		const cfg_obj_t *stmt;
-		isc_boolean_t grant;
+		bool grant;
 		unsigned int match_type;
 		dns_fixedname_t fname, fident;
 		dns_rdatatype_t *types;

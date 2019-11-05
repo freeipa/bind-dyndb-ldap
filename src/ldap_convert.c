@@ -34,7 +34,7 @@
  * @param[out] target Absolute DNS name derived from the first two idnsNames.
  * @param[out] origin Absolute DNS name derived from the last idnsName
  *                    component of DN, i.e. zone. Can be NULL.
- * @param[out] iszone ISC_TRUE if DN points to zone object, ISC_FALSE otherwise.
+ * @param[out] iszone true if DN points to zone object, false otherwise.
  *
  * @code
  * Examples:
@@ -53,7 +53,7 @@
  */
 isc_result_t
 dn_to_dnsname(isc_mem_t *mctx, const char *dn_str, dns_name_t *target,
-	      dns_name_t *otarget, isc_boolean_t *iszone)
+	      dns_name_t *otarget, bool *iszone)
 {
 	LDAPDN dn = NULL;
 	LDAPRDN rdn = NULL;
@@ -130,20 +130,20 @@ dn_to_dnsname(isc_mem_t *mctx, const char *dn_str, dns_name_t *target,
 		CLEANUP_WITH(ISC_R_UNEXPECTEDEND);
 	} else if (idx == 1) { /* zone only */
 		if (iszone != NULL)
-			*iszone = ISC_TRUE;
+			*iszone = true;
 		CHECK(dns_name_copy(dns_rootname, &origin, NULL));
 		CHECK(dns_name_fromtext(&name, &name_buf, dns_rootname, 0, NULL));
 	} else if (idx == 2) { /* owner and zone */
 		if (iszone != NULL)
-			*iszone = ISC_FALSE;
+			*iszone = false;
 		CHECK(dns_name_fromtext(&origin, &origin_buf, dns_rootname, 0,
 					NULL));
 		CHECK(dns_name_fromtext(&name, &name_buf, &origin, 0, NULL));
-		if (dns_name_issubdomain(&name, &origin) == ISC_FALSE) {
+		if (dns_name_issubdomain(&name, &origin) == false) {
 			log_error("out-of-zone data: first idnsName is not a "
 				  "subdomain of the other");
 			CLEANUP_WITH(DNS_R_BADOWNERNAME);
-		} else if (dns_name_equal(&name, &origin) == ISC_TRUE) {
+		} else if (dns_name_equal(&name, &origin) == true) {
 			log_error("attempt to redefine zone apex: first "
 				  "idnsName equals to zone name");
 			CLEANUP_WITH(DNS_R_BADOWNERNAME);
@@ -185,12 +185,12 @@ cleanup:
  * @param[in] prefix      Prefix for error messages, usually a function name.
  * @param[in] dn
  * @param[in] dniszone    Boolean returned by dn_to_dnsname for given DN.
- * @param[in] classiszone ISC_TRUE if DN should be a zone, ISC_FALSE otherwise.
+ * @param[in] classiszone true if DN should be a zone, false otherwise.
  * @retval ISC_R_SUCCESS or ISC_R_UNEXPECTED if values do not match.
  */
 isc_result_t
 dn_want_zone(const char * const prefix, const char * const dn,
-	     isc_boolean_t dniszone, isc_boolean_t classiszone) {
+	     bool dniszone, bool classiszone) {
 	if (dniszone != classiszone) {
 		log_error("%s: object '%s' does%s have a zone object class "
 			  "but DN format suggests that it is%s a zone",
@@ -423,12 +423,12 @@ ldap_attribute_to_rdatatype(const char *ldap_attribute, dns_rdatatype_t *rdtype)
  * @param[in]  rdtype
  * @param[out] target   Output buffer with \0 terminated attribute name.
  * @param[in]  size     Target size.
- * @param[in]  unknown  ISC_TRUE = use generic syntax "UnknownRecord;TYPE65333",
- *                      ISC_FALSE = use type-specific mnemonic like "ARecord"
+ * @param[in]  unknown  true = use generic syntax "UnknownRecord;TYPE65333",
+ *                      false = use type-specific mnemonic like "ARecord"
  */
 isc_result_t
 rdatatype_to_ldap_attribute(dns_rdatatype_t rdtype, char *target,
-			    unsigned int size, isc_boolean_t unknown)
+			    unsigned int size, bool unknown)
 {
 	isc_result_t result;
 	char rdtype_str[DNS_RDATATYPE_FORMATSIZE];

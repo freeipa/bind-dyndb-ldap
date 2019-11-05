@@ -101,7 +101,7 @@ fwdr_del_zone(fwd_register_t *fwdr, dns_name_t *name)
 
 	RWLOCK(&fwdr->rwlock, isc_rwlocktype_write);
 
-	CHECK(dns_rbt_deletename(fwdr->rbt, name, ISC_FALSE));
+	CHECK(dns_rbt_deletename(fwdr->rbt, name, false));
 
 cleanup:
 	RWUNLOCK(&fwdr->rwlock, isc_rwlocktype_write);

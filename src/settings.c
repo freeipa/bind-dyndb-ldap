@@ -25,7 +25,7 @@
 #include "ldap_helper.h"
 #include "zone_register.h"
 
-isc_boolean_t verbose_checks = ISC_FALSE; /* log each failure in CHECK() macro */
+bool verbose_checks = false; /* log each failure in CHECK() macro */
 
 /** Built-in defaults. */
 static const setting_t settings_default[] = {
@@ -48,8 +48,8 @@ static const setting_t settings_default[] = {
 	{ "krb5_keytab",		default_string("")		},
 	{ "fake_mname",			default_string("")		},
 	{ "ldap_hostname",		default_string("")		},
-	{ "sync_ptr",			default_boolean(ISC_FALSE)	},
-	{ "dyn_update",			default_boolean(ISC_FALSE)	},
+	{ "sync_ptr",			default_boolean(false)	},
+	{ "dyn_update",			default_boolean(false)	},
 	/* Empty string as default update_policy declares zone as 'dynamic'
 	 * for dns_zone_isdynamic() to prevent unwanted
 	 * zone_postload() calls and warnings about serial and so on.
@@ -57,7 +57,7 @@ static const setting_t settings_default[] = {
 	 * SSU table defined by empty string contains no rules =>
 	 * dns_ssutable_checkrules() will return deny. */
 	{ "update_policy",		default_string("")		},
-	{ "verbose_checks",		default_boolean(ISC_FALSE)	},
+	{ "verbose_checks",		default_boolean(false)	},
 	{ "directory",			default_string("")		},
 	{ "server_id",			default_string("")		},
 	end_of_settings
@@ -87,7 +87,7 @@ const settings_set_t settings_default_set = {
  */
 isc_result_t
 setting_find(const char *name, const settings_set_t *set,
-	     isc_boolean_t recursive, isc_boolean_t filled_only,
+	     bool recursive, bool filled_only,
 	     setting_t **found) {
 
 	REQUIRE(name != NULL);
@@ -150,7 +150,7 @@ setting_get(const char *const name, const setting_type_t type,
 	REQUIRE(name != NULL);
 	REQUIRE(target != NULL);
 
-	CHECK(setting_find(name, set, isc_boolean_true, isc_boolean_true, &setting));
+	CHECK(setting_find(name, set, true, true, &setting));
 
 	if (setting->type != type) {
 		log_bug("incompatible setting data type requested "
@@ -166,7 +166,7 @@ setting_get(const char *const name, const setting_type_t type,
 		*(char **)target = setting->value.value_char;
 		break;
 	case ST_BOOLEAN:
-		*(isc_boolean_t *)target = setting->value.value_boolean;
+		*(bool *)target = setting->value.value_boolean;
 		break;
 	default:
 		UNEXPECTED_ERROR(__FILE__, __LINE__,
@@ -197,7 +197,7 @@ setting_get_str(const char *const name, const settings_set_t *const set,
 
 isc_result_t
 setting_get_bool(const char *const name, const settings_set_t *const set,
-		 isc_boolean_t *target)
+		 bool *target)
 {
 	return setting_get(name, ST_BOOLEAN, set, target);
 }
@@ -265,7 +265,7 @@ set_value(isc_mem_t *mctx, const settings_set_t *set, setting_t *setting,
 			CLEANUP_WITH(ISC_R_UNEXPECTEDTOKEN);
 		}
 		if (setting->filled &&
-		    setting->value.value_boolean == ISC_TF(numeric_value))
+		    setting->value.value_boolean == numeric_value)
 			CLEANUP_WITH(ISC_R_IGNORE);
 		break;
 	default:
@@ -280,7 +280,7 @@ set_value(isc_mem_t *mctx, const settings_set_t *set, setting_t *setting,
 		if (setting->is_dynamic)
 			isc_mem_free(mctx, setting->value.value_char);
 		CHECKED_MEM_ALLOCATE(mctx, setting->value.value_char, len);
-		setting->is_dynamic = ISC_TRUE;
+		setting->is_dynamic = true;
 		CHECK(isc_string_copy(setting->value.value_char, len, value));
 		break;
 
@@ -289,7 +289,7 @@ set_value(isc_mem_t *mctx, const settings_set_t *set, setting_t *setting,
 		break;
 
 	case ST_BOOLEAN:
-		setting->value.value_boolean = ISC_TF(numeric_value);
+		setting->value.value_boolean = numeric_value;
 		break;
 	default:
 		UNEXPECTED_ERROR(__FILE__, __LINE__,
@@ -328,7 +328,7 @@ setting_set(const char *const name, const settings_set_t *set,
 	isc_result_t result;
 	setting_t *setting = NULL;
 
-	CHECK(setting_find(name, set, ISC_FALSE, ISC_FALSE, &setting));
+	CHECK(setting_find(name, set, false, false, &setting));
 
 	return set_value(set->mctx, set, setting, value);
 
@@ -359,7 +359,7 @@ setting_unset(const char *const name, const settings_set_t *set)
 	isc_result_t result;
 	setting_t *setting = NULL;
 
-	CHECK(setting_find(name, set, ISC_FALSE, ISC_FALSE, &setting));
+	CHECK(setting_find(name, set, false, false, &setting));
 
 	if (!setting->filled)
 		return ISC_R_IGNORE;
@@ -370,7 +370,7 @@ setting_unset(const char *const name, const settings_set_t *set)
 	case ST_STRING:
 		if (setting->is_dynamic)
 			isc_mem_free(set->mctx, setting->value.value_char);
-		setting->is_dynamic = ISC_FALSE;
+		setting->is_dynamic = false;
 		break;
 
 	case ST_UNSIGNED_INTEGER:
@@ -411,7 +411,7 @@ setting_update_from_ldap_entry(const char *name, settings_set_t *set,
 	setting_t *setting = NULL;
 	ldap_valuelist_t values;
 
-	CHECK(setting_find(name, set, ISC_FALSE, ISC_FALSE, &setting));
+	CHECK(setting_find(name, set, false, false, &setting));
 	result = ldap_entry_getvalues(entry, attr_name, &values);
 	if (result == ISC_R_NOTFOUND || HEAD(values) == NULL) {
 		CHECK(setting_unset(name, set));
@@ -559,7 +559,7 @@ cfg_printer(void *closure, const char *text, int textlen) {
 	isc_buffer_t *logbuffer = closure;
 
 	REQUIRE(logbuffer != NULL);
-	REQUIRE(logbuffer->autore == ISC_TRUE);
+	REQUIRE(logbuffer->autore == true);
 
 	isc_buffer_putmem(logbuffer, (const unsigned char *)text, textlen);
 }
@@ -583,10 +583,10 @@ settings_set_fill(const cfg_obj_t *config, settings_set_t *set)
 	const cfg_obj_t *cfg_value;
 	const char *str_value;
 
-	REQUIRE(cfg_obj_ismap(config) == ISC_TRUE);
+	REQUIRE(cfg_obj_ismap(config) == true);
 
 	CHECK(isc_buffer_allocate(set->mctx, &buf_value, ISC_BUFFER_INCR));
-	isc_buffer_setautorealloc(buf_value, ISC_TRUE);
+	isc_buffer_setautorealloc(buf_value, true);
 
 	for (setting = set->first_setting;
 	     setting->name != NULL;
@@ -628,23 +628,23 @@ cleanup:
  *
  * Error message is logged for each setting without defined value.
  *
- * @retval ISC_TRUE  All settings have value defined.
- * @retval ISC_FALSE At least one setting do not have defined value.
+ * @retval true  All settings have value defined.
+ * @retval false At least one setting do not have defined value.
  */
-isc_boolean_t
+bool
 settings_set_isfilled(settings_set_t *set) {
 	isc_result_t result;
-	isc_boolean_t isfiled = ISC_TRUE;
+	bool isfiled = true;
 
 	REQUIRE(set != NULL);
 
 	for (int i = 0; set->first_setting[i].name != NULL; i++) {
 		const char *name = set->first_setting[i].name;
-		result = setting_find(name, set, ISC_TRUE, ISC_TRUE, NULL);
+		result = setting_find(name, set, true, true, NULL);
 		if (result != ISC_R_SUCCESS) {
 			log_error_r("argument '%s' must be set "
 				    "in set of settings '%s'", name, set->name);
-			isfiled = ISC_FALSE;
+			isfiled = false;
 		}
 	}
 	return isfiled;
@@ -679,7 +679,7 @@ setting_set_parse_conf(isc_mem_t *mctx, const char *name,
 	REQUIRE(parameters != NULL);
 
 	CHECK(isc_buffer_allocate(mctx, &log_buf, ISC_BUFFER_INCR));
-	isc_buffer_setautorealloc(log_buf, ISC_TRUE);
+	isc_buffer_setautorealloc(log_buf, true);
 
 	len = strlen(parameters);
 	isc_buffer_constinit(&in_buf, parameters, len);

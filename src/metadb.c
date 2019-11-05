@@ -36,7 +36,7 @@ isc_result_t
 metadb_new(isc_mem_t *mctx, metadb_t **mdbp) {
 	isc_result_t result;
 	metadb_t *mdb = NULL;
-	isc_boolean_t lock_ready = ISC_FALSE;
+	bool lock_ready = false;
 
 	REQUIRE(mdbp != NULL && *mdbp == NULL);
 
@@ -46,7 +46,7 @@ metadb_new(isc_mem_t *mctx, metadb_t **mdbp) {
 	isc_mem_attach(mctx, &mdb->mctx);
 
 	CHECK(isc_mutex_init(&mdb->newversion_lock));
-	lock_ready = ISC_TRUE;
+	lock_ready = true;
 	CHECK(dns_db_create(mctx, "rbt", dns_rootname, dns_dbtype_zone,
 			    dns_rdataclass_in, 0, NULL, &mdb->rbtdb));
 
@@ -55,7 +55,7 @@ metadb_new(isc_mem_t *mctx, metadb_t **mdbp) {
 
 cleanup:
 	if (mdb != NULL) {
-		if (lock_ready == ISC_TRUE)
+		if (lock_ready == true)
 			RUNTIME_CHECK(isc_mutex_destroy(&mdb->newversion_lock)
 				      == ISC_R_SUCCESS);
 		MEM_PUT_AND_DETACH(mdb);
@@ -114,10 +114,10 @@ cleanup:
  * Close writeable metaDB version and commit/discard all changes.
  *
  * @pre All metaDB nodes have to be closed before calling
- *      closeversion(commit = ISC_TRUE).
+ *      closeversion(commit = true).
  */
 void
-metadb_closeversion(metadb_t *mdb, isc_boolean_t commit) {
+metadb_closeversion(metadb_t *mdb, bool commit) {
 	UNLOCK(&mdb->newversion_lock);
 	dns_db_closeversion(mdb->rbtdb, &mdb->newversion, commit);
 }
@@ -141,7 +141,7 @@ metadb_iterator_destroy(metadb_iter_t **miterp) {
 		if (miter->version != NULL)
 			dns_db_closeversion(miter->rbtdb,
 					    &miter->version,
-					    ISC_FALSE);
+					    false);
 		dns_db_detach(&miter->rbtdb);
 	}
 
@@ -195,7 +195,7 @@ metadb_node_close(metadb_node_t **nodep) {
 			dns_db_detachnode(node->rbtdb, &node->dbnode);
 		if (node->version != NULL)
 			dns_db_closeversion(node->rbtdb, &node->version,
-					    ISC_FALSE);
+					    false);
 		dns_db_detach(&node->rbtdb);
 	}
 	MEM_PUT_AND_DETACH(node);
@@ -252,7 +252,7 @@ cleanup:
  */
 static isc_result_t
 metadb_node_init(metadb_t *mdb, dns_dbversion_t *ver, dns_name_t *mname,
-		 isc_boolean_t create, metadb_node_t **nodep) {
+		 bool create, metadb_node_t **nodep) {
 	isc_result_t result;
 	metadb_node_t *node = NULL;
 
@@ -288,10 +288,10 @@ metadb_readnode_open(metadb_t *mdb, dns_name_t *mname, metadb_node_t **nodep) {
 	dns_dbversion_t *ver = NULL;
 
 	dns_db_currentversion(mdb->rbtdb, &ver);
-	CHECK(metadb_node_init(mdb, ver, mname, ISC_FALSE, nodep));
+	CHECK(metadb_node_init(mdb, ver, mname, false, nodep));
 
 cleanup:
-	dns_db_closeversion(mdb->rbtdb, &ver, ISC_FALSE);
+	dns_db_closeversion(mdb->rbtdb, &ver, false);
 	return result;
 }
 
@@ -311,10 +311,10 @@ metadb_writenode_create(metadb_t *mdb, dns_name_t *mname, metadb_node_t **nodep)
 
 	INSIST(mdb->newversion != NULL);
 	dns_db_attachversion(mdb->rbtdb, mdb->newversion, &ver);
-	CHECK(metadb_node_init(mdb, ver, mname, ISC_TRUE, nodep));
+	CHECK(metadb_node_init(mdb, ver, mname, true, nodep));
 
 cleanup:
-	dns_db_closeversion(mdb->rbtdb, &ver, ISC_FALSE);
+	dns_db_closeversion(mdb->rbtdb, &ver, false);
 	return result;
 }
 
@@ -334,10 +334,10 @@ metadb_writenode_open(metadb_t *mdb, dns_name_t *mname, metadb_node_t **nodep) {
 
 	INSIST(mdb->newversion != NULL);
 	dns_db_attachversion(mdb->rbtdb, mdb->newversion, &ver);
-	CHECK(metadb_node_init(mdb, ver, mname, ISC_FALSE, nodep));
+	CHECK(metadb_node_init(mdb, ver, mname, false, nodep));
 
 cleanup:
-	dns_db_closeversion(mdb->rbtdb, &ver, ISC_FALSE);
+	dns_db_closeversion(mdb->rbtdb, &ver, false);
 	return result;
 }
 
@@ -392,7 +392,7 @@ metadb_rdataset_get(metadb_node_t *node, dns_rdatatype_t rrtype,
 		    dns_rdataset_t *rdataset) {
 	isc_result_t result;
 
-	REQUIRE(dns_rdataset_isassociated(rdataset) == ISC_FALSE);
+	REQUIRE(dns_rdataset_isassociated(rdataset) == false);
 
 	CHECK(dns_db_findrdataset(node->rbtdb, node->dbnode, node->version,
 				  rrtype, 0, 0, rdataset, NULL));
