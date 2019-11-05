@@ -5,7 +5,6 @@
 #include <isc/mem.h>
 #include <isc/rwlock.h>
 #include <isc/util.h>
-#include <isc/md5.h>
 #include <isc/string.h>
 
 #include <dns/db.h>
