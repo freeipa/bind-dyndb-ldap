@@ -120,6 +120,11 @@ int main(void) {
 [AC_MSG_ERROR([Cross compiling is not supported.])]
 )
 
+dnl dns_db_setservestalettl() can be backported, detect support
+AC_CHECK_LIB([dns], [dns_db_setservestalettl],
+  [AC_DEFINE([HAVE_DNS_SERVESTALE], 1, [Define if dns library provides dns_db_setservestalettl])]
+)
+
 dnl Older autoconf (2.59, for example) doesn't define docdir
 [[ ! -n "$docdir" ]] && docdir='${datadir}/doc/${PACKAGE_TARNAME}'
 AC_SUBST([docdir])

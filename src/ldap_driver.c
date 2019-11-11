@@ -823,6 +823,26 @@ nodefullname(dns_db_t *db, dns_dbnode_t *node, dns_name_t *name)
 	return dns_db_nodefullname(ldapdb->rbtdb, node, name);
 }
 
+#ifdef HAVE_DNS_SERVESTALE
+static isc_result_t
+setservestalettl(dns_db_t *db, dns_ttl_t ttl) {
+	ldapdb_t *ldapdb = (ldapdb_t *) db;
+
+	REQUIRE(VALID_LDAPDB(ldapdb));
+
+	return dns_db_setservestalettl(ldapdb->rbtdb, ttl);
+}
+
+static isc_result_t
+getservestalettl(dns_db_t *db, dns_ttl_t *ttl) {
+	ldapdb_t *ldapdb = (ldapdb_t *) db;
+
+	REQUIRE(VALID_LDAPDB(ldapdb));
+
+	return dns_db_getservestalettl(ldapdb->rbtdb, ttl);
+}
+#endif
+
 static dns_dbmethods_t ldapdb_methods = {
 	attach,
 	detach,
@@ -869,6 +889,10 @@ static dns_dbmethods_t ldapdb_methods = {
 	hashsize,
 	nodefullname,
 	NULL, // getsize method not implemented (related BZ1353563)
+#ifdef HAVE_DNS_SERVESTALE
+	setservestalettl,
+	getservestalettl,
+#endif
 };
 
 isc_result_t ATTR_NONNULLS
