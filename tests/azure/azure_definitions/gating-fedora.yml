@@ -1,0 +1,34 @@
+vms:
+- vm_jobs:
+  - container_job: Install_DNS_Master
+    tests:
+    - test_integration/test_installation.py::TestInstallMaster
+
+- vm_jobs:
+  - container_job: DNSSEC_tests
+    containers:
+      replicas: 2
+    tests:
+    - test_integration/test_dnssec.py
+
+- vm_jobs:
+  - container_job: simple_replication
+    containers:
+      replicas: 1
+    tests:
+    - test_integration/test_simple_replication.py
+
+- vm_jobs:
+  - container_job: Backup_and_Restore_with_DNSSEC
+    tests:
+    - test_integration/test_backup_and_restore.py::TestBackupAndRestoreWithDNSSEC
+    - test_integration/test_backup_and_restore.py::TestBackupReinstallRestoreWithDNSSEC
+    containers:
+      replicas: 1
+
+- vm_jobs:
+  - container_job: DNSSEC_hidden_replica_promotion
+    containers:
+      replicas: 2
+    tests:
+    - test_integration/test_replica_promotion.py::TestHiddenReplicaPromotion

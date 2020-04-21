@@ -1,0 +1,55 @@
+version: '2.1'
+services:
+  master:
+    image: ${DYNDB_LDAP_DOCKER_IMAGE}
+    build: .
+    cap_add:
+    - ALL
+    security_opt:
+    - apparmor:unconfined
+    mem_limit: 1610612736
+    volumes:
+    - /sys/fs/cgroup/systemd:/sys/fs/cgroup/systemd
+    - ./test-config.yaml:/root/.ipa/ipa-test-config.yaml:ro
+    - ${BUILD_REPOSITORY_LOCALPATH}:${DYNDB_LDAP_TESTS_REPO_PATH}
+
+    networks:
+    - ${DYNDB_LDAP_NETWORK}
+
+  replica:
+    image: ${DYNDB_LDAP_DOCKER_IMAGE}
+    build: .
+    cap_add:
+    - ALL
+    security_opt:
+    - apparmor:unconfined
+    mem_limit: 1610612736
+    volumes:
+    - /sys/fs/cgroup/systemd:/sys/fs/cgroup/systemd
+    networks:
+    - ${DYNDB_LDAP_NETWORK}
+
+  client:
+    image: ${DYNDB_LDAP_DOCKER_IMAGE}
+    build: .
+    cap_add:
+    - ALL
+    security_opt:
+    - apparmor:unconfined
+    mem_limit: 536870912
+    volumes:
+    - /sys/fs/cgroup/systemd:/sys/fs/cgroup/systemd
+    # nfs server
+    - ./exports:/exports
+    - /lib/modules:/lib/modules:ro
+    networks:
+    - ${DYNDB_LDAP_NETWORK}
+
+networks:
+  ipanet:
+    driver: bridge
+    enable_ipv6: true
+    ipam:
+      driver: default
+      config:
+      - subnet: ${DYNDB_LDAP_IPV6_SUBNET}

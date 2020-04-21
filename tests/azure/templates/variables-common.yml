@@ -1,0 +1,14 @@
+variables:
+  CI_RUNNER_LOGS_DIR: logs
+  builddir: /__w/1/s
+  # Provision script: setup_containers.py requires Python3.6+
+  # Ubuntu-16.04 has Python 3.5.2 on board
+  # https://github.com/actions/virtual-environments/blob/master/images/linux/Ubuntu1604-README.md
+  # Ubuntu-18.04 - 3.6.9
+  # https://github.com/actions/virtual-environments/blob/master/images/linux/Ubuntu1804-README.md
+  VM_IMAGE: 'Ubuntu-18.04'
+  MAX_CONTAINER_ENVS: 5
+  DYNDB_LDAP_TESTS_ENV_WORKING_DIR: $(Build.Repository.LocalPath)/dyndb_ldap_envs
+  DYNDB_LDAP_TESTS_SCRIPTS: 'tests/azure/scripts'
+  DYNDB_LDAP_TESTS_DOCKERFILES: $(Build.Repository.LocalPath)/tests/azure/Dockerfiles
+  DYNDB_LDAP_TESTS_REPO_PATH: '/dyndb-ldap'

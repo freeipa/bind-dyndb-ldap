@@ -1,0 +1,28 @@
+steps:
+- script: |
+    set -e
+    mkdir -p $(builddir)/{distx/{rpms,srpms,packages},buildx}
+    make dist
+    touch `ls -1 bind-dyndb-ldap*.tar.bz2 | sed 's/bz2$/bz2.asc/g'`
+    mv bind-dyndb-ldap*.tar.bz2* $(builddir)/buildx
+    cp contrib/bind-dyndb-ldap.spec $(builddir)/buildx
+    rpmbuild -ba \
+             --define "_topdir $(builddir)/buildx" \
+             --define "_sourcedir $(builddir)/buildx" \
+             --define "_specdir $(builddir)/buildx" \
+             --define "_builddir $(builddir)/buildx" \
+             --define "_srcrpmdir $(builddir)/distx/srpms" \
+             --define "_rpmdir $(builddir)/distx/rpms" \
+             $(builddir)/buildx/bind-dyndb-ldap.spec
+  displayName: Build packages
+- script: |
+    set -e
+    mkdir -p $(builddir)/distx/packages_debuginfo
+    find $(builddir)/distx/rpms/ -type f \
+        \( -name "*-debuginfo-*.rpm" -o -name '*-debugsource-*.rpm' \) \
+        -exec mv {} $(builddir)/distx/packages_debuginfo/ \;
+    find $(builddir)/distx/rpms/ -type f \
+        \( -name "*.rpm" \) \
+        -exec mv {} $(builddir)/distx/packages/ \;
+    rm -rf $(builddir)/{distx/{rpms,srpms}}
+  displayName: Move packages into the final location

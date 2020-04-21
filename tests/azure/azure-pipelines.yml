@@ -1,0 +1,61 @@
+trigger:
+- master
+
+variables:
+- template: templates/variables-common.yml
+# platform specific variables, links to
+- template: templates/variables-fedora.yml
+
+jobs:
+- job: Build
+  pool:
+    vmImage: $(VM_IMAGE)
+  container:
+    image: $(DOCKER_BUILD_IMAGE)
+    options: --cap-add=SYS_PTRACE --security-opt seccomp=unconfined --privileged
+  steps:
+    - template: templates/${{ variables.PREPARE_BUILD_TEMPLATE }}
+    - script: |
+        set -e
+        echo "Running autoconf generator"
+        autoreconf -i -f
+        ./configure
+      displayName: Configure the project
+    - template: templates/${{ variables.BUILD_TEMPLATE }}
+    - template: templates/publish-build.yml
+      parameters:
+        artifactName: 'packages-$(Build.BuildId)-$(Agent.OS)-$(Agent.OSArchitecture)'
+        targetPath: $(Build.Repository.LocalPath)/distx
+        displayName: Publish packages
+
+    - script: |
+        set -e
+        mkdir container
+        cp -pr distx container/
+        cp $(DYNDB_LDAP_TESTS_DOCKERFILES)/$(DOCKER_DOCKERFILE) container/Dockerfile
+        cd container
+        docker build -t dyndb-ldap-azure-builder .
+        docker save dyndb-ldap-azure-builder | gzip > '$(builddir)/dyndb-ldap-azure-builder-container.tar.gz'
+      displayName: Create container image for test
+    - template: templates/publish-build.yml
+      parameters:
+        artifactName: 'image-$(Build.BuildId)-$(Agent.OS)-$(Agent.OSArchitecture)'
+        targetPath: $(Build.Repository.LocalPath)/dyndb-ldap-azure-builder-container.tar.gz
+        displayName: Publish container image
+    - template: templates/generate-matrix.yml
+      parameters:
+        definition: 'tests/azure/azure_definitions/gating-fedora.yml'
+        displayName: Generate Matrix for Gating tests
+        name: gating_matrix
+
+- job: GATING
+  pool:
+    vmImage: $(VM_IMAGE)
+  dependsOn: Build
+  condition: succeeded()
+  strategy:
+    matrix: $[ dependencies.Build.outputs['gating_matrix.matrix'] ]
+  timeoutInMinutes: 90
+  steps:
+    - template: templates/generate-job-variables.yml
+    - template: templates/test-jobs.yml

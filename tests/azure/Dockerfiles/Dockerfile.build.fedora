@@ -1,0 +1,23 @@
+FROM fedora:31
+MAINTAINER [BIND DynDB LDAP Developers freeipa-devel@lists.fedorahosted.org]
+ENV container=docker LANG=en_US.utf8 LANGUAGE=en_US.utf8 LC_ALL=en_US.utf8
+
+ADD distx /root
+RUN echo 'deltarpm = false' >> /etc/dnf/dnf.conf \
+    && dnf update -y dnf \
+    && dnf install -y dnf-plugins-core sudo wget systemd firewalld nss-tools iptables \
+    && sed -i 's/%_install_langs \(.*\)/\0:fr/g' /etc/rpm/macros.image-language-conf \
+    && dnf install -y glibc-langpack-fr glibc-langpack-en \
+    && dnf install -y /root/packages/*.rpm \
+    && dnf install -y openssh-server freeipa-server-dns python3-ipatests \
+    && dnf clean all && rm -rf /root/packages /root/srpms \
+    && mkdir -p /root/ipatests \
+    && sed -i 's/.*PermitRootLogin .*/#&/g' /etc/ssh/sshd_config \
+    && echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config \
+    && systemctl enable sshd \
+    && for i in /usr/lib/systemd/system/*-domainname.service; \
+    do sed -i 's#^ExecStart=/#ExecStart=-/#' $i ; done
+
+STOPSIGNAL RTMIN+3
+VOLUME ["/dyndb-ldap", "/run", "/tmp"]
+ENTRYPOINT [ "/usr/sbin/init" ]

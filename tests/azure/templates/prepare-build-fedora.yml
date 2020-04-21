@@ -1,0 +1,22 @@
+steps:
+- script: |
+    set -e
+    sudo rm -rf /var/cache/dnf/*
+    sudo dnf makecache || :
+    echo "Installing base development environment"
+    sudo dnf install -y \
+        gdb-minimal \
+        make \
+        autoconf \
+        rpm-build \
+        gettext-devel \
+        automake \
+        libtool \
+        docker \
+        python3-paramiko \
+        python3-pyyaml \
+
+    echo "Installing development dependencies"
+    sudo dnf builddep -y bind-dyndb-ldap
+    sudo dnf builddep -y --skip-broken --spec contrib/bind-dyndb-ldap.spec --best --allowerasing --setopt=install_weak_deps=False
+  displayName: Prepare build environment
