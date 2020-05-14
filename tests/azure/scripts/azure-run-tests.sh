@@ -54,6 +54,10 @@ ln -sfr \
     "${DYNDB_LDAP_TESTS_DOCKERFILES}/docker-compose.yml" \
     "$project_dir"/
 
+ln -sfr \
+    "${DYNDB_LDAP_TESTS_DOCKERFILES}/seccomp.json" \
+    "$project_dir"/
+
 # will be generated later in setup_containers.py
 touch "${project_dir}"/test-config.yaml
 

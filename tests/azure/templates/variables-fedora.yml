@@ -1,7 +1,7 @@
 variables:
   DYNDB_LDAP_PLATFORM: fedora
   # the Docker public image to build packages (rpms)
-  DOCKER_BUILD_IMAGE: 'registry.fedoraproject.org/f31/fedora-toolbox'
+  DOCKER_BUILD_IMAGE: 'registry.fedoraproject.org/f32/fedora-toolbox'
 
   # the Dockerfile to build Docker image for running IPA tests
   DOCKER_DOCKERFILE: ${{ format('Dockerfile.build.{0}', variables.DYNDB_LDAP_PLATFORM) }}
@@ -13,4 +13,4 @@ variables:
   BUILD_TEMPLATE: ${{ format('build-{0}.yml', variables.DYNDB_LDAP_PLATFORM) }}
 
   # Python version for UsePythonVersion@0 task
-  AZURE_PYTHON_VERSION: '3.7'
+  AZURE_PYTHON_VERSION: '3.8'

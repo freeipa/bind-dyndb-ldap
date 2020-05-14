@@ -31,4 +31,13 @@ chmod -R o+rX "$DYNDB_LDAP_TESTS_LOGSDIR"
 find "$DYNDB_LDAP_TESTS_LOGSDIR" -mindepth 1 -maxdepth 1 -not -name '.*' -type d \
     -exec tar --remove-files -czf {}.tar.gz {} \;
 
+echo "Report memory statistics"
+cat /sys/fs/cgroup/memory/memory.memsw.failcnt
+cat /sys/fs/cgroup/memory/memory.memsw.limit_in_bytes
+cat /sys/fs/cgroup/memory/memory.memsw.max_usage_in_bytes
+cat /sys/fs/cgroup/memory/memory.failcnt
+cat /sys/fs/cgroup/memory/memory.max_usage_in_bytes
+cat /sys/fs/cgroup/memory/memory.limit_in_bytes
+cat /proc/sys/vm/swappiness
+
 exit $tests_result
