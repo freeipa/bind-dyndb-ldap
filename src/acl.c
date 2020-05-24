@@ -120,6 +120,12 @@ get_match_type(const cfg_obj_t *obj, unsigned int *value)
 #ifdef DNS_SSUMATCHTYPE_SELFKRB5
 	MATCH("krb5-self", DNS_SSUMATCHTYPE_SELFKRB5);
 #endif
+
+	/* At least bind 9.11.5 or 9.12.3 is required for it
+	 * as these match types are part of CVE-2018-5741 fixes */
+	MATCH("ms-selfsub", dns_ssumatchtype_selfsubms);
+	MATCH("krb5-selfsub", dns_ssumatchtype_selfsubkrb5);
+
 #ifdef DNS_SSUMATCHTYPE_SUBDOMAINMS
 	MATCH("ms-subdomain", DNS_SSUMATCHTYPE_SUBDOMAINMS);
 #endif
