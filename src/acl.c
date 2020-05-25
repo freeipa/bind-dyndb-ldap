@@ -163,9 +163,7 @@ get_fixed_name(const cfg_obj_t *obj, const char *name, dns_fixedname_t *fname)
 	else
 		isc_buffer_add(&buf, len);
 
-	dns_fixedname_init(fname);
-
-	result = dns_name_fromtext(dns_fixedname_name(fname), &buf,
+	result = dns_name_fromtext(dns_fixedname_initname(fname), &buf,
 				   dns_rootname, false, NULL);
 	if (result != ISC_R_SUCCESS)
 		log_error("'%s' is not a valid name", str);
@@ -305,9 +303,8 @@ acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone)
 		result = get_fixed_name(stmt, "name", &fname);
 		if (result == ISC_R_NOTFOUND &&
 		    match_type == dns_ssumatchtype_subdomain) {
-			dns_fixedname_init(&fname);
 			CHECK(dns_name_copy(dns_zone_getorigin(zone),
-					    dns_fixedname_name(&fname),
+					    dns_fixedname_initname(&fname),
 					    &fname.buffer));
 		}
 		else if (result != ISC_R_SUCCESS)

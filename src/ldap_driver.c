@@ -472,9 +472,7 @@ node_isempty(dns_db_t *db, dns_dbnode_t *node, dns_dbversion_t *version,
 	char buff[DNS_NAME_FORMATSIZE];
 	isc_result_t result;
 
-	dns_fixedname_init(&fname);
-
-	CHECK(ldapdb_name_fromnode(node, dns_fixedname_name(&fname)));
+	CHECK(ldapdb_name_fromnode(node, dns_fixedname_initname(&fname)));
 
 	result = dns_db_allrdatasets(db, node, version, now, &rds_iter);
 	if (result == ISC_R_NOTFOUND) {
