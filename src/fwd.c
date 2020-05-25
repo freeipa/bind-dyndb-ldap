@@ -86,7 +86,6 @@ fwd_list_len(dns_forwarders_t *fwdrs) {
 static isc_result_t
 fwd_list_gen_dummy_config_string(isc_mem_t *mctx, size_t list_len,
 				 isc_buffer_t **dummy_string) {
-	isc_result_t result;
 	const char prefix[] = "{ ";
 	const char suffix[] = "} // dummy string, please ignore";
 	const char fill[] = "127.0.0.1; ";
@@ -98,7 +97,9 @@ fwd_list_gen_dummy_config_string(isc_mem_t *mctx, size_t list_len,
 
 	REQUIRE(dummy_string != NULL && *dummy_string == NULL);
 
-	CHECK(isc_buffer_allocate(mctx, &output, target_size));
+	/* No CHECK here as isc_buffer_allocate is void and can not fail.
+	 *  See bind9: a038f77d92a857bc11750683c9317d70da6fcfdf */
+	isc_buffer_allocate(mctx, &output, target_size);
 	isc_buffer_putstr(output, prefix);
 	for (size_t i = 0; i < list_len; i++)
 		isc_buffer_putstr(output, fill);
@@ -106,11 +107,7 @@ fwd_list_gen_dummy_config_string(isc_mem_t *mctx, size_t list_len,
 	isc_buffer_putuint8(output, '\0');
 	*dummy_string = output;
 
-cleanup:
-	if (result != ISC_R_SUCCESS && output != NULL)
-		isc_buffer_free(&output);
-
-	return result;
+	return ISC_R_SUCCESS;
 }
 
 /**
@@ -122,7 +119,6 @@ cleanup:
 isc_result_t
 fwd_print_bracketed_values_buf(isc_mem_t *mctx, ldap_valuelist_t *values,
 			      isc_buffer_t **string) {
-	isc_result_t result;
 	ldap_value_t *value;
 	const char prefix[] = "{ ";
 	const char suffix[] = "}";
@@ -143,13 +139,14 @@ fwd_print_bracketed_values_buf(isc_mem_t *mctx, ldap_valuelist_t *values,
 	buffer_append_str(&tmp_buf, suffix, 2);
 
 	/* create and copy string from tmp to output buffer */
-	CHECK(isc_buffer_allocate(mctx, string, tmp_buf.used));
+        /* No CHECK here as isc_buffer_allocate is void and can not fail.
+         *  See bind9: a038f77d92a857bc11750683c9317d70da6fcfdf */
+	isc_buffer_allocate(mctx, string, tmp_buf.used);
 	isc_buffer_putmem(*string, isc_buffer_base(&tmp_buf), tmp_buf.used);
 
-cleanup:
 	if (tmp_buf.base != NULL)
 		isc_mem_put(mctx, tmp_buf.base, tmp_buf.length);
-	return result;
+	return ISC_R_SUCCESS;
 }
 
 isc_result_t
@@ -199,7 +196,7 @@ fwd_print_list_buff(isc_mem_t *mctx, dns_forwarders_t *fwdrs,
 	cfg_print(faddresses, buffer_append_str, &tmp_buf);
 
 	/* create and copy string from tmp to output buffer */
-	CHECK(isc_buffer_allocate(mctx, out_buf, tmp_buf.used));
+	isc_buffer_allocate(mctx, out_buf, tmp_buf.used);
 	isc_buffer_putmem(*out_buf, isc_buffer_base(&tmp_buf),
 			  isc_buffer_usedlength(&tmp_buf));
 

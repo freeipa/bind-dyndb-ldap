@@ -577,7 +577,7 @@ cfg_printer(void *closure, const char *text, int textlen) {
 static isc_result_t
 settings_set_fill(const cfg_obj_t *config, settings_set_t *set)
 {
-	isc_result_t result;
+	isc_result_t result = ISC_R_SUCCESS;
 	setting_t *setting;
 	isc_buffer_t *buf_value = NULL;
 	const cfg_obj_t *cfg_value;
@@ -585,7 +585,8 @@ settings_set_fill(const cfg_obj_t *config, settings_set_t *set)
 
 	REQUIRE(cfg_obj_ismap(config) == true);
 
-	CHECK(isc_buffer_allocate(set->mctx, &buf_value, ISC_BUFFER_INCR));
+	/* isc_buffer_allocate can no longer fail */
+	isc_buffer_allocate(set->mctx, &buf_value, ISC_BUFFER_INCR);
 	isc_buffer_setautorealloc(buf_value, true);
 
 	for (setting = set->first_setting;
@@ -678,7 +679,8 @@ setting_set_parse_conf(isc_mem_t *mctx, const char *name,
 
 	REQUIRE(parameters != NULL);
 
-	CHECK(isc_buffer_allocate(mctx, &log_buf, ISC_BUFFER_INCR));
+	/* isc_buffer_allocate can no longer fail */
+	isc_buffer_allocate(mctx, &log_buf, ISC_BUFFER_INCR);
 	isc_buffer_setautorealloc(log_buf, true);
 
 	len = strlen(parameters);
