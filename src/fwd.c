@@ -579,7 +579,7 @@ fwd_configure_zone(const settings_set_t *set, ldap_instance_t *inst,
 		CHECK(dns_fwdtable_addfwd(view->fwdtable, name, &fwdrs,
 					  fwdpolicy));
 	}
-	dns_view_flushcache(view);
+	dns_view_flushcache(view, false);
 	run_exclusive_exit(inst, lock_state);
 	lock_state = ISC_R_IGNORE; /* prevent double-unlock */
 	log_debug(5, "%s %s: forwarder table was updated: %s",
