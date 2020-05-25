@@ -905,6 +905,7 @@ static dns_dbmethods_t ldapdb_methods = {
 	setservestalettl,
 	getservestalettl,
 #endif
+	NULL /* setgluecachestats */
 };
 
 isc_result_t ATTR_NONNULLS
