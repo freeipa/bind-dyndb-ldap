@@ -579,7 +579,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name, const char *parameters,
 	/* copy global forwarders setting for configuration roll back in
 	 * configure_zone_forwarders() */
 	result = dns_fwdtable_find(ldap_inst->view->fwdtable, dns_rootname,
-				   &named_conf_forwarders);
+				   NULL, &named_conf_forwarders);
 	if (result == ISC_R_SUCCESS) {
 		/* Copy forwarding config from named.conf into local_settings */
 		CHECK(fwd_print_list_buff(mctx, named_conf_forwarders,
