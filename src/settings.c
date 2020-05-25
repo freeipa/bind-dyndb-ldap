@@ -686,8 +686,8 @@ setting_set_parse_conf(isc_mem_t *mctx, const char *name,
 	isc_buffer_add(&in_buf, len);
 
 	CHECK(cfg_parser_create(mctx, dns_lctx, &parser));
-	result = cfg_parse_buffer2(parser, &in_buf, name, cfg_type_conf,
-				   &config);
+	result = cfg_parse_buffer(parser, &in_buf, name, 0, cfg_type_conf, 0,
+				  &config);
 	if (result == ISC_R_SUCCESS) {
 		cfg_printx(config, CFG_PRINTER_XKEY, cfg_printer, log_buf);
 		cfg_obj_log(config, dns_lctx, ISC_LOG_DEBUG(10),

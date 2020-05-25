@@ -108,7 +108,7 @@ cfg_parse_strbuf(cfg_parser_t *parser, const char *string, cfg_type_t **type,
 	isc_buffer_init(&buffer, (char *)string, string_len);
 	isc_buffer_add(&buffer, string_len);
 
-	result = cfg_parse_buffer(parser, &buffer, *type, &ret);
+	result = cfg_parse_buffer(parser, &buffer, NULL, 0, *type, 0, &ret);
 
 	if (result == ISC_R_SUCCESS)
 		*objp = ret;

@@ -182,8 +182,8 @@ fwd_print_list_buff(isc_mem_t *mctx, dns_forwarders_t *fwdrs,
 	list_len = fwd_list_len(fwdrs);
 	CHECK(fwd_list_gen_dummy_config_string(mctx,
 					       list_len, &dummy_fwdr_buf));
-	CHECK(cfg_parse_buffer(parser, dummy_fwdr_buf,
-			       cfg_type_forwarders, &forwarders_cfg));
+	CHECK(cfg_parse_buffer(parser, dummy_fwdr_buf, NULL, 0,
+			       cfg_type_forwarders, 0, &forwarders_cfg));
 
 	/* Walk through internal representation and cfg representation and copy
 	 * data from the internal one to cfg data structures.*/
