@@ -110,35 +110,20 @@ get_match_type(const cfg_obj_t *obj, unsigned int *value)
 	MATCH("zonesub", dns_ssumatchtype_subdomain);
 	MATCH("wildcard", dns_ssumatchtype_wildcard);
 	MATCH("self", dns_ssumatchtype_self);
-#if defined(dns_ssumatchtype_selfSUB) && defined(dns_ssumatchtype_selfwild)
-	MATCH("selfsub", dns_ssumatchtype_selfSUB);
+	MATCH("selfsub", dns_ssumatchtype_selfsub);
 	MATCH("selfwild", dns_ssumatchtype_selfwild);
-#endif
-#ifdef dns_ssumatchtype_selfms
 	MATCH("ms-self", dns_ssumatchtype_selfms);
-#endif
-#ifdef dns_ssumatchtype_selfkrb5
 	MATCH("krb5-self", dns_ssumatchtype_selfkrb5);
-#endif
-
 	/* At least bind 9.11.5 or 9.12.3 is required for it
 	 * as these match types are part of CVE-2018-5741 fixes */
 	MATCH("ms-selfsub", dns_ssumatchtype_selfsubms);
 	MATCH("krb5-selfsub", dns_ssumatchtype_selfsubkrb5);
 
-#ifdef dns_ssumatchtype_subdomainms
 	MATCH("ms-subdomain", dns_ssumatchtype_subdomainms);
-#endif
-#ifdef dns_ssumatchtype_subdomainkrb5
 	MATCH("krb5-subdomain", dns_ssumatchtype_subdomainkrb5);
-#endif
-#if defined(dns_ssumatchtype_tcpself) && defined(dns_ssumatchtype_6to4self)
 	MATCH("tcp-self", dns_ssumatchtype_tcpself);
 	MATCH("6to4-self", dns_ssumatchtype_6to4self);
-#endif
-#if defined(dns_ssumatchtype_external)
 	MATCH("external", dns_ssumatchtype_external);
-#endif
 
 	log_bug("unsupported match type '%s'", str);
 	return ISC_R_NOTIMPLEMENTED;
