@@ -399,7 +399,7 @@ sync_ptr_init(isc_mem_t *mctx, dns_zt_t * zonetable,
 	isc_mem_attach(mctx, &ev->mctx);
 	INIT_BUFFERED_NAME(ev->a_name);
 	INIT_BUFFERED_NAME(ev->ptr_name);
-	CHECK(dns_name_copy(a_name, &ev->a_name, NULL));
+	dns_name_copynf(a_name, &ev->a_name);
 	ev->mod_op = mod_op;
 	strncpy(ev->ip_str, ip_str, sizeof(ev->ip_str));
 	ev->ip_str[sizeof(ev->ip_str) - 1] = '\0';

@@ -131,7 +131,7 @@ dn_to_dnsname(isc_mem_t *mctx, const char *dn_str, dns_name_t *target,
 	} else if (idx == 1) { /* zone only */
 		if (iszone != NULL)
 			*iszone = true;
-		CHECK(dns_name_copy(dns_rootname, &origin, NULL));
+		dns_name_copynf(dns_rootname, &origin);
 		CHECK(dns_name_fromtext(&name, &name_buf, dns_rootname, 0, NULL));
 	} else if (idx == 2) { /* owner and zone */
 		if (iszone != NULL)

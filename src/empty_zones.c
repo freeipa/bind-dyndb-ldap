@@ -228,13 +228,11 @@ empty_zone_search_stop(empty_zone_search_t *iter) {
 isc_result_t
 empty_zone_search_init(empty_zone_search_t *iter, const dns_name_t *qname,
                        dns_zt_t *ztable) {
-	isc_result_t result;
-
 	REQUIRE(iter != NULL);
 	REQUIRE(dns_name_isabsolute(qname));
 
 	INIT_BUFFERED_NAME(iter->qname);
-	CHECK(dns_name_copy(qname, &iter->qname, NULL));
+	dns_name_copynf(qname, &iter->qname);
 
 	INIT_BUFFERED_NAME(iter->ezname);
 	iter->nextidx = 0;
@@ -243,9 +241,6 @@ empty_zone_search_init(empty_zone_search_t *iter, const dns_name_t *qname,
 	dns_zt_attach(ztable, &iter->zonetable);
 
 	return empty_zone_search_next(iter);
-
-cleanup:
-	return result;
 }
 
 /**

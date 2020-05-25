@@ -322,8 +322,8 @@ mldap_dnsname_get(metadb_node_t *node, dns_name_t *fqdn, dns_name_t *zone) {
 	CHECK(metadb_rdataset_get(node, dns_rdatatype_rp, &rdataset));
 	dns_rdataset_current(&rdataset, &rdata);
 	CHECK(dns_rdata_tostruct(&rdata, &rp, NULL));
-	CHECK(dns_name_copy(&rp.mail, fqdn, NULL));
-	CHECK(dns_name_copy(&rp.text, zone, NULL));
+	dns_name_copynf(&rp.mail, fqdn);
+	dns_name_copynf(&rp.text, zone);
 
 cleanup:
 	if (dns_rdataset_isassociated(&rdataset))
