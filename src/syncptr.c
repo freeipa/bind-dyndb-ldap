@@ -392,8 +392,6 @@ sync_ptr_init(isc_mem_t *mctx, dns_zt_t * zonetable,
 						LDAPDB_EVENT_SYNCPTR,
 						sync_ptr_handler, NULL,
 						sizeof(sync_ptrev_t));
-	if (ev == NULL)
-		CLEANUP_WITH(ISC_R_NOMEMORY);
 
 	ev->mctx = NULL;
 	isc_mem_attach(mctx, &ev->mctx);

@@ -157,7 +157,7 @@ finish(isc_task_t *task, isc_event_t *event) {
 	return;
 }
 
-static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+static void ATTR_NONNULLS
 sync_finishev_create(sync_ctx_t *sctx, ldap_instance_t *inst,
 		      sync_barrierev_t **evp) {
 	sync_barrierev_t *ev = NULL;
@@ -170,14 +170,12 @@ sync_finishev_create(sync_ctx_t *sctx, ldap_instance_t *inst,
 				sctx, LDAPDB_EVENT_SYNCREPL_BARRIER,
 				finish, NULL,
 				sizeof(sync_barrierev_t));
-	if (ev == NULL)
-		return ISC_R_NOMEMORY;
 
 	ev->inst = inst;
 	ev->sctx = sctx;
 	*evp = ev;
 
-	return ISC_R_SUCCESS;
+	return;
 }
 
 /**
@@ -198,7 +196,6 @@ sync_finishev_create(sync_ctx_t *sctx, ldap_instance_t *inst,
  */
 void
 barrier_decrement(isc_task_t *task, isc_event_t *event) {
-	isc_result_t result = ISC_R_SUCCESS;
 	sync_barrierev_t *bev = NULL;
 	sync_barrierev_t *fev = NULL;
 	isc_event_t *ev = NULL;
@@ -212,21 +209,19 @@ barrier_decrement(isc_task_t *task, isc_event_t *event) {
 		log_debug(1, "sync_barrier_wait(): barrier reached");
 		LOCK(&bev->sctx->mutex);
 		locked = true;
-		CHECK(sync_finishev_create(bev->sctx, bev->inst, &fev));
+		sync_finishev_create(bev->sctx, bev->inst, &fev);
 		ev = (isc_event_t *)fev;
 		isc_task_send(ldap_instance_gettask(bev->sctx->inst), &ev);
 	}
 
-cleanup:
-	if (locked)
+	if (locked) {
 		UNLOCK(&bev->sctx->mutex);
-	if (result != ISC_R_SUCCESS)
-		log_error_r("barrier_decrement() failed");
+	}
 	isc_event_free(&event);
 	return;
 }
 
-static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
+static void ATTR_NONNULLS
 sync_barrierev_create(sync_ctx_t *sctx, ldap_instance_t *inst,
 		      sync_barrierev_t **evp) {
 	sync_barrierev_t *ev = NULL;
@@ -239,14 +234,12 @@ sync_barrierev_create(sync_ctx_t *sctx, ldap_instance_t *inst,
 				sctx, LDAPDB_EVENT_SYNCREPL_BARRIER,
 				barrier_decrement, NULL,
 				sizeof(sync_barrierev_t));
-	if (ev == NULL)
-		return ISC_R_NOMEMORY;
 
 	ev->inst = inst;
 	ev->sctx = sctx;
 	*evp = ev;
 
-	return ISC_R_SUCCESS;
+	return;
 }
 
 /**
@@ -483,7 +476,6 @@ sync_task_add(sync_ctx_t *sctx, isc_task_t *task) {
  */
 isc_result_t
 sync_barrier_wait(sync_ctx_t *sctx, ldap_instance_t *inst) {
-	isc_result_t result;
 	isc_event_t *ev = NULL;
 	sync_barrierev_t *bev = NULL;
 	sync_state_t barrier_state;
@@ -518,7 +510,7 @@ sync_barrier_wait(sync_ctx_t *sctx, ldap_instance_t *inst) {
 	     taskel != NULL;
 	     taskel = next_taskel) {
 		bev = NULL;
-		CHECK(sync_barrierev_create(sctx, inst, &bev));
+		sync_barrierev_create(sctx, inst, &bev);
 		next_taskel = NEXT(taskel, link);
 		UNLINK(sctx->tasks, taskel, link);
 		ev = (isc_event_t *)bev;
@@ -531,12 +523,12 @@ sync_barrier_wait(sync_ctx_t *sctx, ldap_instance_t *inst) {
 		WAIT(&sctx->cond, &sctx->mutex);
 	log_debug(1, "sync_barrier_wait(): all events were processed");
 
-cleanup:
 	UNLOCK(&sctx->mutex);
 
-	if (ev != NULL)
+	if (ev != NULL) {
 		isc_event_free(&ev);
-	return result;
+	}
+	return ISC_R_SUCCESS;
 }
 
 /**

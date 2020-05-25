@@ -612,8 +612,6 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name, const char *parameters,
 					empty_zone_handle_globalfwd_ev,
 					ldap_inst->view->zonetable,
 					sizeof(ldap_globalfwd_handleez_t));
-		if (gfwdevent == NULL)
-			CLEANUP_WITH(ISC_R_NOMEMORY);
 		/* policy == first does not override automatic empty zones */
 		gfwdevent->warn_only = (named_conf_forwarders->fwdpolicy
 					== dns_fwdpolicy_first);
@@ -4198,11 +4196,6 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 				inst, LDAPDB_EVENT_SYNCREPL_UPDATE,
 				action, NULL,
 				sizeof(ldap_syncreplevent_t));
-
-	if (pevent == NULL) {
-		result = ISC_R_NOMEMORY;
-		goto cleanup;
-	}
 
 	pevent->mctx = NULL;
 	isc_mem_attach(inst->mctx, &pevent->mctx);
