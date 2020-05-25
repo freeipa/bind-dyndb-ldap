@@ -705,7 +705,7 @@ setting_set_parse_conf(isc_mem_t *mctx, const char *name,
 		log_error("configuration for dyndb instance '%s' "
 			  "(starting in file %s on line %lu) is invalid",
 			  name, file, line);
-		cfg_print_grammar(cfg_type_conf, cfg_printer, log_buf);
+		cfg_print_grammar(cfg_type_conf, 0, cfg_printer, log_buf);
 		log_info("expected grammar:\n"
 			 "%.*s", isc_buffer_usedlength(log_buf),
 			 (char *)isc_buffer_base(log_buf));
