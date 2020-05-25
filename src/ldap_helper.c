@@ -954,7 +954,8 @@ configure_paths(isc_mem_t *mctx, ldap_instance_t *inst, dns_zone_t *zone,
 	CHECK(zr_get_zone_path(mctx, ldap_instance_getsettings_local(inst),
 			       dns_zone_getorigin(zone),
 			       (issecure ? "signed" : "raw"), &file_name));
-	CHECK(dns_zone_setfile(zone, str_buf(file_name)));
+	CHECK(dns_zone_setfile(zone, str_buf(file_name), dns_masterformat_text,
+			       &dns_master_style_default));
 	if (issecure == true) {
 		CHECK(zr_get_zone_path(mctx,
 				       ldap_instance_getsettings_local(inst),
