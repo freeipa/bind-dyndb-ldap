@@ -1003,8 +1003,9 @@ create_zone(ldap_instance_t * const inst, const char * const dn,
 	dns_zone_setclass(raw, dns_rdataclass_in);
 	dns_zone_settype(raw, dns_zone_master);
 	/* dns_zone_setview(raw, view); */
-	CHECK(dns_zone_setdbtype(raw, sizeof(ldap_argv)/sizeof(ldap_argv[0]),
-				 ldap_argv));
+	/* dns_zone_setdbtype is now void as it could no longer return */
+	dns_zone_setdbtype(raw, sizeof(ldap_argv)/sizeof(ldap_argv[0]),
+			   ldap_argv);
 	CHECK(configure_paths(inst->mctx, inst, raw, false));
 
 	if (want_secure == false) {
@@ -1016,7 +1017,9 @@ create_zone(ldap_instance_t * const inst, const char * const dn,
 		dns_zone_setclass(secure, dns_rdataclass_in);
 		dns_zone_settype(secure, dns_zone_master);
 		/* dns_zone_setview(secure, view); */
-		CHECK(dns_zone_setdbtype(secure, 1, rbt_argv));
+		/* dns_zone_setdbtype is now void as it could no longer
+		 * return */
+		dns_zone_setdbtype(secure, 1, rbt_argv);
 		CHECK(dns_zonemgr_managezone(inst->zmgr, secure));
 		CHECK(dns_zone_link(secure, raw));
 		dns_zone_rekey(secure, true);
