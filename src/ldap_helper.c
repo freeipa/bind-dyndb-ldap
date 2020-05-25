@@ -670,13 +670,16 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name, const char *parameters,
 			      mctx, &ldap_inst->db_imp));
 
 	/* Start the watcher thread */
-	result = isc_thread_create(ldap_syncrepl_watcher, ldap_inst,
-				   &ldap_inst->watcher);
-	if (result != ISC_R_SUCCESS) {
-		ldap_inst->watcher = 0;
-		log_error("Failed to create syncrepl watcher thread");
-		goto cleanup;
-	}
+	/* isc_thread_create assert internally on failure */
+	isc_thread_create(ldap_syncrepl_watcher, ldap_inst,
+			  &ldap_inst->watcher);
+	/*
+	 * if (result != ISC_R_SUCCESS) {
+	 *	ldap_inst->watcher = 0;
+	 *	log_error("Failed to create syncrepl watcher thread");
+	 *	goto cleanup;
+	 * }
+	 */
 
 cleanup:
 	if (forwarders_list != NULL)
@@ -718,8 +721,8 @@ ldap_syncrepl_watcher_shutdown(ldap_instance_t *ldap_inst)
 				  "(already terminated?)");
 	}
 
-	RUNTIME_CHECK(isc_thread_join(ldap_inst->watcher, NULL)
-		      == ISC_R_SUCCESS);
+	/* isc_thread_join assert internally on failure */
+	isc_thread_join(ldap_inst->watcher, NULL);
 }
 
 void
