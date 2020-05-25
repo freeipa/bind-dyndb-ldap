@@ -495,8 +495,8 @@ settings_set_create(isc_mem_t *mctx, const setting_t default_settings[],
 	isc_mem_attach(mctx, &new_set->mctx);
 
 	CHECKED_MEM_GET_PTR(mctx, new_set->lock);
-	result = isc_mutex_init(new_set->lock);
-	INSIST(result == ISC_R_SUCCESS);
+	/* isc_mutex_init failures are now fatal */
+	isc_mutex_init(new_set->lock);
 
 	new_set->parent_set = parent_set;
 
@@ -533,7 +533,8 @@ settings_set_free(settings_set_t **set) {
 		mctx = (*set)->mctx;
 
 		if ((*set)->lock != NULL) {
-			DESTROYLOCK((*set)->lock);
+			/* isc_mutex_destroy failures are now fatal */
+			isc_mutex_destroy((*set)->lock);
 			SAFE_MEM_PUT_PTR(mctx, (*set)->lock);
 		}
 

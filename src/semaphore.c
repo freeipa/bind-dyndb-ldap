@@ -34,19 +34,21 @@ isc_interval_t conn_wait_timeout = { 3, 0 };
 isc_result_t
 semaphore_init(semaphore_t *sem, int value)
 {
-	isc_result_t result;
+	isc_result_t result = ISC_R_SUCCESS;
 
 	REQUIRE(sem != NULL);
 	REQUIRE(value > 0);
 
 	sem->value = value;
-	result = isc_mutex_init(&sem->mutex);
-	if (result != ISC_R_SUCCESS)
-		return result;
-
-	result = isc_condition_init(&sem->cond);
-	if (result != ISC_R_SUCCESS)
-		DESTROYLOCK(&sem->mutex);
+	/* isc_mutex_init and isc_condition_init failures are now fatal */
+	isc_mutex_init(&sem->mutex);
+	isc_condition_init(&sem->cond);
+	/*
+	 * if (result != ISC_R_SUCCESS) {
+	 *	// isc_mutex_destroy failures are now fatal
+	 *	isc_mutex_destroy(&sem->mutex);
+	 * }
+	 */
 
 	return result;
 }
@@ -62,8 +64,9 @@ semaphore_destroy(semaphore_t *sem)
 	if (sem == NULL)
 		return;
 
-	RUNTIME_CHECK(isc_mutex_destroy(&sem->mutex) == ISC_R_SUCCESS);
-	RUNTIME_CHECK(isc_condition_destroy(&sem->cond) == ISC_R_SUCCESS);
+	/* isc_mutex_destroy and isc_condition_destroy are now fatal */
+	isc_mutex_destroy(&sem->mutex);
+	isc_condition_destroy(&sem->cond);
 }
 
 /**

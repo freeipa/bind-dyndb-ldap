@@ -153,8 +153,8 @@ cleanup:
 #endif
 	dns_db_detach(&ldapdb->rbtdb);
 	dns_name_free(&ldapdb->common.origin, ldapdb->common.mctx);
-	RUNTIME_CHECK(isc_mutex_destroy(&ldapdb->newversion_lock)
-		      == ISC_R_SUCCESS);
+	/* isc_mutex_destroy is failing fatal now */
+	isc_mutex_destroy(&ldapdb->newversion_lock);
 	isc_mem_putanddetach(&ldapdb->common.mctx, ldapdb, sizeof(*ldapdb));
 }
 
@@ -986,7 +986,8 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 	ZERO_PTR(ldapdb);
 
 	isc_mem_attach(mctx, &ldapdb->common.mctx);
-	CHECK(isc_mutex_init(&ldapdb->newversion_lock));
+	/* isc_mutex_init and isc_condition_init failures are now fatal */
+	isc_mutex_init(&ldapdb->newversion_lock);
 	lock_ready = true;
 	dns_name_init(&ldapdb->common.origin, NULL);
 	isc_ondestroy_init(&ldapdb->common.ondest);
@@ -1012,9 +1013,10 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 
 cleanup:
 	if (ldapdb != NULL) {
-		if (lock_ready == true)
-			RUNTIME_CHECK(isc_mutex_destroy(&ldapdb->newversion_lock)
-				      == ISC_R_SUCCESS);
+		if (lock_ready == true) {
+			/* isc_mutex_destroy errors are now fatal */
+			isc_mutex_destroy(&ldapdb->newversion_lock);
+		}
 		if (dns_name_dynamic(&ldapdb->common.origin))
 			dns_name_free(&ldapdb->common.origin, mctx);
 

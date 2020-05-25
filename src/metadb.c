@@ -45,7 +45,8 @@ metadb_new(isc_mem_t *mctx, metadb_t **mdbp) {
 
 	isc_mem_attach(mctx, &mdb->mctx);
 
-	CHECK(isc_mutex_init(&mdb->newversion_lock));
+	/* isc_mutex_init and isc_condition_init failures are now fatal */
+	isc_mutex_init(&mdb->newversion_lock);
 	lock_ready = true;
 	CHECK(dns_db_create(mctx, "rbt", dns_rootname, dns_dbtype_zone,
 			    dns_rdataclass_in, 0, NULL, &mdb->rbtdb));
@@ -55,9 +56,10 @@ metadb_new(isc_mem_t *mctx, metadb_t **mdbp) {
 
 cleanup:
 	if (mdb != NULL) {
-		if (lock_ready == true)
-			RUNTIME_CHECK(isc_mutex_destroy(&mdb->newversion_lock)
-				      == ISC_R_SUCCESS);
+		if (lock_ready == true) {
+			/* isc_mutex_destroy errors are now fatal */
+			isc_mutex_destroy(&mdb->newversion_lock);
+		}
 		MEM_PUT_AND_DETACH(mdb);
 	}
 	return result;
@@ -79,7 +81,8 @@ metadb_destroy(metadb_t **mdbp) {
 	dns_db_dump(mdb->rbtdb, NULL, "/tmp/mdb.db");
 #endif
 	dns_db_detach(&mdb->rbtdb);
-	RUNTIME_CHECK(isc_mutex_destroy(&mdb->newversion_lock) == ISC_R_SUCCESS);
+	/* isc_mutex_destroy errors are now fatal */
+	isc_mutex_destroy(&mdb->newversion_lock);
 	MEM_PUT_AND_DETACH(mdb);
 
 	*mdbp = NULL;

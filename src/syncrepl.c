@@ -277,9 +277,11 @@ sync_ctx_init(isc_mem_t *mctx, ldap_instance_t *inst, sync_ctx_t **sctxp) {
 
 	sctx->inst = inst;
 
-	CHECK(isc_mutex_init(&sctx->mutex));
+	/* isc_mutex_init failures are now fatal */
+	isc_mutex_init(&sctx->mutex);
 	lock_ready = true;
-	CHECK(isc_condition_init(&sctx->cond));
+	/* isc_mutex_init failures are now fatal */
+	isc_condition_init(&sctx->cond);
 	cond_ready = true;
 
 	/* refcount includes ldap_inst->task implicitly */
@@ -297,8 +299,10 @@ sync_ctx_init(isc_mem_t *mctx, ldap_instance_t *inst, sync_ctx_t **sctxp) {
 	return ISC_R_SUCCESS;
 
 cleanup:
-	if (lock_ready == true)
-		DESTROYLOCK(&sctx->mutex);
+	if (lock_ready == true) {
+		/* isc_mutex_destroy failures are now fatal */
+		isc_mutex_destroy(&sctx->mutex);
+	}
 	if (cond_ready == true)
 		RUNTIME_CHECK(isc_condition_destroy(&sctx->cond)
 			      == ISC_R_SUCCESS);
@@ -337,7 +341,8 @@ sync_ctx_free(sync_ctx_t **sctxp) {
 	isc_refcount_destroy(&sctx->task_cnt);
 	UNLOCK(&sctx->mutex);
 
-	DESTROYLOCK(&(*sctxp)->mutex);
+	/* isc_mutex_destroy is void now */
+	isc_mutex_destroy(&(*sctxp)->mutex);
 	MEM_PUT_AND_DETACH(*sctxp);
 }
 

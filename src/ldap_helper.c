@@ -659,7 +659,8 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name, const char *parameters,
 	CHECK(fwdr_create(ldap_inst->mctx, &ldap_inst->fwd_register));
 	CHECK(mldap_new(mctx, &ldap_inst->mldapdb));
 
-	CHECK(isc_mutex_init(&ldap_inst->kinit_lock));
+	/* isc_mutex_init and isc_condition_init failures are now fatal */
+	isc_mutex_init(&ldap_inst->kinit_lock);
 
 	CHECK(ldap_pool_create(mctx, connections, &ldap_inst->pool));
 	CHECK(ldap_pool_connect(ldap_inst->pool, ldap_inst));
@@ -752,7 +753,8 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 	if (ldap_inst->task != NULL)
 		isc_task_detach(&ldap_inst->task);
 
-	DESTROYLOCK(&ldap_inst->kinit_lock);
+	/* isc_mutex_init and isc_condition_init failures are now fatal */
+	isc_mutex_destroy(&ldap_inst->kinit_lock);
 
 	settings_set_free(&ldap_inst->global_settings);
 	settings_set_free(&ldap_inst->local_settings);
@@ -785,11 +787,14 @@ new_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
 	CHECKED_MEM_GET_PTR(pool->mctx, ldap_conn);
 	ZERO_PTR(ldap_conn);
 
-	result = isc_mutex_init(&ldap_conn->lock);
-	if (result != ISC_R_SUCCESS) {
-		SAFE_MEM_PUT_PTR(pool->mctx, ldap_conn);
-		return result;
-	}
+	/* isc_mutex_init and isc_condition_init failures are now fatal */
+	isc_mutex_init(&ldap_conn->lock);
+	/*
+	 * if (result != ISC_R_SUCCESS) {
+	 *	SAFE_MEM_PUT_PTR(pool->mctx, ldap_conn);
+	 *	return result;
+	 * }
+	 */
 
 	isc_mem_attach(pool->mctx, &ldap_conn->mctx);
 
@@ -814,7 +819,8 @@ destroy_ldap_connection(ldap_connection_t **ldap_connp)
 	if (ldap_conn == NULL)
 		return;
 
-	DESTROYLOCK(&ldap_conn->lock);
+	 /* isc_mutex_init and isc_condition_init failures are now fatal */
+	isc_mutex_destroy(&ldap_conn->lock);
 	if (ldap_conn->handle != NULL)
 		ldap_unbind_ext_s(ldap_conn->handle, NULL, NULL);
 
