@@ -286,7 +286,8 @@ dns_to_ldap_dn_escape(isc_mem_t *mctx, const char * const dns_str, char ** ldap_
 			}
 			/* LDAP uses \xy escaping. "xy" represent two hexadecimal digits.*/
 			/* TODO: optimize to bit mask & rotate & dec->hex table? */
-			CHECK(isc_string_printf(esc_name + esc_idx, 4, "\\%02x", ascii_val));
+			/* isc_string_printf has been removed */
+			result = snprintf(esc_name + esc_idx, 4, "\\%02x", ascii_val);
 			esc_idx += 3; /* isc_string_printf wrote 4 bytes including '\0' */
 		}
 	}
@@ -430,24 +431,28 @@ isc_result_t
 rdatatype_to_ldap_attribute(dns_rdatatype_t rdtype, char *target,
 			    unsigned int size, bool unknown)
 {
-	isc_result_t result;
 	char rdtype_str[DNS_RDATATYPE_FORMATSIZE];
 
 	if (unknown) {
 		/* "UnknownRecord;TYPE65333" */
-		CHECK(isc_string_copy(target, size,
-				      LDAP_RDATATYPE_UNKNOWN_PREFIX));
+		/* isc_string_copy and isc_string_append have been removed */
+		if (strlcpy(target, LDAP_RDATATYPE_UNKNOWN_PREFIX, size)
+		    >= size)
+			return ISC_R_NOSPACE;
 		snprintf(rdtype_str, sizeof(rdtype_str), "TYPE%u", rdtype);
-		CHECK(isc_string_append(target, size, rdtype_str));
+		if (strlcat(target, rdtype_str, size) >= size)
+			return ISC_R_NOSPACE;
 	} else {
 		/* "ARecord" */
 		dns_rdatatype_format(rdtype, rdtype_str, DNS_RDATATYPE_FORMATSIZE);
-		CHECK(isc_string_copy(target, size, rdtype_str));
-		CHECK(isc_string_append(target, size, LDAP_RDATATYPE_SUFFIX));
+		/* isc_string_copy and isc_string_append have been removed */
+		if (strlcpy(target, rdtype_str, size) >= size)
+			return ISC_R_NOSPACE;
+		if (strlcat(target, LDAP_RDATATYPE_SUFFIX, size) >= size)
+			return ISC_R_NOSPACE;
 	}
 
-cleanup:
-	return result;
+	return ISC_R_SUCCESS;
 }
 
 /**
@@ -463,8 +468,9 @@ rdata_to_generic(dns_rdata_t *rdata, isc_buffer_t *target)
 	dns_rdata_toregion(rdata, &rdata_reg);
 	REQUIRE(rdata_reg.length <= 65535);
 
-	result = isc_string_printf(buf, sizeof(buf), "\\# %u", rdata_reg.length);
-	INSIST(result == ISC_R_SUCCESS);
+	/* isc_string_printf has been removed */
+	result = snprintf(buf, sizeof(buf), "\\# %u", rdata_reg.length);
+	RUNTIME_CHECK(result < sizeof(buf));
 	isc_buffer_putstr(target, buf);
 	if (rdata_reg.length != 0U) {
 		isc_buffer_putstr(target, " ");
