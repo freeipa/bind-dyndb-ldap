@@ -91,7 +91,7 @@ rbt_iter_first(isc_mem_t *mctx, dns_rbt_t *rbt, isc_rwlock_t *rwlock,
 	ZERO_PTR(iter);
 
 	isc_mem_attach(mctx, &iter->mctx);
-	dns_rbtnodechain_init(&iter->chain, mctx);
+	dns_rbtnodechain_init(&iter->chain);
 	iter->rbt = rbt;
 	iter->rwlock = rwlock;
 	iter->locktype = isc_rwlocktype_read;
