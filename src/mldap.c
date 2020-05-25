@@ -118,17 +118,12 @@ void mldap_cur_generation_bump(mldapdb_t *mldap) {
  * isc_refcount_t abstractions and returns underlying type used for storing the
  * reference counter value.
  */
-STATIC_ASSERT((uint32_t)
-		(typeof(((isc_refcount_t *)0)->refs))
-		-1
-	      == 0xFFFFFFFF, \
-	      "negative isc_refcount_t cannot be properly shortened to 32 bits");
 
-STATIC_ASSERT((uint32_t)
-		(typeof(((isc_refcount_t *)0)->refs))
-		0x90ABCDEF12345678
-	      == 0x12345678, \
-	      "positive isc_refcount_t cannot be properly shortened to 32 bits");
+/* isc_refcount_t is simply atomic_uint_fast32_t now */
+STATIC_ASSERT((uint32_t)((isc_refcount_t) -1) == 0xFFFFFFFF, \
+	      "negative isc_refcount_t cannot be properly shortened to 32 bits");
+STATIC_ASSERT((uint32_t)((isc_refcount_t) 0x90ABCDEF12345678) == 0x12345678, \
+	      "negative isc_refcount_t cannot be properly shortened to 32 bits");
 
 /**
  * Get current MetaLDAP generation number.
