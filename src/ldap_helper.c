@@ -1072,7 +1072,7 @@ load_zone(dns_zone_t *zone, bool log) {
 	uint32_t serial;
 	dns_zone_t *raw = NULL;
 
-	result = dns_zone_load(zone);
+	result = dns_zone_load(zone, false);
 	if (result != ISC_R_SUCCESS && result != DNS_R_UPTODATE
 	    && result != DNS_R_DYNAMIC && result != DNS_R_CONTINUE)
 		goto cleanup;
