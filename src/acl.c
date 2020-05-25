@@ -200,9 +200,9 @@ get_types(isc_mem_t *mctx, const cfg_obj_t *obj, dns_rdatatype_t **typesp,
 	obj = cfg_tuple_get(obj, "types");
 
 	n = count_list_elements(obj);
-	if (n > 0)
-		CHECKED_MEM_GET(mctx, types, n * sizeof(dns_rdatatype_t));
-
+	if (n > 0) {
+		types = isc_mem_get(mctx, n * sizeof(dns_rdatatype_t));
+	}
 	i = 0;
 	for (el = cfg_list_first(obj); el != NULL; el = cfg_list_next(el)) {
 		const cfg_obj_t *typeobj;

@@ -111,7 +111,7 @@ zr_create(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
 	REQUIRE(glob_settings != NULL);
 	REQUIRE(zrp != NULL && *zrp == NULL);
 
-	CHECKED_MEM_GET_PTR(mctx, zr);
+	zr = isc_mem_get(mctx, sizeof(*(zr)));
 	ZERO_PTR(zr);
 	isc_mem_attach(mctx, &zr->mctx);
 	CHECK(dns_rbt_create(mctx, delete_zone_info, mctx, &zr->rbt));
@@ -123,11 +123,10 @@ zr_create(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
 	return ISC_R_SUCCESS;
 
 cleanup:
-	if (zr != NULL) {
-		if (zr->rbt != NULL)
-			dns_rbt_destroy(&zr->rbt);
-		MEM_PUT_AND_DETACH(zr);
+	if (zr->rbt != NULL) {
+		dns_rbt_destroy(&zr->rbt);
 	}
+	MEM_PUT_AND_DETACH(zr);
 
 	return result;
 }
@@ -272,7 +271,7 @@ create_zone_info(isc_mem_t * const mctx, dns_zone_t * const raw,
 	REQUIRE(dn != NULL);
 	REQUIRE(zinfop != NULL && *zinfop == NULL);
 
-	CHECKED_MEM_GET_PTR(mctx, zinfo);
+	zinfo = isc_mem_get(mctx, sizeof(*(zinfo)));
 	ZERO_PTR(zinfo);
 	CHECKED_MEM_STRDUP(mctx, dn, zinfo->dn);
 	dns_zone_attach(raw, &zinfo->raw);

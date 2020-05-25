@@ -31,7 +31,7 @@ fwdr_create(isc_mem_t *mctx, fwd_register_t **fwdrp)
 
 	REQUIRE(fwdrp != NULL && *fwdrp == NULL);
 
-	CHECKED_MEM_GET_PTR(mctx, fwdr);
+	fwdr = isc_mem_get(mctx, sizeof(*(fwdr)));
 	ZERO_PTR(fwdr);
 	isc_mem_attach(mctx, &fwdr->mctx);
 	CHECK(dns_rbt_create(mctx, NULL, NULL, &fwdr->rbt));
@@ -41,11 +41,10 @@ fwdr_create(isc_mem_t *mctx, fwd_register_t **fwdrp)
 	return ISC_R_SUCCESS;
 
 cleanup:
-	if (fwdr != NULL) {
-		if (fwdr->rbt != NULL)
-			dns_rbt_destroy(&fwdr->rbt);
-		MEM_PUT_AND_DETACH(fwdr);
+	if (fwdr->rbt != NULL) {
+		dns_rbt_destroy(&fwdr->rbt);
 	}
+	MEM_PUT_AND_DETACH(fwdr);
 
 	return result;
 }

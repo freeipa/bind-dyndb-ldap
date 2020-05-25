@@ -990,7 +990,7 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 	REQUIRE(driverarg != NULL);
 	REQUIRE(dbp != NULL && *dbp == NULL);
 
-	CHECKED_MEM_GET_PTR(mctx, ldapdb);
+	ldapdb = isc_mem_get(mctx, sizeof(*(ldapdb)));
 	ZERO_PTR(ldapdb);
 
 	isc_mem_attach(mctx, &ldapdb->common.mctx);

@@ -495,7 +495,7 @@ settings_set_create(isc_mem_t *mctx, const setting_t default_settings[],
 	ZERO_PTR(new_set);
 	isc_mem_attach(mctx, &new_set->mctx);
 
-	CHECKED_MEM_GET_PTR(mctx, new_set->lock);
+	new_set->lock = isc_mem_get(mctx, sizeof(*(new_set->lock)));
 	/* isc_mutex_init failures are now fatal */
 	isc_mutex_init(new_set->lock);
 

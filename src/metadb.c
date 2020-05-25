@@ -40,7 +40,7 @@ metadb_new(isc_mem_t *mctx, metadb_t **mdbp) {
 
 	REQUIRE(mdbp != NULL && *mdbp == NULL);
 
-	CHECKED_MEM_GET_PTR(mctx, mdb);
+	mdb = isc_mem_get(mctx, sizeof(*(mdb)));
 	ZERO_PTR(mdb);
 
 	isc_mem_attach(mctx, &mdb->mctx);
@@ -55,13 +55,11 @@ metadb_new(isc_mem_t *mctx, metadb_t **mdbp) {
 	return result;
 
 cleanup:
-	if (mdb != NULL) {
-		if (lock_ready == true) {
-			/* isc_mutex_destroy errors are now fatal */
-			isc_mutex_destroy(&mdb->newversion_lock);
-		}
-		MEM_PUT_AND_DETACH(mdb);
+	if (lock_ready == true) {
+	/* isc_mutex_destroy errors are now fatal */
+		isc_mutex_destroy(&mdb->newversion_lock);
 	}
+	MEM_PUT_AND_DETACH(mdb);
 	return result;
 }
 
@@ -163,7 +161,7 @@ metadb_iterator_create(metadb_t *mdb, metadb_iter_t **miterp) {
 	REQUIRE(mdb != NULL);
 	REQUIRE(miterp != NULL && *miterp == NULL);
 
-	CHECKED_MEM_GET_PTR(mdb->mctx, miter);
+	miter = isc_mem_get(mdb->mctx, sizeof(*(miter)));
 	ZERO_PTR(miter);
 
 	isc_mem_attach(mdb->mctx, &miter->mctx);
@@ -261,7 +259,7 @@ metadb_node_init(metadb_t *mdb, dns_dbversion_t *ver, dns_name_t *mname,
 
 	REQUIRE(nodep != NULL && *nodep == NULL);
 
-	CHECKED_MEM_GET_PTR(mdb->mctx, node);
+	node = isc_mem_get(mdb->mctx, sizeof(*(node)));
 	ZERO_PTR(node);
 
 	isc_mem_attach(mdb->mctx, &node->mctx);

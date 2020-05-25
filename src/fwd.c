@@ -49,7 +49,6 @@ buffer_append_str(void *closure, const char *text, int textlen) {
 	isc_buffer_region(out_buf, &old_space);
 	new_space.length = isc_buffer_length(out_buf) + textlen + 1;
 	new_space.base = isc_mem_get(out_buf->mctx, new_space.length);
-	RUNTIME_CHECK(new_space.base != NULL);
 	isc_buffer_reinit(out_buf, new_space.base, new_space.length);
 	if (old_space.base != NULL)
 		isc_mem_put(out_buf->mctx, old_space.base, old_space.length);
@@ -272,7 +271,7 @@ fwd_parse_str(const char *fwdrs_str, isc_mem_t *mctx,
 		addr = *cfg_obj_assockaddr(fwdr_cfg);
 		if (isc_sockaddr_getport(&addr) == 0)
 			isc_sockaddr_setport(&addr, port);
-		CHECKED_MEM_GET_PTR(mctx, fwdr);
+		fwdr = isc_mem_get(mctx, sizeof(*(fwdr)));
 		fwdr->addr = addr;
 		fwdr->dscp = cfg_obj_getdscp(fwdr_cfg);
 		ISC_LINK_INIT(fwdr, link);

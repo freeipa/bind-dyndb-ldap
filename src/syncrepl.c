@@ -269,7 +269,7 @@ sync_ctx_init(isc_mem_t *mctx, ldap_instance_t *inst, sync_ctx_t **sctxp) {
 
 	REQUIRE(sctxp != NULL && *sctxp == NULL);
 
-	CHECKED_MEM_GET_PTR(mctx, sctx);
+	sctx = isc_mem_get(mctx, sizeof(*(sctx)));
 	ZERO_PTR(sctx);
 	isc_mem_attach(mctx, &sctx->mctx);
 
@@ -447,13 +447,12 @@ sync_state_reset(sync_ctx_t *sctx) {
  */
 isc_result_t
 sync_task_add(sync_ctx_t *sctx, isc_task_t *task) {
-	isc_result_t result = ISC_R_SUCCESS;
 	task_element_t *newel = NULL;
 
 	REQUIRE(sctx != NULL);
 	REQUIRE(ISCAPI_TASK_VALID(task));
 
-	CHECKED_MEM_GET_PTR(sctx->mctx, newel);
+	newel = isc_mem_get(sctx->mctx, sizeof(*(newel)));
 	ZERO_PTR(newel);
 	ISC_LINK_INIT(newel, link);
 	newel->task = NULL;
@@ -468,8 +467,7 @@ sync_task_add(sync_ctx_t *sctx, isc_task_t *task) {
 	log_debug(2, "adding task %p to syncrepl list; %lu tasks in list",
 		  task, isc_refcount_current(&sctx->task_cnt));
 
-cleanup:
-	return result;
+	return ISC_R_SUCCESS;
 }
 
 /**

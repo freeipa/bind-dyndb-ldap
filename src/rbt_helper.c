@@ -87,7 +87,7 @@ rbt_iter_first(isc_mem_t *mctx, dns_rbt_t *rbt, isc_rwlock_t *rwlock,
 	REQUIRE(rwlock != NULL);
 	REQUIRE(iterp != NULL && *iterp == NULL);
 
-	CHECKED_MEM_GET_PTR(mctx, iter);
+	iter = isc_mem_get(mctx, sizeof(*(iter)));
 	ZERO_PTR(iter);
 
 	isc_mem_attach(mctx, &iter->mctx);

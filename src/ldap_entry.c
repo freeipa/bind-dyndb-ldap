@@ -68,7 +68,6 @@ static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_attr_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 		 ldap_attribute_t *attr)
 {
-	isc_result_t result;
 	char **values;
 	ldap_value_t *val;
 
@@ -84,7 +83,7 @@ ldap_attr_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 	attr->ldap_values = values;
 
 	for (unsigned int i = 0; values[i] != NULL; i++) {
-		CHECKED_MEM_GET_PTR(mctx, val);
+		val = isc_mem_get(mctx, sizeof(*(val)));
 		val->value = values[i];
 		INIT_LINK(val, link);
 
@@ -92,12 +91,6 @@ ldap_attr_create(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 	}
 
 	return ISC_R_SUCCESS;
-
-cleanup:
-	ldap_valuelist_destroy(mctx, &attr->values);
-	ldap_value_free(values);
-
-	return result;
 }
 
 /**
@@ -112,7 +105,7 @@ ldap_entry_init(isc_mem_t *mctx, ldap_entry_t **entryp) {
 	REQUIRE(entryp != NULL);
 	REQUIRE(*entryp == NULL);
 
-	CHECKED_MEM_GET_PTR(mctx, entry);
+	entry = isc_mem_get(mctx, sizeof(*(entry)));
 	ZERO_PTR(entry);
 	isc_mem_attach(mctx, &entry->mctx);
 	INIT_LIST(entry->attrs);
@@ -120,7 +113,7 @@ ldap_entry_init(isc_mem_t *mctx, ldap_entry_t **entryp) {
 	INIT_BUFFERED_NAME(entry->fqdn);
 	INIT_BUFFERED_NAME(entry->zone_name);
 
-	CHECKED_MEM_GET(mctx, entry->rdata_target_mem, DNS_RDATA_MAXLENGTH);
+	entry->rdata_target_mem = isc_mem_get(mctx, DNS_RDATA_MAXLENGTH);
 	CHECK(isc_lex_create(mctx, TOKENSIZ, &entry->lex));
 
 	*entryp = entry;
@@ -203,7 +196,7 @@ ldap_entry_parse(isc_mem_t *mctx, LDAP *ld, LDAPMessage *ldap_entry,
 	for (attribute = ldap_first_attribute(ld, ldap_entry, &ber);
 	     attribute != NULL;
 	     attribute = ldap_next_attribute(ld, ldap_entry, ber)) {
-		CHECKED_MEM_GET_PTR(mctx, attr);
+		attr = isc_mem_get(mctx, sizeof(*(attr)));
 		ZERO_PTR(attr);
 
 		attr->name = attribute;

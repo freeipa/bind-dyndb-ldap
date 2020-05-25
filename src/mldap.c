@@ -59,7 +59,7 @@ mldap_new(isc_mem_t *mctx, mldapdb_t **mldapp) {
 
 	REQUIRE(mldapp != NULL && *mldapp == NULL);
 
-	CHECKED_MEM_GET_PTR(mctx, mldap);
+	mldap = isc_mem_get(mctx, sizeof(*(mldap)));
 	ZERO_PTR(mldap);
 	isc_mem_attach(mctx, &mldap->mctx);
 
@@ -425,7 +425,7 @@ mldap_iter_deadnodes_start(mldapdb_t *mldap, metadb_iter_t **iterp,
 	REQUIRE(iterp != NULL && *iterp == NULL);
 
 	CHECK(metadb_iterator_create(mldap->mdb, &iter));
-	CHECKED_MEM_GET(mldap->mctx, iter->state, sizeof(uint32_t));
+	iter->state = isc_mem_get(mldap->mctx, sizeof(uint32_t));
 	result = dns_dbiterator_seek(iter->iter, &uuid_rootname);
 	if (result == ISC_R_NOTFOUND) /* metaLDAP is empty */
 		CLEANUP_WITH(ISC_R_NOMORE);

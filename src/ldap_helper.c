@@ -551,7 +551,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name, const char *parameters,
 
 	REQUIRE(ldap_instp != NULL && *ldap_instp == NULL);
 
-	CHECKED_MEM_GET_PTR(mctx, ldap_inst);
+	ldap_inst = isc_mem_get(mctx, sizeof(*(ldap_inst)));
 	ZERO_PTR(ldap_inst);
 	isc_refcount_init(&ldap_inst->errors, 0);
 	isc_mem_attach(mctx, &ldap_inst->mctx);
@@ -790,13 +790,12 @@ destroy_ldap_instance(ldap_instance_t **ldap_instp)
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 new_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
 {
-	isc_result_t result;
 	ldap_connection_t *ldap_conn;
 
 	REQUIRE(pool != NULL);
 	REQUIRE(ldap_connp != NULL && *ldap_connp == NULL);
 
-	CHECKED_MEM_GET_PTR(pool->mctx, ldap_conn);
+	ldap_conn = isc_mem_get(pool->mctx, sizeof(*(ldap_conn)));
 	ZERO_PTR(ldap_conn);
 
 	/* isc_mutex_init and isc_condition_init failures are now fatal */
@@ -813,11 +812,6 @@ new_ldap_connection(ldap_pool_t *pool, ldap_connection_t **ldap_connp)
 	*ldap_connp = ldap_conn;
 
 	return ISC_R_SUCCESS;
-
-cleanup:
-	destroy_ldap_connection(&ldap_conn);
-
-	return result;
 }
 
 static void
@@ -2283,7 +2277,7 @@ findrdatatype_or_create(isc_mem_t *mctx, ldapdb_rdatalist_t *rdatalist,
 
 	result = ldapdb_rdatalist_findrdatatype(rdatalist, rdtype, &rdlist);
 	if (result != ISC_R_SUCCESS) {
-		CHECKED_MEM_GET_PTR(mctx, rdlist);
+		rdlist = isc_mem_get(mctx, sizeof(*(rdlist)));
 
 		dns_rdatalist_init(rdlist);
 		rdlist->rdclass = rdclass;
@@ -2692,11 +2686,11 @@ parse_rdata(isc_mem_t *mctx, ldap_entry_t *entry,
 	CHECK(dns_rdata_fromtext(NULL, rdclass, rdtype, entry->lex, origin,
 				 0, mctx, &entry->rdata_target, NULL));
 
-	CHECKED_MEM_GET_PTR(mctx, rdata);
+	rdata = isc_mem_get(mctx, sizeof(*(rdata)));
 	dns_rdata_init(rdata);
 
 	rdatamem.length = isc_buffer_usedlength(&entry->rdata_target);
-	CHECKED_MEM_GET(mctx, rdatamem.base, rdatamem.length);
+	rdatamem.base = isc_mem_get(mctx, rdatamem.length);
 
 	memcpy(rdatamem.base, isc_buffer_base(&entry->rdata_target),
 	       rdatamem.length);
@@ -3177,22 +3171,15 @@ isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_mod_create(isc_mem_t *mctx, LDAPMod **changep)
 {
 	LDAPMod *change = NULL;
-	isc_result_t result;
 
 	REQUIRE(changep != NULL && *changep == NULL);
 
-	CHECKED_MEM_GET_PTR(mctx, change);
+	change = isc_mem_get(mctx, sizeof(*(change)));
 	ZERO_PTR(change);
-	CHECKED_MEM_GET(mctx, change->mod_type, LDAP_ATTR_FORMATSIZE);
+	change->mod_type = isc_mem_get(mctx, LDAP_ATTR_FORMATSIZE);
 
 	*changep = change;
 	return ISC_R_SUCCESS;
-
-cleanup:
-	if (change != NULL)
-		SAFE_MEM_PUT_PTR(mctx, change);
-
-	return result;
 }
 
 /**
@@ -3604,13 +3591,13 @@ ldap_pool_create(isc_mem_t *mctx, unsigned int connections, ldap_pool_t **poolp)
 
 	REQUIRE(poolp != NULL && *poolp == NULL);
 
-	CHECKED_MEM_GET(mctx, pool, sizeof(*pool));
+	pool = isc_mem_get(mctx, sizeof(*pool));
 	ZERO_PTR(pool);
 	isc_mem_attach(mctx, &pool->mctx);
 	
 	CHECK(semaphore_init(&pool->conn_semaphore, connections));
-	CHECKED_MEM_GET(mctx, pool->conns,
-			connections * sizeof(ldap_connection_t *));
+	pool->conns = isc_mem_get(mctx,
+				  connections * sizeof(ldap_connection_t *));
 	memset(pool->conns, 0, connections * sizeof(ldap_connection_t *));
 	pool->connections = connections;
 
