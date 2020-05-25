@@ -1083,11 +1083,11 @@ load_zone(dns_zone_t *zone, bool log) {
 		zone = NULL;
 	}
 
-	CHECK(dns_zone_getserial2(raw, &serial));
+	CHECK(dns_zone_getserial(raw, &serial));
 	if (log == true)
 		dns_zone_log(raw, ISC_LOG_INFO, "loaded serial %u", serial);
 	if (zone != NULL) {
-		result = dns_zone_getserial2(zone, &serial);
+		result = dns_zone_getserial(zone, &serial);
 		if (result == ISC_R_SUCCESS && log == true)
 			dns_zone_log(zone, ISC_LOG_INFO, "loaded serial %u",
 				     serial);
@@ -3994,7 +3994,7 @@ update_restart:
 	/* Check if the zone is loaded or not.
 	 * No other function above returns DNS_R_NOTLOADED. */
 	if (sync_state == sync_finished)
-		result = dns_zone_getserial2(raw, &serial);
+		result = dns_zone_getserial(raw, &serial);
 
 cleanup:
 #ifdef RBTDB_DEBUG
@@ -4031,7 +4031,7 @@ cleanup:
 				     "caused by change in %s",
 				     ldap_entry_logname(entry));
 			zone_reloaded = true;
-			result = dns_zone_getserial2(raw, &serial);
+			result = dns_zone_getserial(raw, &serial);
 			if (result == ISC_R_SUCCESS)
 				goto update_restart;
 		} else {
