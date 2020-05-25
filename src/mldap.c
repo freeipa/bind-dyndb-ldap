@@ -107,7 +107,7 @@ mldap_closeversion(mldapdb_t *mldap, bool commit) {
 void mldap_cur_generation_bump(mldapdb_t *mldap) {
 	REQUIRE(mldap != NULL);
 
-	isc_refcount_increment0(&mldap->generation, NULL);
+	isc_refcount_increment0(&mldap->generation);
 }
 
 /*
