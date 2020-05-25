@@ -3,6 +3,8 @@
  */
 
 #include "config.h"
+#define HAVE_TLS 1
+#define HAVE_THREAD_LOCAL 1
 
 #include <dns/dyndb.h>
 #include <dns/diff.h>
