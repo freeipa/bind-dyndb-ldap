@@ -273,7 +273,7 @@ create_zone_info(isc_mem_t * const mctx, dns_zone_t * const raw,
 
 	zinfo = isc_mem_get(mctx, sizeof(*(zinfo)));
 	ZERO_PTR(zinfo);
-	CHECKED_MEM_STRDUP(mctx, dn, zinfo->dn);
+	zinfo->dn = isc_mem_strdup(mctx, dn);
 	dns_zone_attach(raw, &zinfo->raw);
 	if (secure != NULL)
 		dns_zone_attach(secure, &zinfo->secure);

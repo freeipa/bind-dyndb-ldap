@@ -555,7 +555,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name, const char *parameters,
 	ZERO_PTR(ldap_inst);
 	isc_refcount_init(&ldap_inst->errors, 0);
 	isc_mem_attach(mctx, &ldap_inst->mctx);
-	CHECKED_MEM_STRDUP(mctx, db_name, ldap_inst->db_name);
+	ldap_inst->db_name = isc_mem_strdup(mctx, db_name);
 	dns_view_attach(dctx->view, &ldap_inst->view);
 	dns_zonemgr_attach(dctx->zmgr, &ldap_inst->zmgr);
 	isc_task_attach(dctx->task, &ldap_inst->task);
@@ -2398,7 +2398,7 @@ ldap_substitute_rr_template(isc_mem_t *mctx, const settings_set_t * set,
 		CLEANUP_WITH(ISC_R_UNEXPECTED);
 
 	CHECK(str_new(mctx, &replaced));
-	CHECKED_MEM_STRDUP(mctx, str_buf(orig_val), tmp);
+	tmp = isc_mem_strdup(mctx, str_buf(orig_val));
 
 	while (regexec(&regex, tmp + processed,
 		       sizeof(matches)/sizeof(regmatch_t),
@@ -2446,9 +2446,7 @@ ldap_substitute_rr_template(isc_mem_t *mctx, const settings_set_t * set,
 	result = ISC_R_SUCCESS;
 
 cleanup:
-	if (tmp != NULL)
-		isc_mem_free(mctx, tmp);
-
+	isc_mem_free(mctx, tmp);
 	str_destroy(&replaced);
 	return result;
 }
@@ -4176,7 +4174,7 @@ syncrepl_update(ldap_instance_t *inst, ldap_entry_t **entryp, int chgtype)
 
 	/* This code is disabled because we don't have UUID->DN database yet.
 	if (SYNCREPL_MODDN(chgtype)) {
-		CHECKED_MEM_STRDUP(mctx, prevdn_ldap, prevdn);
+		prevdn = isc_mem_strdup(mctx, prevdn_ldap);
 	}
 	*/
 
