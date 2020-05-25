@@ -64,9 +64,9 @@ semaphore_destroy(semaphore_t *sem)
 	if (sem == NULL)
 		return;
 
-	/* isc_mutex_destroy and isc_condition_destroy are now fatal */
+	/* isc_mutex_destroy is now fatal */
 	isc_mutex_destroy(&sem->mutex);
-	isc_condition_destroy(&sem->cond);
+	RUNTIME_CHECK(isc_condition_destroy(&sem->cond) == ISC_R_SUCCESS);
 }
 
 /**
