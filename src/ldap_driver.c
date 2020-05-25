@@ -1008,7 +1008,7 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 
 	CHECK(dns_name_dupwithoffsets(name, mctx, &ldapdb->common.origin));
 
-	CHECK(isc_refcount_init(&ldapdb->refs, 1));
+	isc_refcount_init(&ldapdb->refs, 1);
 	ldapdb->ldap_inst = driverarg;
 
 	CHECK(dns_db_create(mctx, "rbt", name, dns_dbtype_zone,

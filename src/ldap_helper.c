@@ -553,7 +553,7 @@ new_ldap_instance(isc_mem_t *mctx, const char *db_name, const char *parameters,
 
 	CHECKED_MEM_GET_PTR(mctx, ldap_inst);
 	ZERO_PTR(ldap_inst);
-	CHECK(isc_refcount_init(&ldap_inst->errors, 0));
+	isc_refcount_init(&ldap_inst->errors, 0);
 	isc_mem_attach(mctx, &ldap_inst->mctx);
 	CHECKED_MEM_STRDUP(mctx, db_name, ldap_inst->db_name);
 	dns_view_attach(dctx->view, &ldap_inst->view);

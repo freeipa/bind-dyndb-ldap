@@ -283,7 +283,7 @@ sync_ctx_init(isc_mem_t *mctx, ldap_instance_t *inst, sync_ctx_t **sctxp) {
 	cond_ready = true;
 
 	/* refcount includes ldap_inst->task implicitly */
-	CHECK(isc_refcount_init(&sctx->task_cnt, 0));
+	isc_refcount_init(&sctx->task_cnt, 0);
 	refcount_ready = true;
 
 	ISC_LIST_INIT(sctx->tasks);
