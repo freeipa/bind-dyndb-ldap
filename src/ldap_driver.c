@@ -998,8 +998,6 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 	isc_mutex_init(&ldapdb->newversion_lock);
 	lock_ready = true;
 	dns_name_init(&ldapdb->common.origin, NULL);
-	/* Remove whole unused ondestroy callback mechanism */
-	/* isc_ondestroy_init(&ldapdb->common.ondest); */
 
 	ldapdb->common.magic = DNS_DB_MAGIC;
 	ldapdb->common.impmagic = LDAPDB_MAGIC;
