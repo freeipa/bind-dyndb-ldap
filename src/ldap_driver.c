@@ -127,6 +127,8 @@ attach(dns_db_t *source, dns_db_t **targetp)
 static void ATTR_NONNULLS
 free_ldapdb(ldapdb_t *ldapdb)
 {
+	REQUIRE(VALID_LDAPDB(ldapdb));
+
 #ifdef RBTDB_DEBUG
 	isc_result_t result;
 	dns_dbversion_t *version = NULL;
@@ -163,14 +165,14 @@ cleanup:
 static void
 detach(dns_db_t **dbp)
 {
+	REQUIRE(dbp != NULL && VALID_LDAPDB((ldapdb_t *)(*dbp)));
 	ldapdb_t *ldapdb = (ldapdb_t *)(*dbp);
 
-	REQUIRE(VALID_LDAPDB(ldapdb));
+	*dbp = NULL;
 
 	if (isc_refcount_decrement(&ldapdb->refs) == 1) {
 		free_ldapdb(ldapdb);
 	}
-	*dbp = NULL;
 }
 
 
