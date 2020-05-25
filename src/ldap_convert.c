@@ -237,6 +237,7 @@ dns_to_ldap_dn_escape(isc_mem_t *mctx, const char * const dns_str, char ** ldap_
 	int idx_symb_first = -1; /* index of first "nice" printable symbol in dns_str */
 	int dns_idx = 0;
 	int esc_idx = 0;
+	int s_len;
 
 	REQUIRE(dns_str != NULL);
 	REQUIRE(ldap_name != NULL && *ldap_name == NULL);
@@ -287,8 +288,12 @@ dns_to_ldap_dn_escape(isc_mem_t *mctx, const char * const dns_str, char ** ldap_
 			/* LDAP uses \xy escaping. "xy" represent two hexadecimal digits.*/
 			/* TODO: optimize to bit mask & rotate & dec->hex table? */
 			/* isc_string_printf has been removed */
-			result = snprintf(esc_name + esc_idx, 4, "\\%02x", ascii_val);
-			esc_idx += 3; /* isc_string_printf wrote 4 bytes including '\0' */
+			s_len = snprintf(esc_name + esc_idx,
+					 4, "\\%02x", ascii_val);
+			if (s_len < 0 || s_len >= 4) {
+				CLEANUP_WITH(ISC_R_NOSPACE);
+			}
+			esc_idx += 3; /* snprintf wrote 4 bytes including '\0' */
 		}
 	}
 	if (idx_symb_first != -1) { /* copy last nice part */
@@ -431,28 +436,34 @@ isc_result_t
 rdatatype_to_ldap_attribute(dns_rdatatype_t rdtype, char *target,
 			    unsigned int size, bool unknown)
 {
+	isc_result_t result = ISC_R_SUCCESS;
 	char rdtype_str[DNS_RDATATYPE_FORMATSIZE];
 
 	if (unknown) {
 		/* "UnknownRecord;TYPE65333" */
 		/* isc_string_copy and isc_string_append have been removed */
 		if (strlcpy(target, LDAP_RDATATYPE_UNKNOWN_PREFIX, size)
-		    >= size)
-			return ISC_R_NOSPACE;
+		    >= size) {
+			CLEANUP_WITH(ISC_R_NOSPACE);
+		}
 		snprintf(rdtype_str, sizeof(rdtype_str), "TYPE%u", rdtype);
-		if (strlcat(target, rdtype_str, size) >= size)
-			return ISC_R_NOSPACE;
+		if (strlcat(target, rdtype_str, size) >= size) {
+			CLEANUP_WITH(ISC_R_NOSPACE);
+		}
 	} else {
 		/* "ARecord" */
 		dns_rdatatype_format(rdtype, rdtype_str, DNS_RDATATYPE_FORMATSIZE);
 		/* isc_string_copy and isc_string_append have been removed */
-		if (strlcpy(target, rdtype_str, size) >= size)
-			return ISC_R_NOSPACE;
-		if (strlcat(target, LDAP_RDATATYPE_SUFFIX, size) >= size)
-			return ISC_R_NOSPACE;
+		if (strlcpy(target, rdtype_str, size) >= size) {
+			CLEANUP_WITH(ISC_R_NOSPACE);
+		}
+		if (strlcat(target, LDAP_RDATATYPE_SUFFIX, size) >= size) {
+			CLEANUP_WITH(ISC_R_NOSPACE);
+		}
 	}
 
-	return ISC_R_SUCCESS;
+cleanup:
+	return result;
 }
 
 /**

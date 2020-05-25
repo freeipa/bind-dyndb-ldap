@@ -280,7 +280,7 @@ create_zone_info(isc_mem_t * const mctx, dns_zone_t * const raw,
 		dns_zone_attach(secure, &zinfo->secure);
 
 	zinfo->settings = NULL;
-	/* isc_string_printf_truncate has been removed */
+	/* truncation is allowed */
 	snprintf(settings_name, PRINT_BUFF_SIZE, SETTING_SET_NAME_ZONE " %s",
 		 dn);
 	CHECK(settings_set_create(mctx, zone_settings, sizeof(zone_settings),

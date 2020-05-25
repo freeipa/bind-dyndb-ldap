@@ -81,7 +81,7 @@ fs_dirs_create(const char *path) {
 
 	/* isc_string_copy has been removed */
 	if (strlcpy(curr_path, path, PATH_MAX) >= PATH_MAX) {
-		return ISC_R_NOSPACE;
+		CLEANUP_WITH(ISC_R_NOSPACE);
 	}
 
 	for (end = strchr(curr_path, '/');
