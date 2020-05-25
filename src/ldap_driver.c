@@ -30,6 +30,7 @@
 #include <dns/result.h>
 #include <dns/soa.h>
 #include <dns/types.h>
+#include <dns/rpz.h>
 
 #include <string.h> /* For memcpy */
 
@@ -747,15 +748,22 @@ getrrsetstats(dns_db_t *db) {
 }
 
 void
-rpz_attach(dns_db_t *db, dns_rpz_zones_t *rpzs, dns_rpz_num_t rpz_num)
+rpz_attach(dns_db_t *db, void *void_rpzs, uint8_t rpz_num)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
+	dns_rpz_zones_t *rpzs = (dns_rpz_zones_t *) void_rpzs;
+	isc_result_t result;
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
 
-	dns_db_rpz_attach(ldapdb->rbtdb, rpzs, rpz_num);
+	rpzs->zones[rpz_num]->db_registered = true;
+	result = dns_db_updatenotify_register(ldapdb->rbtdb,
+					      dns_rpz_dbupdate_callback,
+					      rpzs->zones[rpz_num]);
+	REQUIRE(result == ISC_R_SUCCESS);
 }
 
+/*
 isc_result_t
 rpz_ready(dns_db_t *db)
 {
@@ -765,6 +773,7 @@ rpz_ready(dns_db_t *db)
 
 	return dns_db_rpz_ready(ldapdb->rbtdb);
 }
+*/
 
 static isc_result_t
 findnodeext(dns_db_t *db, dns_name_t *name,
@@ -884,7 +893,7 @@ static dns_dbmethods_t ldapdb_methods = {
 	isdnssec,
 	getrrsetstats,
 	rpz_attach,
-	rpz_ready,
+	NULL, /* rpz_ready */
 	findnodeext,
 	findext,
 	setcachestats,
