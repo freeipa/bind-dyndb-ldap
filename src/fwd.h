@@ -26,11 +26,11 @@ fwd_parse_ldap(ldap_entry_t *entry, settings_set_t *set)
 	       ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
-fwd_configure_zone(const settings_set_t *set, ldap_instance_t *inst, dns_name_t *name)
+fwd_configure_zone(const settings_set_t *set, ldap_instance_t *inst, const dns_name_t *name)
 		   ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
-fwd_delete_table(dns_view_t *view, dns_name_t *name,
+fwd_delete_table(dns_view_t *view, const dns_name_t *name,
 		 const char *msg_obj_type, const char *logname)
 		 ATTR_NONNULLS ATTR_CHECKRESULT;
 

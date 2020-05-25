@@ -23,7 +23,7 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 	      ATTR_NONNULL(1,2,5,6);
 
 isc_result_t
-ldapdb_associate(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
+ldapdb_associate(isc_mem_t *mctx, const dns_name_t *name, dns_dbtype_t type,
 		 dns_rdataclass_t rdclass, unsigned int argc, char *argv[],
 		 void *driverarg, dns_db_t **dbp) ATTR_NONNULL(1,2,7,8);
 dns_db_t *

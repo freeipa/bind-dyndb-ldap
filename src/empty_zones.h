@@ -21,11 +21,11 @@ void
 empty_zone_search_stop(empty_zone_search_t *iter) ATTR_NONNULLS;
 
 isc_result_t
-empty_zone_search_init(empty_zone_search_t *iter, dns_name_t *qname,
+empty_zone_search_init(empty_zone_search_t *iter, const dns_name_t *qname,
 		       dns_zt_t *ztable) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 isc_result_t
-empty_zone_handle_conflicts(dns_name_t *name, dns_zt_t *zonetable,
+empty_zone_handle_conflicts(const dns_name_t *name, dns_zt_t *zonetable,
 			    bool warn_only) ATTR_NONNULLS ATTR_CHECKRESULT;
 
 /* Trigger to execute empty_zone_handle_conflicts() for dns_rootname. */

@@ -341,7 +341,9 @@ delete_zone_info(void *arg1, void *arg2)
  * @pre Zone registed is locked.
  */
 static isc_result_t
-getzinfo(zone_register_t * const zr, dns_name_t *name, zone_info_t **zinfo) {
+getzinfo(zone_register_t * const zr, const dns_name_t *name,
+	 zone_info_t **zinfo)
+{
 	isc_result_t result;
 	void *data = NULL;
 
@@ -438,8 +440,8 @@ cleanup:
  * Either ldapdbp or rbtdbp can be NULL.
  */
 isc_result_t
-zr_get_zone_dbs(zone_register_t *zr, dns_name_t *name, dns_db_t **ldapdbp,
-		dns_db_t **rbtdbp)
+zr_get_zone_dbs(zone_register_t *zr, const dns_name_t *name,
+		dns_db_t **ldapdbp, dns_db_t **rbtdbp)
 {
 	isc_result_t result;
 	zone_info_t *zinfo = NULL;
@@ -539,7 +541,8 @@ zr_get_zone_ptr(zone_register_t * const zr, dns_name_t * const name,
  * 'set'.
  */
 isc_result_t
-zr_get_zone_settings(zone_register_t *zr, dns_name_t *name, settings_set_t **set)
+zr_get_zone_settings(zone_register_t *zr, const dns_name_t *name,
+	             settings_set_t **set)
 {
 	isc_result_t result;
 	zone_info_t *zinfo = NULL;

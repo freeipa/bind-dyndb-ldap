@@ -226,7 +226,7 @@ empty_zone_search_stop(empty_zone_search_t *iter) {
  * @returns @see empty_zone_search_next
  */
 isc_result_t
-empty_zone_search_init(empty_zone_search_t *iter, dns_name_t *qname,
+empty_zone_search_init(empty_zone_search_t *iter, const dns_name_t *qname,
                        dns_zt_t *ztable) {
 	isc_result_t result;
 
@@ -298,7 +298,7 @@ cleanup:
  *    it failed and user configured policy != only.
  */
 isc_result_t
-empty_zone_handle_conflicts(dns_name_t *name, dns_zt_t *zonetable,
+empty_zone_handle_conflicts(const dns_name_t *name, dns_zt_t *zonetable,
 			    bool warn_only)
 {
 	isc_result_t result;

@@ -325,7 +325,7 @@ closeversion(dns_db_t *db, dns_dbversion_t **versionp, bool commit)
 }
 
 static isc_result_t
-findnode(dns_db_t *db, dns_name_t *name, bool create,
+findnode(dns_db_t *db, const dns_name_t *name, bool create,
 	 dns_dbnode_t **nodep)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
@@ -336,7 +336,7 @@ findnode(dns_db_t *db, dns_name_t *name, bool create,
 }
 
 static isc_result_t
-find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
+find(dns_db_t *db, const dns_name_t *name, dns_dbversion_t *version,
      dns_rdatatype_t type, unsigned int options, isc_stdtime_t now,
      dns_dbnode_t **nodep, dns_name_t *foundname, dns_rdataset_t *rdataset,
      dns_rdataset_t *sigrdataset)
@@ -350,7 +350,7 @@ find(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
 }
 
 static isc_result_t
-findzonecut(dns_db_t *db, dns_name_t *name, unsigned int options,
+findzonecut(dns_db_t *db, const dns_name_t *name, unsigned int options,
 	    isc_stdtime_t now, dns_dbnode_t **nodep, dns_name_t *foundname,
 	    dns_rdataset_t *rdataset, dns_rdataset_t *sigrdataset)
 {
@@ -686,7 +686,7 @@ getnsec3parameters(dns_db_t *db, dns_dbversion_t *version,
 }
 
 static isc_result_t
-findnsec3node(dns_db_t *db, dns_name_t *name, bool create,
+findnsec3node(dns_db_t *db, const dns_name_t *name, bool create,
 	      dns_dbnode_t **nodep)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *) db;
@@ -776,7 +776,7 @@ rpz_ready(dns_db_t *db)
 */
 
 static isc_result_t
-findnodeext(dns_db_t *db, dns_name_t *name,
+findnodeext(dns_db_t *db, const dns_name_t *name,
 		   bool create, dns_clientinfomethods_t *methods,
 		   dns_clientinfo_t *clientinfo, dns_dbnode_t **nodep)
 {
@@ -789,7 +789,7 @@ findnodeext(dns_db_t *db, dns_name_t *name,
 }
 
 static isc_result_t
-findext(dns_db_t *db, dns_name_t *name, dns_dbversion_t *version,
+findext(dns_db_t *db, const dns_name_t *name, dns_dbversion_t *version,
 	       dns_rdatatype_t type, unsigned int options, isc_stdtime_t now,
 	       dns_dbnode_t **nodep, dns_name_t *foundname,
 	       dns_clientinfomethods_t *methods, dns_clientinfo_t *clientinfo,
@@ -953,7 +953,7 @@ dns_ns_buildrdata(dns_name_t *origin, dns_name_t *ns_name,
  * @param[in] argv [0] is database instance name
  */
 isc_result_t
-ldapdb_associate(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
+ldapdb_associate(isc_mem_t *mctx, const dns_name_t *name, dns_dbtype_t type,
 		 dns_rdataclass_t rdclass, unsigned int argc, char *argv[],
 		 void *driverarg, dns_db_t **dbp) {
 
