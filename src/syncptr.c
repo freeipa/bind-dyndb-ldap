@@ -134,7 +134,7 @@ sync_ptr_find(dns_zt_t *zonetable, zone_register_t *zone_register, const int af,
 	 * @example
 	 * 192.168.0.1 -> 1.0.168.192.in-addr.arpa
 	 */
-	CHECK(dns_byaddr_createptrname2(&isc_ip, 0, ptr_name));
+	CHECK(dns_byaddr_createptrname(&isc_ip, 0, ptr_name));
 
 	/* Find an active zone containing owner name of the PTR record. */
 	result = dns_zt_find(zonetable, ptr_name, 0, NULL, zone);
