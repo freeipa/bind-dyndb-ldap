@@ -105,20 +105,20 @@ get_match_type(const cfg_obj_t *obj, unsigned int *value)
 	}
 	str = cfg_obj_asstring(obj);
 
-	MATCH("name", DNS_SSUMATCHTYPE_NAME);
-	MATCH("subdomain", DNS_SSUMATCHTYPE_SUBDOMAIN);
-	MATCH("zonesub", DNS_SSUMATCHTYPE_SUBDOMAIN);
-	MATCH("wildcard", DNS_SSUMATCHTYPE_WILDCARD);
-	MATCH("self", DNS_SSUMATCHTYPE_SELF);
-#if defined(DNS_SSUMATCHTYPE_SELFSUB) && defined(DNS_SSUMATCHTYPE_SELFWILD)
-	MATCH("selfsub", DNS_SSUMATCHTYPE_SELFSUB);
-	MATCH("selfwild", DNS_SSUMATCHTYPE_SELFWILD);
+	MATCH("name", dns_ssumatchtype_name);
+	MATCH("subdomain", dns_ssumatchtype_subdomain);
+	MATCH("zonesub", dns_ssumatchtype_subdomain);
+	MATCH("wildcard", dns_ssumatchtype_wildcard);
+	MATCH("self", dns_ssumatchtype_self);
+#if defined(dns_ssumatchtype_selfSUB) && defined(dns_ssumatchtype_selfwild)
+	MATCH("selfsub", dns_ssumatchtype_selfSUB);
+	MATCH("selfwild", dns_ssumatchtype_selfwild);
 #endif
-#ifdef DNS_SSUMATCHTYPE_SELFMS
-	MATCH("ms-self", DNS_SSUMATCHTYPE_SELFMS);
+#ifdef dns_ssumatchtype_selfms
+	MATCH("ms-self", dns_ssumatchtype_selfms);
 #endif
-#ifdef DNS_SSUMATCHTYPE_SELFKRB5
-	MATCH("krb5-self", DNS_SSUMATCHTYPE_SELFKRB5);
+#ifdef dns_ssumatchtype_selfkrb5
+	MATCH("krb5-self", dns_ssumatchtype_selfkrb5);
 #endif
 
 	/* At least bind 9.11.5 or 9.12.3 is required for it
@@ -126,18 +126,18 @@ get_match_type(const cfg_obj_t *obj, unsigned int *value)
 	MATCH("ms-selfsub", dns_ssumatchtype_selfsubms);
 	MATCH("krb5-selfsub", dns_ssumatchtype_selfsubkrb5);
 
-#ifdef DNS_SSUMATCHTYPE_SUBDOMAINMS
-	MATCH("ms-subdomain", DNS_SSUMATCHTYPE_SUBDOMAINMS);
+#ifdef dns_ssumatchtype_subdomainms
+	MATCH("ms-subdomain", dns_ssumatchtype_subdomainms);
 #endif
-#ifdef DNS_SSUMATCHTYPE_SUBDOMAINKRB5
-	MATCH("krb5-subdomain", DNS_SSUMATCHTYPE_SUBDOMAINKRB5);
+#ifdef dns_ssumatchtype_subdomainkrb5
+	MATCH("krb5-subdomain", dns_ssumatchtype_subdomainkrb5);
 #endif
-#if defined(DNS_SSUMATCHTYPE_TCPSELF) && defined(DNS_SSUMATCHTYPE_6TO4SELF)
-	MATCH("tcp-self", DNS_SSUMATCHTYPE_TCPSELF);
-	MATCH("6to4-self", DNS_SSUMATCHTYPE_6TO4SELF);
+#if defined(dns_ssumatchtype_tcpself) && defined(dns_ssumatchtype_6to4self)
+	MATCH("tcp-self", dns_ssumatchtype_tcpself);
+	MATCH("6to4-self", dns_ssumatchtype_6to4self);
 #endif
-#if defined(DNS_SSUMATCHTYPE_EXTERNAL)
-	MATCH("external", DNS_SSUMATCHTYPE_EXTERNAL);
+#if defined(dns_ssumatchtype_external)
+	MATCH("external", dns_ssumatchtype_external);
 #endif
 
 	log_bug("unsupported match type '%s'", str);
@@ -319,7 +319,7 @@ acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone)
 		/* Use zone name for 'zonesub' match type */
 		result = get_fixed_name(stmt, "name", &fname);
 		if (result == ISC_R_NOTFOUND &&
-		    match_type == DNS_SSUMATCHTYPE_SUBDOMAIN) {
+		    match_type == dns_ssumatchtype_subdomain) {
 			dns_fixedname_init(&fname);
 			CHECK(dns_name_copy(dns_zone_getorigin(zone),
 					    dns_fixedname_name(&fname),
@@ -330,7 +330,7 @@ acl_configure_zone_ssutable(const char *policy_str, dns_zone_t *zone)
 
 		CHECK(get_types(mctx, stmt, &types, &n));
 
-		if (match_type == DNS_SSUMATCHTYPE_WILDCARD &&
+		if (match_type == dns_ssumatchtype_wildcard &&
 		    !dns_name_iswildcard(dns_fixedname_name(&fname))) {
 			char name[DNS_NAME_FORMATSIZE];
 			dns_name_format(dns_fixedname_name(&fname), name,
