@@ -1097,10 +1097,9 @@ dyndb_init(isc_mem_t *mctx, const char *name, const char *parameters,
 		isc_lib_register();
 		isc_log_setcontext(dctx->lctx);
 		dns_log_setcontext(dctx->lctx);
+		isc_hash_set_initializer(dctx->hashinit);
 		log_debug(5, "registering library from dynamic ldap driver, %p != %p.", dctx->refvar, &isc_bind9);
 	}
-
-	isc_hash_set_initializer(dctx->hashinit);
 
 	log_debug(2, "registering dynamic ldap driver for %s.", name);
 
