@@ -84,26 +84,4 @@ extern bool verbose_checks; /* from settings.c */
 #define ATTR_CHECKRESULT
 #endif
 
-/*
- * Static (compile-time) assert for C:
- * C99 doesn't require support for "sizeof" in preprocessor conditionals so
- * we can't do something like #if (sizeof(my_struct) != 512).
- *
- * This macro has no runtime side affects as it just defines an enum whose name
- * depends on the current line, and whose value will give a divide by zero error
- * at compile time if the assertion is false.
- *
- * Taken from
- * http://www.pixelbeat.org/programming/gcc/static_assert.html
- * version 10 Feb 2015. Padraig Brady told me that it is licensed under
- * "GNU All-Permissive License":
- *
- * Copying and distribution of this file, with or without modification,
- * are permitted in any medium without royalty provided the copyright notice
- * and this notice are preserved. This code is offered as-is,
- * without any warranty.
- */
-
-/* STATIC_ASSERT is now provided by isc/util.h */
-
 #endif /* !_LD_UTIL_H_ */
