@@ -119,7 +119,6 @@ attach(dns_db_t *source, dns_db_t **targetp)
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
 
-	/* isc_refcount_increment only has one argument now */
 	isc_refcount_increment(&ldapdb->refs);
 	*targetp = source;
 }
@@ -165,16 +164,12 @@ static void
 detach(dns_db_t **dbp)
 {
 	ldapdb_t *ldapdb = (ldapdb_t *)(*dbp);
-	unsigned int refs;
 
 	REQUIRE(VALID_LDAPDB(ldapdb));
 
-	/* isc_refcount_decrement only has one argument now */
-	refs = isc_refcount_decrement(&ldapdb->refs);
-
-	if (refs == 0)
+	if (isc_refcount_decrement(&ldapdb->refs) == 1) {
 		free_ldapdb(ldapdb);
-
+	}
 	*dbp = NULL;
 }
 

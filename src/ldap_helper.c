@@ -4873,7 +4873,7 @@ ldap_instance_isexiting(ldap_instance_t *ldap_inst)
  * (if it is even possible). */
 void
 ldap_instance_taint(ldap_instance_t *ldap_inst) {
-	isc_refcount_increment(&ldap_inst->errors);
+	isc_refcount_increment0(&ldap_inst->errors);
 }
 
 bool
@@ -4902,14 +4902,12 @@ ldap_instance_untaint_start(ldap_instance_t *ldap_inst) {
  */
 isc_result_t
 ldap_instance_untaint_finish(ldap_instance_t *ldap_inst, unsigned int count) {
-	unsigned int remaining = 0;
 	while (count > 0) {
-		/* isc_refcount_decrement now has one parameter */
-		remaining = isc_refcount_decrement(&ldap_inst->errors);
+		isc_refcount_decrement(&ldap_inst->errors);
 		count--;
 	}
-	if (remaining != 0)
-		return DNS_R_CONTINUE;
-	else
+	if (isc_refcount_current(&ldap_inst->errors) == 0) {
 		return ISC_R_SUCCESS;
+	}
+	return DNS_R_CONTINUE;
 }

@@ -202,16 +202,13 @@ barrier_decrement(isc_task_t *task, isc_event_t *event) {
 	sync_barrierev_t *bev = NULL;
 	sync_barrierev_t *fev = NULL;
 	isc_event_t *ev = NULL;
-	uint32_t cnt;
 	bool locked = false;
 
 	REQUIRE(ISCAPI_TASK_VALID(task));
 	REQUIRE(event != NULL);
 
 	bev = (sync_barrierev_t *)event;
-	/* isc_refcount_decrement now has one parameter */
-	cnt = isc_refcount_decrement(&bev->sctx->task_cnt);
-	if (cnt == 0) {
+	if (isc_refcount_decrement(&bev->sctx->task_cnt) == 1) {
 		log_debug(1, "sync_barrier_wait(): barrier reached");
 		LOCK(&bev->sctx->mutex);
 		locked = true;
@@ -335,7 +332,7 @@ sync_ctx_free(sync_ctx_t **sctxp) {
 		next_taskel = NEXT(taskel, link);
 		UNLINK(sctx->tasks, taskel, link);
 		isc_task_detach(&taskel->task);
-		isc_refcount_decrement(&sctx->task_cnt);
+		(void)isc_refcount_decrement(&sctx->task_cnt);
 		SAFE_MEM_PUT_PTR(sctx->mctx, taskel);
 	}
 	RUNTIME_CHECK(isc_condition_destroy(&sctx->cond) == ISC_R_SUCCESS);
@@ -451,7 +448,6 @@ sync_state_reset(sync_ctx_t *sctx) {
 isc_result_t
 sync_task_add(sync_ctx_t *sctx, isc_task_t *task) {
 	isc_result_t result = ISC_R_SUCCESS;
-	uint32_t cnt;
 	task_element_t *newel = NULL;
 
 	REQUIRE(sctx != NULL);
@@ -466,11 +462,11 @@ sync_task_add(sync_ctx_t *sctx, isc_task_t *task) {
 	LOCK(&sctx->mutex);
 	REQUIRE(sctx->state == sync_configinit || sctx->state == sync_datainit);
 	ISC_LIST_APPEND(sctx->tasks, newel, link);
-	cnt = isc_refcount_increment0(&sctx->task_cnt);
+	isc_refcount_increment0(&sctx->task_cnt);
 	UNLOCK(&sctx->mutex);
 
-	log_debug(2, "adding task %p to syncrepl list; %u tasks in list",
-		  task, cnt);
+	log_debug(2, "adding task %p to syncrepl list; %lu tasks in list",
+		  task, isc_refcount_current(&sctx->task_cnt));
 
 cleanup:
 	return result;
