@@ -35,16 +35,6 @@ extern bool verbose_checks; /* from settings.c */
 		}						\
 	} while (0)
 
-#define CHECKED_MEM_ALLOCATE(m, target_ptr, s)			\
-	do {							\
-		(target_ptr) = isc_mem_allocate((m), (s));	\
-		if ((target_ptr) == NULL) {			\
-			result = ISC_R_NOMEMORY;		\
-			log_error_position("Memory allocation failed");	\
-			goto cleanup;				\
-		}						\
-	} while (0)
-
 #define CHECKED_MEM_STRDUP(m, source, target)			\
 	do {							\
 		(target) = isc_mem_strdup((m), (source));	\

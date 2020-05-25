@@ -279,7 +279,7 @@ set_value(isc_mem_t *mctx, const settings_set_t *set, setting_t *setting,
 		len = strlen(value) + 1;
 		if (setting->is_dynamic)
 			isc_mem_free(mctx, setting->value.value_char);
-		CHECKED_MEM_ALLOCATE(mctx, setting->value.value_char, len);
+		setting->value.value_char = isc_mem_allocate(mctx, len);
 		setting->is_dynamic = true;
 		/* isc_string_copy has been removed */
 		if (strlcpy(setting->value.value_char, value, len) >= len) {
@@ -484,14 +484,13 @@ settings_set_create(isc_mem_t *mctx, const setting_t default_settings[],
 		    const unsigned int default_set_length, const char *set_name,
 		    const settings_set_t *const parent_set,
 		    settings_set_t **target) {
-	isc_result_t result = ISC_R_FAILURE;
 	settings_set_t *new_set = NULL;
 
 	REQUIRE(target != NULL && *target == NULL);
 	REQUIRE(default_settings != NULL);
 	REQUIRE(default_set_length > 0);
 
-	CHECKED_MEM_ALLOCATE(mctx, new_set, default_set_length);
+	new_set = isc_mem_allocate(mctx, default_set_length);
 	ZERO_PTR(new_set);
 	isc_mem_attach(mctx, &new_set->mctx);
 
@@ -501,20 +500,14 @@ settings_set_create(isc_mem_t *mctx, const setting_t default_settings[],
 
 	new_set->parent_set = parent_set;
 
-	CHECKED_MEM_ALLOCATE(mctx, new_set->first_setting, default_set_length);
+	new_set->first_setting = isc_mem_allocate(mctx, default_set_length);
 	memcpy(new_set->first_setting, default_settings, default_set_length);
 
-	CHECKED_MEM_ALLOCATE(mctx, new_set->name, strlen(set_name) + 1);
+	new_set->name = isc_mem_allocate(mctx, strlen(set_name) + 1);
 	strcpy(new_set->name, set_name);
 
 	*target = new_set;
-	result = ISC_R_SUCCESS;
-
-cleanup:
-	if (result != ISC_R_SUCCESS)
-		settings_set_free(&new_set);
-
-	return result;
+	return ISC_R_SUCCESS;
 }
 
 /**

@@ -3224,7 +3224,7 @@ static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
 			 bool unknown, char ***valsp)
 {
-	isc_result_t result;
+	isc_result_t result = ISC_R_FAILURE;
 	char **vals;
 	unsigned int i;
 	unsigned int rdata_count = 0;
@@ -3239,7 +3239,7 @@ ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
 
 	vals_size = (rdata_count + 1) * sizeof(char *);
 
-	CHECKED_MEM_ALLOCATE(mctx, vals, vals_size);
+	vals = isc_mem_allocate(mctx, vals_size);
 	memset(vals, 0, vals_size);
 
 	rdata = rdata_head;
@@ -3257,7 +3257,7 @@ ldap_rdata_to_char_array(isc_mem_t *mctx, dns_rdata_t *rdata_head,
 		isc_buffer_usedregion(&buffer, &region);
 
 		/* Now allocate the string with the right size. */
-		CHECKED_MEM_ALLOCATE(mctx, vals[i], region.length + 1);
+		vals[i] = isc_mem_allocate(mctx, region.length + 1);
 		memcpy(vals[i], region.base, region.length);
 		vals[i][region.length] = '\0';
 		
@@ -3313,11 +3313,11 @@ ldap_rdttl_to_ldapmod(isc_mem_t *mctx, dns_rdatalist_t *rdlist,
 		CLEANUP_WITH(ISC_R_NOSPACE);
 	}
 
-	CHECKED_MEM_ALLOCATE(mctx, vals, 2 * sizeof(char *));
+	vals = isc_mem_allocate(mctx, 2 * sizeof(char *));
 	memset(vals, 0, 2 * sizeof(char *));
 	change->mod_values = vals;
 
-	CHECKED_MEM_ALLOCATE(mctx, vals[0], str_len(ttlval) + 1);
+	vals[0] = isc_mem_allocate(mctx, str_len(ttlval) + 1);
 	memcpy(vals[0], str_buf(ttlval), str_len(ttlval) + 1);
 
 	*changep = change;

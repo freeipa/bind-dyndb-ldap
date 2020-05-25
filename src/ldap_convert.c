@@ -248,7 +248,7 @@ dns_to_ldap_dn_escape(isc_mem_t *mctx, const char * const dns_str, char ** ldap_
 	 * In worst case each symbol from DNS dns_str will be represented
 	 * as "\xy" in ldap_name. (xy are hexadecimal digits)
 	 */
-	CHECKED_MEM_ALLOCATE(mctx, *ldap_name, 3 * dns_str_len + 1);
+	*ldap_name = isc_mem_allocate(mctx, 3 * dns_str_len + 1);
 	esc_name = *ldap_name;
 
 	for (dns_idx = 0; dns_idx < dns_str_len; dns_idx++) {
@@ -308,10 +308,8 @@ cleanup:
 	if (result == DNS_R_BADESCAPE)
 		log_bug("improperly escaped DNS string: '%s'", dns_str);
 
-	if (*ldap_name) {
-		isc_mem_free(mctx, *ldap_name);
-		*ldap_name = NULL;
-	}
+	isc_mem_free(mctx, *ldap_name);
+	*ldap_name = NULL;
 	return result;
 }
 
