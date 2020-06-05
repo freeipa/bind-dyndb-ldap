@@ -1,9 +1,9 @@
 %define VERSION %{version}
 
-%define bind_version 32:9.11.11-1
+%define bind_version 32:9.11.17-1
 
 Name:           bind-dyndb-ldap
-Version:        11.2
+Version:        11.3
 Release:        0%{?dist}
 Summary:        LDAP back-end plug-in for BIND
 
@@ -116,6 +116,9 @@ rm -rf %{buildroot}
 
 
 %changelog
+* Fri Jun 05 2020 Alexander Bokovoy <abokovoy@redhat.com>
+- Bump BIND version to 9.11.17
+
 * Tue Nov 05 2019 Alexander Bokovoy <abokovoy@redhat.com>
 - Bump BIND version
 
