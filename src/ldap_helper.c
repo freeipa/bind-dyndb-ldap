@@ -93,6 +93,16 @@
 		}							\
 	} while (0)
 
+#if LIBDNS_VERSION_MAJOR < 1600
+#define dns_fwdtable_find             dns_fwdtable_find2
+#define dns_zone_getserial            dns_zone_getserial2
+#define dns_zone_load(zone, newonly)  dns_zone_load((zone))
+#define dns_zone_setfile              dns_zone_setfile3
+typedef dns_name_t       node_name_t;
+#else
+typedef const dns_name_t node_name_t;
+#endif
+
 /*
  * LDAP related typedefs and structs.
  */
@@ -372,6 +382,12 @@ ldap_syncrepl_watcher(isc_threadarg_t arg) ATTR_NONNULLS ATTR_CHECKRESULT;
 static isc_result_t ATTR_NONNULLS ATTR_CHECKRESULT
 zone_master_reconfigure_nsec3param(settings_set_t *zone_settings,
 				   dns_zone_t *secure);
+
+/* external function from ldap_driver.c */
+isc_result_t
+ldapdb_associate(isc_mem_t *mctx, node_name_t *name, dns_dbtype_t type,
+		 dns_rdataclass_t rdclass, unsigned int argc, char *argv[],
+		 void *driverarg, dns_db_t **dbp) ATTR_NONNULL(1,2,7,8);
 
 #define PRINT_BUFF_SIZE 10 /* for unsigned int 2^32 */
 isc_result_t
@@ -4851,7 +4867,11 @@ ldap_instance_isexiting(ldap_instance_t *ldap_inst)
  * (if it is even possible). */
 void
 ldap_instance_taint(ldap_instance_t *ldap_inst) {
+#if LIBDNS_VERSION_MAJOR < 1600
+	isc_refcount_increment0(&ldap_inst->errors, NULL);
+#else
 	isc_refcount_increment0(&ldap_inst->errors);
+#endif
 }
 
 bool
@@ -4881,7 +4901,11 @@ ldap_instance_untaint_start(ldap_instance_t *ldap_inst) {
 isc_result_t
 ldap_instance_untaint_finish(ldap_instance_t *ldap_inst, unsigned int count) {
 	while (count > 0) {
-		isc_refcount_decrement(&ldap_inst->errors);
+#if LIBDNS_VERSION_MAJOR < 1600
+		isc_refcount_decrement(&ldap_inst->errors, NULL);
+#else
+		(void)isc_refcount_decrement(&ldap_inst->errors);
+#endif
 		count--;
 	}
 	if (isc_refcount_current(&ldap_inst->errors) == 0) {

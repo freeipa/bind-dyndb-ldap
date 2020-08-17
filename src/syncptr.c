@@ -31,6 +31,10 @@
 #define SYNCPTR_FMTPRE  SYNCPTR_PREF "(%s) for '%s A/AAAA %s' "
 #define SYNCPTR_FMTPOST ldap_modop_str(mod_op), a_name_str, ip_str
 
+#if LIBDNS_VERSION_MAJOR < 1600
+#define dns_name_copynf(src, dst) dns_name_copy((src), (dst), NULL)
+#endif
+
 /*
  * Event for asynchronous PTR record synchronization.
  */

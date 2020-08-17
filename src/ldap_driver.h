@@ -22,10 +22,12 @@ ldapdb_create(isc_mem_t *mctx, dns_name_t *name, dns_dbtype_t type,
 	      dns_rdataclass_t rdclass, void *driverarg, dns_db_t **dbp)
 	      ATTR_NONNULL(1,2,5,6);
 
+#if 0
 isc_result_t
 ldapdb_associate(isc_mem_t *mctx, const dns_name_t *name, dns_dbtype_t type,
 		 dns_rdataclass_t rdclass, unsigned int argc, char *argv[],
 		 void *driverarg, dns_db_t **dbp) ATTR_NONNULL(1,2,7,8);
+#endif
 dns_db_t *
 ldapdb_get_rbtdb(dns_db_t *db) ATTR_NONNULLS;
 

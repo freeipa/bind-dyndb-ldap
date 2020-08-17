@@ -24,6 +24,15 @@
 #include "types.h"
 #include "ldap_helper.h"
 #include "zone_register.h"
+#include "config.h"
+
+#if LIBDNS_VERSION_MAJOR < 1600
+#define cfg_parse_buffer cfg_parse_buffer4
+#define cfg_print_grammar(cfg_type_conf, flags, cfg_printer, log_buf) cfg_print_grammar((cfg_type_conf), (cfg_printer), (log_buf))
+typedef dns_name_t       node_name_t;
+#else
+typedef const dns_name_t node_name_t;
+#endif
 
 bool verbose_checks = false; /* log each failure in CHECK() macro */
 

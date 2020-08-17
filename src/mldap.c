@@ -27,6 +27,24 @@
 #include "metadb.h"
 #include "mldap.h"
 #include "util.h"
+#include "config.h"
+
+#if LIBDNS_VERSION_MAJOR < 1600
+#define dns_name_copynf(src, dst) dns_name_copy((src), (dst), NULL)
+#define REFCOUNT_CAST(n) ((typeof(((isc_refcount_t *)0)->refs)) (n))
+
+/* Static assert is not provided yet, copy from 9.16 */
+#if __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR >= 6)
+#define STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
+#elif __has_feature(c_static_assert)
+#define STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
+#else /* if __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR >= 6) */
+#define STATIC_ASSERT(cond, msg) INSIST(cond)
+#endif /* if __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR >= 6) */
+#else
+/* BIND 9.16+ */
+#define REFCOUNT_CAST(n) ((isc_refcount_t) (n))
+#endif
 
 /* name "ldap.uuid." */
 static unsigned char uuid_rootname_ndata[]
@@ -107,7 +125,11 @@ mldap_closeversion(mldapdb_t *mldap, bool commit) {
 void mldap_cur_generation_bump(mldapdb_t *mldap) {
 	REQUIRE(mldap != NULL);
 
+#if LIBDNS_VERSION_MAJOR < 1600
+	isc_refcount_increment0(&mldap->generation, NULL);
+#else
 	isc_refcount_increment0(&mldap->generation);
+#endif
 }
 
 /*
@@ -120,9 +142,9 @@ void mldap_cur_generation_bump(mldapdb_t *mldap) {
  */
 
 /* isc_refcount_t is simply atomic_uint_fast32_t now */
-STATIC_ASSERT((uint32_t)((isc_refcount_t) -1) == 0xFFFFFFFF, \
+STATIC_ASSERT((uint32_t)REFCOUNT_CAST(-1) == 0xFFFFFFFF, \
 	      "negative isc_refcount_t cannot be properly shortened to 32 bits");
-STATIC_ASSERT((uint32_t)((isc_refcount_t) 0x90ABCDEF12345678) == 0x12345678, \
+STATIC_ASSERT((uint32_t)REFCOUNT_CAST(0x90ABCDEF12345678) == 0x12345678, \
 	      "negative isc_refcount_t cannot be properly shortened to 32 bits");
 
 /**

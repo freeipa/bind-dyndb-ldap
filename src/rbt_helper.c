@@ -7,6 +7,7 @@
 
 #include "util.h"
 #include "rbt_helper.h"
+#include "config.h"
 
 #define LDAPDB_RBTITER_MAGIC ISC_MAGIC('L', 'D', 'P', 'I')
 
@@ -91,7 +92,11 @@ rbt_iter_first(isc_mem_t *mctx, dns_rbt_t *rbt, isc_rwlock_t *rwlock,
 	ZERO_PTR(iter);
 
 	isc_mem_attach(mctx, &iter->mctx);
+#if LIBDNS_VERSION_MAJOR < 1600
+	dns_rbtnodechain_init(&iter->chain, mctx);
+#else
 	dns_rbtnodechain_init(&iter->chain);
+#endif
 	iter->rbt = rbt;
 	iter->rwlock = rwlock;
 	iter->locktype = isc_rwlocktype_read;

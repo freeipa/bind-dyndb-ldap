@@ -14,6 +14,10 @@
 
 #include "bindcfg.h"
 
+#if LIBDNS_VERSION_MAJOR < 1600
+#define cfg_parse_buffer cfg_parse_buffer4
+#endif
+
 cfg_type_t *cfg_type_update_policy;
 cfg_type_t *cfg_type_allow_query;
 cfg_type_t *cfg_type_allow_transfer;

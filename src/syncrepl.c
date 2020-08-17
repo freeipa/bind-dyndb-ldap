@@ -11,6 +11,7 @@
 #include <isc/time.h>
 #include <isc/util.h>
 
+#include "config.h"
 #include "ldap_helper.h"
 #include "util.h"
 #include "semaphore.h"
@@ -200,12 +201,18 @@ barrier_decrement(isc_task_t *task, isc_event_t *event) {
 	sync_barrierev_t *fev = NULL;
 	isc_event_t *ev = NULL;
 	bool locked = false;
+	uint32_t cnt;
 
 	REQUIRE(ISCAPI_TASK_VALID(task));
 	REQUIRE(event != NULL);
 
 	bev = (sync_barrierev_t *)event;
-	if (isc_refcount_decrement(&bev->sctx->task_cnt) == 1) {
+#if LIBDNS_VERSION_MAJOR < 1600
+	isc_refcount_decrement(&bev->sctx->task_cnt, &cnt);
+#else
+	cnt = isc_refcount_decrement(&bev->sctx->task_cnt);
+#endif
+	if (cnt == 1) {
 		log_debug(1, "sync_barrier_wait(): barrier reached");
 		LOCK(&bev->sctx->mutex);
 		locked = true;
@@ -325,7 +332,11 @@ sync_ctx_free(sync_ctx_t **sctxp) {
 		next_taskel = NEXT(taskel, link);
 		UNLINK(sctx->tasks, taskel, link);
 		isc_task_detach(&taskel->task);
+#if LIBDNS_VERSION_MAJOR < 1600
+		isc_refcount_decrement(&sctx->task_cnt, NULL);
+#else
 		(void)isc_refcount_decrement(&sctx->task_cnt);
+#endif
 		SAFE_MEM_PUT_PTR(sctx->mctx, taskel);
 	}
 	RUNTIME_CHECK(isc_condition_destroy(&sctx->cond) == ISC_R_SUCCESS);
@@ -441,6 +452,7 @@ sync_state_reset(sync_ctx_t *sctx) {
 isc_result_t
 sync_task_add(sync_ctx_t *sctx, isc_task_t *task) {
 	task_element_t *newel = NULL;
+	uint32_t cnt;
 
 	REQUIRE(sctx != NULL);
 	REQUIRE(ISCAPI_TASK_VALID(task));
@@ -454,11 +466,15 @@ sync_task_add(sync_ctx_t *sctx, isc_task_t *task) {
 	LOCK(&sctx->mutex);
 	REQUIRE(sctx->state == sync_configinit || sctx->state == sync_datainit);
 	ISC_LIST_APPEND(sctx->tasks, newel, link);
-	isc_refcount_increment0(&sctx->task_cnt);
+#if LIBDNS_VERSION_MAJOR < 1600
+	isc_refcount_increment0(&sctx->task_cnt, &cnt);
+#else
+	cnt = isc_refcount_increment0(&sctx->task_cnt);
+#endif
 	UNLOCK(&sctx->mutex);
 
-	log_debug(2, "adding task %p to syncrepl list; %lu tasks in list",
-		  task, isc_refcount_current(&sctx->task_cnt));
+	log_debug(2, "adding task %p to syncrepl list; %u tasks in list",
+		  task, cnt);
 
 	return ISC_R_SUCCESS;
 }

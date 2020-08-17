@@ -20,6 +20,14 @@
 #include "settings.h"
 #include "zone_register.h"
 
+#if LIBDNS_VERSION_MAJOR < 1600
+#define cfg_parse_buffer cfg_parse_buffer4
+#define dns_view_flushcache(view, fixup) dns_view_flushcache((view))
+typedef dns_name_t       node_name_t;
+#else
+typedef const dns_name_t node_name_t;
+#endif
+
 const enum_txt_assoc_t forwarder_policy_txts[] = {
 	{ dns_fwdpolicy_none,	"none"	},
 	{ dns_fwdpolicy_first,	"first"	},
@@ -575,7 +583,8 @@ fwd_configure_zone(const settings_set_t *set, ldap_instance_t *inst,
 	run_exclusive_enter(inst, &lock_state);
 	CHECK(fwd_delete_table(view, name, msg_obj_type, set->name));
 	if (isconfigured == true) {
-		CHECK(dns_fwdtable_addfwd(view->fwdtable, name, &fwdrs,
+		CHECK(dns_fwdtable_addfwd(view->fwdtable,
+					  (node_name_t *) name, &fwdrs,
 					  fwdpolicy));
 	}
 	dns_view_flushcache(view, false);
@@ -607,7 +616,7 @@ fwd_delete_table(dns_view_t *view, const dns_name_t *name,
 		 const char *msg_obj_type, const char *logname) {
 	isc_result_t result;
 
-	result = dns_fwdtable_delete(view->fwdtable, name);
+	result = dns_fwdtable_delete(view->fwdtable, (node_name_t *) name);
 	if (result != ISC_R_SUCCESS && result != ISC_R_NOTFOUND) {
 		log_error_r("%s %s: failed to delete forwarders",
 			    msg_obj_type, logname);

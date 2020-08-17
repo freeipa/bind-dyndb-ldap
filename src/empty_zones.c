@@ -12,6 +12,10 @@
 #include "util.h"
 #include "zone_register.h"
 
+#if LIBDNS_VERSION_MAJOR < 1600
+#define dns_name_copynf(src, dst) dns_name_copy((src), (dst), NULL)
+#endif
+
 /**
  * These zones should not leak onto the Internet.
  * The list matches BIND commit 8f20f6c9d7ce5a0f0af6ee4c5361832d97b1c5d4
