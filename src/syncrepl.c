@@ -198,9 +198,6 @@ sync_finishev_create(sync_ctx_t *sctx, ldap_instance_t *inst,
 void
 barrier_decrement(isc_task_t *task, isc_event_t *event) {
 	sync_barrierev_t *bev = NULL;
-	sync_barrierev_t *fev = NULL;
-	isc_event_t *ev = NULL;
-	bool locked = false;
 	uint32_t cnt;
 
 	REQUIRE(ISCAPI_TASK_VALID(task));
@@ -213,17 +210,17 @@ barrier_decrement(isc_task_t *task, isc_event_t *event) {
 	cnt = isc_refcount_decrement(&bev->sctx->task_cnt);
 #endif
 	if (cnt == 1) {
+		sync_barrierev_t *fev = NULL;
+		isc_event_t *ev = NULL;
+
 		log_debug(1, "sync_barrier_wait(): barrier reached");
 		LOCK(&bev->sctx->mutex);
-		locked = true;
 		sync_finishev_create(bev->sctx, bev->inst, &fev);
 		ev = (isc_event_t *)fev;
 		isc_task_send(ldap_instance_gettask(bev->sctx->inst), &ev);
-	}
-
-	if (locked) {
 		UNLOCK(&bev->sctx->mutex);
 	}
+
 	isc_event_free(&event);
 	return;
 }
@@ -602,12 +599,10 @@ sync_event_send(sync_ctx_t *sctx, isc_task_t *task, ldap_syncreplevent_t **ev,
 	isc_result_t result;
 	isc_time_t abs_timeout;
 	uint32_t seqid;
-	bool locked = false;
 
 	REQUIRE(sctx != NULL);
 
 	LOCK(&sctx->mutex);
-	locked = true;
 	/* overflow is not a problem as long as the modulo is smaller than
 	 * constant used by sync_concurr_limit_wait() */
 	(*ev)->seqid = seqid = ++sctx->next_id % 0xffffffff;
@@ -625,8 +620,7 @@ sync_event_send(sync_ctx_t *sctx, isc_task_t *task, ldap_syncreplevent_t **ev,
 	result = ISC_R_SUCCESS;
 
 cleanup:
-	if (locked == true)
-		UNLOCK(&sctx->mutex);
+	UNLOCK(&sctx->mutex);
 	return result;
 }
 
