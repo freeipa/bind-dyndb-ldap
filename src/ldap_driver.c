@@ -183,6 +183,9 @@ detach(dns_db_t **dbp)
 	REQUIRE(dbp != NULL && VALID_LDAPDB((ldapdb_t *)(*dbp)));
 	ldapdb_t *ldapdb = (ldapdb_t *)(*dbp);
 	unsigned int refs;
+
+	*dbp = NULL;
+
 #if LIBDNS_VERSION_MAJOR < 1600
 	isc_refcount_decrement(&ldapdb->refs, &refs);
 #else
