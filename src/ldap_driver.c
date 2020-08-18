@@ -180,10 +180,12 @@ cleanup:
 static void
 detach(dns_db_t **dbp)
 {
-	REQUIRE(dbp != NULL && VALID_LDAPDB((ldapdb_t *)(*dbp)));
-	ldapdb_t *ldapdb = (ldapdb_t *)(*dbp);
+	ldapdb_t *ldapdb;
 	unsigned int refs;
 
+	REQUIRE(dbp != NULL && VALID_LDAPDB((ldapdb_t *)(*dbp)));
+
+	ldapdb = (ldapdb_t *)(*dbp);
 	*dbp = NULL;
 
 #if LIBDNS_VERSION_MAJOR < 1600
