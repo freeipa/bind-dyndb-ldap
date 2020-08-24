@@ -894,6 +894,19 @@ getservestalettl(dns_db_t *db, dns_ttl_t *ttl) {
 }
 #endif
 
+#if LIBDNS_VERSION_MAJOR >= 1606
+/* Used for cache size adjustments, called by dns_cache_setcachesize.
+ * Just proxy to rbtdb implementation. */
+static isc_result_t
+adjusthashsize(dns_db_t *db, size_t size) {
+	ldapdb_t *ldapdb = (ldapdb_t *) db;
+
+	REQUIRE(VALID_LDAPDB(ldapdb));
+
+	return dns_db_adjusthashsize(ldapdb->rbtdb, size);
+}
+#endif
+
 static dns_dbmethods_t ldapdb_methods = {
 	attach,
 	detach,
@@ -946,6 +959,9 @@ static dns_dbmethods_t ldapdb_methods = {
 #endif
 #if LIBDNS_VERSION_MAJOR >= 1600
 	NULL, /* setgluecachestats */
+#endif
+#if LIBDNS_VERSION_MAJOR >= 1606
+	adjusthashsize, /* adjusthashsize */
 #endif
 };
 
