@@ -18,7 +18,7 @@ BuildRequires:  bind-devel >= %{bind_version}, bind-lite-devel >= %{bind_version
 BuildRequires:  krb5-devel
 BuildRequires:  openldap-devel
 BuildRequires:  libuuid-devel
-BuildRequires:  automake, autoconf, libtool
+BuildRequires:  automake, autoconf, libtool, gcc
 
 Requires:       bind >= %{bind_version}
 
