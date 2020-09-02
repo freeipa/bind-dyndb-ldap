@@ -33,13 +33,13 @@ off of your LDAP server.
 
 %build
 autoreconf -fiv
+[ -z "`type -p isc-config.sh`" ] && export BIND9_CFLAGS='-I/usr/include/bind9'
 %configure
-make %{?_smp_mflags}
+%make_build
 
 
 %install
-rm -rf %{buildroot}
-make install DESTDIR=%{buildroot}
+%make_install
 mkdir -m 770 -p %{buildroot}/%{_localstatedir}/named/dyndb-ldap
 
 # Remove unwanted files
