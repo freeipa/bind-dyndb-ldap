@@ -8,6 +8,7 @@
 #include <dns/zone.h>
 #include <dns/zt.h>
 
+#include "config.h"
 #include "empty_zones.h"
 #include "util.h"
 #include "zone_register.h"
