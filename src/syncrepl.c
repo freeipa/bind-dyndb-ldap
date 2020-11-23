@@ -20,6 +20,12 @@
 #define LDAPDB_EVENT_SYNCREPL_BARRIER	(LDAPDB_EVENTCLASS + 2)
 #define LDAPDB_EVENT_SYNCREPL_FINISH	(LDAPDB_EVENTCLASS + 3)
 
+#if LIBDNS_VERSION_MAJOR < 1600
+#define REFCOUNT_FLOOR 0
+#else
+#define REFCOUNT_FLOOR 1
+#endif
+
 /** How many unprocessed LDAP events from syncrepl can be in event queue.
  *  Adding new events into the queue is blocked until some events
  *  are processed. */
@@ -209,7 +215,7 @@ barrier_decrement(isc_task_t *task, isc_event_t *event) {
 #else
 	cnt = isc_refcount_decrement(&bev->sctx->task_cnt);
 #endif
-	if (cnt == 1) {
+	if (cnt == REFCOUNT_FLOOR) {
 		sync_barrierev_t *fev = NULL;
 		isc_event_t *ev = NULL;
 

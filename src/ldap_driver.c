@@ -54,7 +54,9 @@
 
 #if LIBDNS_VERSION_MAJOR < 1600
 typedef dns_name_t       node_name_t;
+#define REFCOUNT_FLOOR 0
 #else
+#define REFCOUNT_FLOOR 1
 typedef const dns_name_t node_name_t;
 #endif
 
@@ -195,7 +197,7 @@ detach(dns_db_t **dbp)
 	refs = isc_refcount_decrement(&ldapdb->refs);
 #endif
 
-	if (refs == 1) {
+	if (refs == REFCOUNT_FLOOR) {
 		free_ldapdb(ldapdb);
 	}
 }
