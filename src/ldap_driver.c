@@ -959,6 +959,10 @@ static dns_dbmethods_t ldapdb_methods = {
 	setservestalettl,
 	getservestalettl,
 #endif
+#if LIBDNS_VERSION_MAJOR >= 1609
+	NULL, /* setservestalerefresh */
+	NULL, /* getservestalerefresh */
+#endif
 #if LIBDNS_VERSION_MAJOR >= 1600
 	NULL, /* setgluecachestats */
 #endif
