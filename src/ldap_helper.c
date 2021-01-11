@@ -1792,10 +1792,17 @@ zone_master_reconfigure_nsec3param(settings_set_t *zone_settings,
 			  dns_rdatatype_nsec3param, origin, nsec3p_str,
 			  &nsec3p_rdata));
 	CHECK(dns_rdata_tostruct(nsec3p_rdata, &nsec3p_rr, NULL));
+#if LIBDNS_VERSION_MAJOR > 1609
+	CHECK(dns_zone_setnsec3param(secure, nsec3p_rr.hash, nsec3p_rr.flags,
+				     nsec3p_rr.iterations,
+				     nsec3p_rr.salt_length, nsec3p_rr.salt,
+				     true, false));
+#else
 	CHECK(dns_zone_setnsec3param(secure, nsec3p_rr.hash, nsec3p_rr.flags,
 				     nsec3p_rr.iterations,
 				     nsec3p_rr.salt_length, nsec3p_rr.salt,
 				     true));
+#endif
 
 cleanup:
 	if (nsec3p_rdata != NULL) {
