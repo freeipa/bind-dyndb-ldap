@@ -17,6 +17,7 @@
 #include <dns/zone.h>
 
 #include "util.h"
+#include "config.h"
 
 /**
  * Write given diff to zone journal. Journal will be created
@@ -61,7 +62,11 @@ zone_soaserial_updatetuple(dns_updatemethod_t method, dns_difftuple_t *soa_tuple
 	REQUIRE(soa_tuple->rdata.type == dns_rdatatype_soa);
 
 	serial = dns_soa_getserial(&soa_tuple->rdata);
+#if LIBDNS_VERSION_MAJOR >= 1611
+	serial = dns_update_soaserial(serial, method, NULL);
+#else
 	serial = dns_update_soaserial(serial, method);
+#endif
 	dns_soa_setserial(serial, &soa_tuple->rdata);
 	if (new_serial != NULL)
 		*new_serial = serial;
