@@ -1,5 +1,5 @@
 AC_PREREQ([2.59])
-AC_INIT([bind-dyndb-ldap], [11.6], [freeipa-devel@redhat.com])
+AC_INIT([bind-dyndb-ldap], [11.7], [freeipa-devel@redhat.com])
 
 AM_INIT_AUTOMAKE([-Wall foreign dist-bzip2])
 
