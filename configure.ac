@@ -90,19 +90,31 @@ AC_CHECK_LIB([krb5], [krb5_cc_initialize], [],
 AC_CHECK_LIB([uuid], [uuid_unparse], [],
 	AC_MSG_ERROR([Install UUID library development files]))
 
+AC_LANG(C)
 # Check version of libdns
 AC_MSG_CHECKING([libdns version])
-AC_TRY_RUN([
+AC_RUN_IFELSE([AC_LANG_PROGRAM([
 #include <stdio.h>
 #include <dns/version.h>
-int main(void) {
-	printf("%d\n", dns_libinterface);
-	return 0;
-}],[LIBDNS_VERSION_MAJOR=`./conftest$ac_exeext`
+],[ printf("%d\n", dns_libinterface) ])], [
+    LIBDNS_VERSION_MAJOR=`./conftest$ac_exeext`
+    AC_DEFINE_UNQUOTED([LIBDNS_VERSION_MAJOR], [$LIBDNS_VERSION_MAJOR],
+    [Define libdns version])], [
+    AC_RUN_IFELSE([AC_LANG_PROGRAM([[
+#include <stdio.h>
+#include <dns/version.h>
+]],[[
+	unsigned major, minor, patch, scanned;
+	/* emulate dns_libinterface from minor and patch version */
+        scanned = sscanf(dns_version, "%u.%u.%u", &major, &minor, &patch);
+        printf("%02d%02d\n", minor, patch);
+	return !(scanned == 3 && major == 9);
+    ]])], [
+    LIBDNS_VERSION_MAJOR=`./conftest$ac_exeext`
     AC_DEFINE_UNQUOTED([LIBDNS_VERSION_MAJOR], [$LIBDNS_VERSION_MAJOR],
     [Define libdns version])],
-[AC_MSG_ERROR([Can't obtain libdns version.])],
-[AC_MSG_ERROR([Cross compiling is not supported.])]
+    [AC_MSG_ERROR([Can't obtain libdns version.])])
+], [AC_MSG_ERROR([Cross compiling is not supported.])]
 )
 
 dnl isc_errno_toresult() was not available in older header files
