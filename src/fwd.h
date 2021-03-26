@@ -5,7 +5,7 @@
 #ifndef _LD_FWD_H_
 #define _LD_FWD_H_
 
-#include "config.h"
+#include "dyndb-config.h"
 #include "ldap_entry.h"
 #include "util.h"
 

@@ -5,7 +5,7 @@
 #ifndef _LD_ACL_H_
 #define _LD_ACL_H_
 
-#include "config.h"
+#include "dyndb-config.h"
 
 #include "ldap_entry.h"
 #include "types.h"

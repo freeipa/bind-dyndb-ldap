@@ -27,7 +27,7 @@
 #include "metadb.h"
 #include "mldap.h"
 #include "util.h"
-#include "config.h"
+#include "dyndb-config.h"
 
 #if LIBDNS_VERSION_MAJOR < 1600
 #define dns_name_copynf(src, dst) dns_name_copy((src), (dst), NULL)

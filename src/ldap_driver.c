@@ -3,9 +3,9 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include <config.h>
+#include "dyndb-config.h"
 #else
-#error "Can't compile without config.h"
+#error "Can't compile without dyndb-config.h"
 #endif
 
 #include <isc/buffer.h>

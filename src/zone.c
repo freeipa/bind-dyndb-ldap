@@ -17,7 +17,7 @@
 #include <dns/zone.h>
 
 #include "util.h"
-#include "config.h"
+#include "dyndb-config.h"
 
 /**
  * Write given diff to zone journal. Journal will be created

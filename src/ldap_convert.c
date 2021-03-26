@@ -20,7 +20,7 @@
 #include <strings.h>
 #include <ctype.h>
 
-#include "config.h"
+#include "dyndb-config.h"
 #include "str.h"
 #include "ldap_convert.h"
 #include "log.h"

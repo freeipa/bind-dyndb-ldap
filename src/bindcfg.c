@@ -4,7 +4,7 @@
  * Utilities for BIND configuration parsers.
  */
 
-#include "config.h"
+#include "dyndb-config.h"
 
 #include <isc/util.h>
 #include <isccfg/grammar.h>

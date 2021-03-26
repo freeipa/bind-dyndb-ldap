@@ -18,7 +18,7 @@
 #include <dns/zone.h>
 #include <dns/zt.h>
 
-#include "config.h"
+#include "dyndb-config.h"
 #include "util.h"
 #include "ldap_convert.h"
 #include "ldap_entry.h"

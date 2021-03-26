@@ -12,7 +12,7 @@ Makefile.in
 /ar-lib
 /compile
 /config.guess
-/config.h.in
+/dyndb-config.h.in
 /config.sub
 /configure
 /depcomp
@@ -23,7 +23,7 @@ Makefile.in
 
 # configure
 Makefile
-/config.h
+/dyndb-config.h
 /config.log
 /config.status
 /libtool

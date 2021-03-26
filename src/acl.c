@@ -2,7 +2,7 @@
  * Copyright (C) 2009-2014  bind-dyndb-ldap authors; see COPYING for license
  */
 
-#include "config.h"
+#include "dyndb-config.h"
 
 #include <isccfg/aclconf.h>
 #include <isccfg/cfg.h>

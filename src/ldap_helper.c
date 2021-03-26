@@ -2,7 +2,7 @@
  * Copyright (C) 2009-2015  bind-dyndb-ldap authors; see COPYING for license
  */
 
-#include "config.h"
+#include "dyndb-config.h"
 #define HAVE_TLS 1
 #define HAVE_THREAD_LOCAL 1
 

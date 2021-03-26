@@ -4,7 +4,7 @@
  * DNS forwarding helpers.
  */
 
-#include "config.h"
+#include "dyndb-config.h"
 
 #include <isccfg/grammar.h>
 

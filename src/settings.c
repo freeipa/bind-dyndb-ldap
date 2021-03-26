@@ -24,7 +24,7 @@
 #include "types.h"
 #include "ldap_helper.h"
 #include "zone_register.h"
-#include "config.h"
+#include "dyndb-config.h"
 
 #if LIBDNS_VERSION_MAJOR < 1600
 #define cfg_parse_buffer cfg_parse_buffer4

@@ -7,7 +7,7 @@
 
 #include "util.h"
 #include "rbt_helper.h"
-#include "config.h"
+#include "dyndb-config.h"
 
 #define LDAPDB_RBTITER_MAGIC ISC_MAGIC('L', 'D', 'P', 'I')
 

@@ -11,7 +11,7 @@
 #include <isc/time.h>
 #include <isc/util.h>
 
-#include "config.h"
+#include "dyndb-config.h"
 #include "ldap_helper.h"
 #include "util.h"
 #include "semaphore.h"
