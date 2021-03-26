@@ -6,6 +6,7 @@
 #include <isc/util.h>
 #include <dns/name.h>
 
+#include "config.h"
 #include "rbt_helper.h"
 #include "fwd_register.h"
 #include "util.h"
@@ -35,7 +36,11 @@ fwdr_create(isc_mem_t *mctx, fwd_register_t **fwdrp)
 	ZERO_PTR(fwdr);
 	isc_mem_attach(mctx, &fwdr->mctx);
 	CHECK(dns_rbt_create(mctx, NULL, NULL, &fwdr->rbt));
+#if LIBDNS_VERSION_MAJOR >= 1600
+	(void)isc_rwlock_init(&fwdr->rwlock, 0, 0);
+#else
 	CHECK(isc_rwlock_init(&fwdr->rwlock, 0, 0));
+#endif
 
 	*fwdrp = fwdr;
 	return ISC_R_SUCCESS;

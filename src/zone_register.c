@@ -12,6 +12,7 @@
 #include <dns/result.h>
 #include <dns/zone.h>
 
+#include "config.h"
 #include "fs.h"
 #include "ldap_driver.h"
 #include "log.h"
@@ -115,7 +116,12 @@ zr_create(isc_mem_t *mctx, ldap_instance_t *ldap_inst,
 	ZERO_PTR(zr);
 	isc_mem_attach(mctx, &zr->mctx);
 	CHECK(dns_rbt_create(mctx, delete_zone_info, mctx, &zr->rbt));
+#if LIBDNS_VERSION_MAJOR >= 1600
+	/* Never fails on BIND 9.16, even it if returns value */
+	(void)isc_rwlock_init(&zr->rwlock, 0, 0);
+#else
 	CHECK(isc_rwlock_init(&zr->rwlock, 0, 0));
+#endif
 	zr->global_settings = glob_settings;
 	zr->ldap_inst = ldap_inst;
 
